@@ -1,0 +1,46 @@
+from pathlib import Path
+
+import pytest
+
+from careerpilot.support.policy import SupportMode, SupportPolicy
+from careerpilot.support.skill_loader import SkillLoader
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("我现在不想听建议，只想说说今天被拒的感受", SupportMode.LISTEN),
+        ("我在产品岗和选调之间很纠结，想看看我更适合什么", SupportMode.EXPLORE),
+        ("脑子很乱，帮我把刚才这些想法梳理一下", SupportMode.ORGANIZE),
+        ("请帮我创建一个周五复盘的提醒", SupportMode.ACT),
+    ],
+)
+def test_policy_routes_user_intent_without_escalating_to_action(
+    message: str, expected: SupportMode
+) -> None:
+    decision = SupportPolicy().decide(message)
+
+    assert decision.mode is expected
+    assert decision.action_tools_allowed is (expected is SupportMode.ACT)
+
+
+def test_explicit_mode_overrides_heuristics() -> None:
+    decision = SupportPolicy().decide(
+        "虽然我很焦虑，但现在只需要你听我说，不要安排任务",
+        requested_mode=SupportMode.LISTEN,
+    )
+
+    assert decision.mode is SupportMode.LISTEN
+    assert decision.action_tools_allowed is False
+    assert decision.distress_detected is True
+
+
+def test_skill_loader_builds_comfort_first_runtime_contract(tmp_path: Path) -> None:
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text("先提供具体慰藉，再决定是否推进。", encoding="utf-8")
+
+    context = SkillLoader(skill_path).runtime_context(SupportMode.LISTEN)
+
+    assert "先提供具体慰藉" in context
+    assert "禁止调用行动工具" in context
+    assert "用户当前模式：listen" in context

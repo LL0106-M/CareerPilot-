@@ -1,0 +1,42 @@
+[project]
+name = "careerpilot"
+version = "0.1.0"
+description = "CareerPilot personal career companion agent"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "deepagents>=0.3,<1",
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "langchain-openai>=0.3,<2",
+  "pydantic-settings>=2.8,<3",
+  "pypdf>=5,<7",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3,<10",
+  "pytest-asyncio>=0.25,<2",
+  "ruff>=0.11,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/careerpilot"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+

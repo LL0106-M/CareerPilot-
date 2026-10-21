@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CareerPilot Job Record",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["company_name", "role_title", "source_url", "source_level", "status"],
+  "properties": {
+    "company_name": {"type": "string", "minLength": 1},
+    "role_title": {"type": "string", "minLength": 1},
+    "role_family": {"type": "string"},
+    "recruiting_type": {"type": "string", "default": "unknown"},
+    "organization_type": {
+      "enum": ["private", "central_soe", "local_soe", "government", "public_institution", "unknown"],
+      "default": "unknown"
+    },
+    "employment_type": {
+      "enum": ["civil_service_establishment", "public_institution_establishment", "enterprise_contract", "labor_dispatch", "internship", "unknown"],
+      "default": "unknown"
+    },
+    "target_graduation": {"type": "string", "default": "not_specified"},
+    "locations": {"type": "array", "items": {"type": "string"}, "default": ["未注明"]},
+    "deadline": {"type": ["string", "null"]},
+    "apply_url": {"type": "string"},
+    "source_url": {"type": "string", "minLength": 1},
+    "source_level": {"enum": ["S", "A", "B", "C"]},
+    "source_name": {"type": "string"},
+    "posted_at": {"type": ["string", "null"]},
+    "job_description": {"type": "string"},
+    "requirements": {"type": "string"},
+    "status": {"enum": ["active", "expired", "unknown", "unverified_lead"]},
+    "confidence_note": {"type": "string"}
+  }
+}
+
