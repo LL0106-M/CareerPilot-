@@ -11,3 +11,4 @@ def test_model_factories_use_separate_temperatures() -> None:
     assert exploration.temperature == 0.4
     assert reasoning.temperature == 0.0
     assert exploration is not reasoning
+    assert exploration.model_name == "qwen3.7-plus-2026-05-26"
