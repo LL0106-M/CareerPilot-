@@ -50,3 +50,29 @@ async def test_responder_filters_custom_tools_for_each_turn() -> None:
     )
 
     assert "search_career_knowledge" not in model.bound_tool_names
+
+
+@pytest.mark.asyncio
+async def test_responder_uses_runtime_tool_instead_of_same_named_static_tool() -> None:
+    @tool
+    def search_career_knowledge(query: str) -> str:
+        """Static search."""
+        return f"static:{query}"
+
+    @tool("search_career_knowledge")
+    def user_scoped_search(query: str) -> str:
+        """User-scoped search."""
+        return f"user:{query}"
+
+    model = ToolCapableFakeChatModel(responses=[AIMessage(content="准备好了。")])
+    responder = DeepAgentsResponder(model, tools=[search_career_knowledge])
+
+    await responder.respond(
+        "根据我的资料准备面试",
+        "使用私有资料",
+        "thread-private",
+        allowed_tool_names=frozenset({"search_career_knowledge"}),
+        runtime_tools=(user_scoped_search,),
+    )
+
+    assert model.bound_tool_names == ["search_career_knowledge"]

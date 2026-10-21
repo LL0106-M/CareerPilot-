@@ -3,7 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-from careerpilot.rag.models import EvidenceKind, SearchHit
+from careerpilot.rag.models import EvidenceKind, KnowledgeOrigin, SearchHit
 from careerpilot.rag.store import SqliteRagStore
 
 
@@ -96,6 +96,8 @@ class RagRetriever:
         sub_queries: tuple[str, ...] = (),
         requires_freshness: bool = False,
         validation_target: str = "direct_fact",
+        user_id: str | None = None,
+        origins: frozenset[KnowledgeOrigin] | None = None,
         limit: int = 5,
     ) -> RetrievalResult:
         plan = self._planner.plan(
@@ -129,6 +131,8 @@ class RagRetriever:
             ranked_lists = self._retrieve_round(
                 round_queries,
                 domain=plan.domain,
+                user_id=user_id,
+                origins=origins,
                 candidate_limit=candidate_limit,
             )
             fused = _rrf_fuse(ranked_lists, candidate_limit)
@@ -185,6 +189,8 @@ class RagRetriever:
         queries: tuple[str, ...],
         *,
         domain: str | None,
+        user_id: str | None,
+        origins: frozenset[KnowledgeOrigin] | None,
         candidate_limit: int,
     ) -> list[tuple[str, tuple[SearchHit, ...]]]:
         ranked_lists: list[tuple[str, tuple[SearchHit, ...]]] = []
@@ -194,23 +200,31 @@ class RagRetriever:
             sparse = self._store.search_sparse(
                 current_query,
                 domain=domain,
+                user_id=user_id,
+                origins=origins,
                 limit=candidate_limit,
             )
             dense = self._store.search_dense(
                 current_query,
                 domain=domain,
+                user_id=user_id,
+                origins=origins,
                 limit=candidate_limit,
             )
             triple_sparse = self._store.search_sparse(
                 current_query,
                 domain=domain,
                 kinds=triple_kinds,
+                user_id=user_id,
+                origins=origins,
                 limit=min(candidate_limit, 20),
             )
             triple_dense = self._store.search_dense(
                 current_query,
                 domain=domain,
                 kinds=triple_kinds,
+                user_id=user_id,
+                origins=origins,
                 limit=min(candidate_limit, 20),
             )
             ranked_lists.extend(
@@ -226,6 +240,8 @@ class RagRetriever:
             triple_seeds.extend(triple_dense[:1] or triple_sparse[:1])
         graph = self._store.neighbors(
             (hit.evidence_id for hit in triple_seeds),
+            user_id=user_id,
+            origins=origins,
             limit=min(candidate_limit, 20),
         )
         if graph:

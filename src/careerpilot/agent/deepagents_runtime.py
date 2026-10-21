@@ -44,8 +44,11 @@ class DeepAgentsResponder(AgentResponder):
         system_context: str,
         thread_id: str,
         allowed_tool_names: frozenset[str] | None = None,
+        runtime_tools: tuple[BaseTool, ...] = (),
     ) -> str:
-        tools = self._tools
+        tools_by_name = {tool.name: tool for tool in self._tools}
+        tools_by_name.update({tool.name: tool for tool in runtime_tools})
+        tools = tuple(tools_by_name.values())
         if allowed_tool_names is not None:
             tools = tuple(tool for tool in tools if tool.name in allowed_tool_names)
         graph = create_deep_agent(

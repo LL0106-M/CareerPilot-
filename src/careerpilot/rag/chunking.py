@@ -37,6 +37,8 @@ def chunk_document(
                     source_type=document.source_type,
                     domain=document.domain,
                     metadata=dict(document.metadata),
+                    knowledge_origin=document.knowledge_origin,
+                    owner_user_id=document.owner_user_id,
                 )
             )
             ordinal += 1
@@ -86,4 +88,3 @@ def _split_text(text: str, max_chars: int, overlap_chars: int) -> list[str]:
             break
         start = max(end - overlap_chars, start + 1)
     return chunks
-

@@ -46,6 +46,8 @@ def _passage_unit(chunk: DocumentChunk) -> EvidenceUnit:
         source_type=chunk.source_type,
         domain=chunk.domain,
         metadata={**chunk.metadata, "chunk_id": chunk.id, "heading": chunk.heading},
+        knowledge_origin=chunk.knowledge_origin,
+        owner_user_id=chunk.owner_user_id,
     )
 
 
@@ -90,6 +92,8 @@ def _triple_units(
                 subject=subject,
                 predicate=predicate,
                 object=object_value,
+                knowledge_origin=document.knowledge_origin,
+                owner_user_id=document.owner_user_id,
             )
         )
     return units
@@ -127,6 +131,8 @@ def _table_units(document: SourceDocument) -> list[EvidenceUnit]:
                     "row_id": row_id,
                     "values": dict(values),
                 },
+                knowledge_origin=document.knowledge_origin,
+                owner_user_id=document.owner_user_id,
             )
         )
         for field, value in values.items():
@@ -153,6 +159,8 @@ def _table_units(document: SourceDocument) -> list[EvidenceUnit]:
                     subject=row_id,
                     predicate=str(field),
                     object=_display(value),
+                    knowledge_origin=document.knowledge_origin,
+                    owner_user_id=document.owner_user_id,
                 )
             )
     return units

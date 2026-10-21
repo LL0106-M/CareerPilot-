@@ -5,9 +5,8 @@ from careerpilot.config import Settings
 from careerpilot.memory.memos import MemosCloudMemoryStore
 from careerpilot.rag.embeddings import create_embedding_provider
 from careerpilot.rag.store import SqliteRagStore
-from careerpilot.rag.tool import build_rag_tool
+from careerpilot.rag.tool import build_agentic_rag_tool
 from careerpilot.search.aliyun import AliyunWebSearchProvider
-from careerpilot.search.tool import build_web_search_tool
 from careerpilot.support.policy import SupportPolicy
 
 
@@ -25,20 +24,34 @@ def build_agent_service(
         embedder=create_embedding_provider(settings),
     )
     model = create_qwen_model(settings)
-    agent = DeepAgentsResponder(model, tools=build_agent_tools(settings, rag_store))
-    return AgentService(memory_store, agent, SupportPolicy()), memory_store, rag_store
+    provider = _build_search_provider(settings)
+    agent = DeepAgentsResponder(model)
+    return (
+        AgentService(
+            memory_store,
+            agent,
+            SupportPolicy(),
+            rag_tool_factory=lambda user_id: build_agentic_rag_tool(
+                rag_store, provider, user_id=user_id
+            ),
+        ),
+        memory_store,
+        rag_store,
+    )
 
 
 def build_agent_tools(settings: Settings, rag_store: SqliteRagStore) -> list:
-    tools = [build_rag_tool(rag_store)]
+    return [build_agentic_rag_tool(rag_store, _build_search_provider(settings))]
+
+
+def _build_search_provider(settings: Settings) -> AliyunWebSearchProvider | None:
     if settings.search_configured:
         assert settings.dashscope_api_key is not None
         assert settings.dashscope_base_url is not None
-        provider = AliyunWebSearchProvider(
+        return AliyunWebSearchProvider(
             api_key=settings.dashscope_api_key.get_secret_value(),
             base_url=settings.dashscope_base_url,
             model=settings.search_model,
             timeout_seconds=settings.search_timeout_seconds,
         )
-        tools.append(build_web_search_tool(provider))
-    return tools
+    return None

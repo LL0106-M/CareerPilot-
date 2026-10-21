@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 import pytest
+from langchain_core.tools import BaseTool, tool
 
 from careerpilot.agent.base import AgentResponder
 from careerpilot.agent.service import AgentService, ChatCommand
@@ -38,6 +39,7 @@ class RecordingAgent(AgentResponder):
     events: list[str]
     system_context: str = ""
     allowed_tool_names: frozenset[str] | None = None
+    runtime_tools: tuple[BaseTool, ...] = ()
 
     async def respond(
         self,
@@ -45,10 +47,12 @@ class RecordingAgent(AgentResponder):
         system_context: str,
         thread_id: str,
         allowed_tool_names: frozenset[str] | None = None,
+        runtime_tools: tuple[BaseTool, ...] = (),
     ) -> str:
         self.events.append("agent")
         self.system_context = system_context
         self.allowed_tool_names = allowed_tool_names
+        self.runtime_tools = runtime_tools
         return "先不用逼自己立刻决定，我们可以从最困扰你的部分开始。"
 
 
@@ -112,8 +116,36 @@ async def test_service_allows_local_rag_outside_listen_mode() -> None:
         ChatCommand("user-1", "thread-1", "帮我梳理 Agent 产品经理需要哪些能力")
     )
 
-    assert agent.allowed_tool_names == frozenset({"search_career_knowledge", "search_web"})
-    assert "RAG 不是个人记忆" in agent.system_context
+    assert agent.allowed_tool_names == frozenset({"search_career_knowledge"})
+    assert "RAG 与个人记忆分离" in agent.system_context
+
+
+@pytest.mark.asyncio
+async def test_service_binds_agentic_rag_tool_to_authenticated_user() -> None:
+    events: list[str] = []
+    bound_user_ids: list[str] = []
+
+    @tool
+    def search_career_knowledge(query: str) -> str:
+        """Search a user-scoped knowledge base."""
+        return query
+
+    def tool_factory(user_id: str) -> BaseTool:
+        bound_user_ids.append(user_id)
+        return search_career_knowledge
+
+    agent = RecordingAgent(events)
+    service = AgentService(
+        RecordingMemoryStore(events),
+        agent,
+        SupportPolicy(),
+        rag_tool_factory=tool_factory,
+    )
+
+    await service.chat(ChatCommand("user-7", "thread-1", "根据我的资料准备产品面试"))
+
+    assert bound_user_ids == ["user-7"]
+    assert [item.name for item in agent.runtime_tools] == ["search_career_knowledge"]
 
 
 @pytest.mark.asyncio

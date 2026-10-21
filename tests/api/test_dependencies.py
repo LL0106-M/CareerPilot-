@@ -22,4 +22,5 @@ def test_agent_tools_register_web_search_when_dashscope_is_configured(
 
     tools = build_agent_tools(Settings(_env_file=None), SqliteRagStore(tmp_path / "rag.db"))
 
-    assert [tool.name for tool in tools] == ["search_career_knowledge", "search_web"]
+    assert [tool.name for tool in tools] == ["search_career_knowledge"]
+    assert "bounded online fallback" in tools[0].description

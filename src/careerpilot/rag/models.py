@@ -3,6 +3,12 @@ from enum import StrEnum
 from typing import Any
 
 
+class KnowledgeOrigin(StrEnum):
+    SYSTEM_CURATED = "system_curated"
+    SYSTEM_WEB = "system_web"
+    USER_PROVIDED = "user_provided"
+
+
 @dataclass(frozen=True, slots=True)
 class SourceDocument:
     id: str
@@ -14,6 +20,14 @@ class SourceDocument:
     metadata: dict[str, Any] = field(default_factory=dict)
     published_at: str | None = None
     fetched_at: str | None = None
+    knowledge_origin: KnowledgeOrigin = KnowledgeOrigin.SYSTEM_CURATED
+    owner_user_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.knowledge_origin is KnowledgeOrigin.USER_PROVIDED and not self.owner_user_id:
+            raise ValueError("user-provided documents require owner_user_id")
+        if self.knowledge_origin is not KnowledgeOrigin.USER_PROVIDED and self.owner_user_id:
+            raise ValueError("only user-provided documents may have owner_user_id")
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +42,8 @@ class DocumentChunk:
     source_type: str
     domain: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    knowledge_origin: KnowledgeOrigin = KnowledgeOrigin.SYSTEM_CURATED
+    owner_user_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +62,8 @@ class SearchHit:
     evidence_kind: "EvidenceKind | None" = None
     parent_id: str | None = None
     channels: tuple[str, ...] = ()
+    knowledge_origin: KnowledgeOrigin = KnowledgeOrigin.SYSTEM_CURATED
+    owner_user_id: str | None = None
 
 
 class EvidenceKind(StrEnum):
@@ -78,6 +96,8 @@ class EvidenceUnit:
     subject: str | None = None
     predicate: str | None = None
     object: str | None = None
+    knowledge_origin: KnowledgeOrigin = KnowledgeOrigin.SYSTEM_CURATED
+    owner_user_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

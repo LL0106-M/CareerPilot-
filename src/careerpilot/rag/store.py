@@ -12,6 +12,7 @@ from careerpilot.rag.models import (
     DocumentChunk,
     EvidenceKind,
     EvidenceUnit,
+    KnowledgeOrigin,
     SearchHit,
     SourceDocument,
     WebSource,
@@ -40,7 +41,9 @@ class SqliteRagStore:
                 text TEXT NOT NULL,
                 metadata_json TEXT NOT NULL,
                 published_at TEXT,
-                fetched_at TEXT
+                fetched_at TEXT,
+                knowledge_origin TEXT NOT NULL DEFAULT 'system_curated',
+                owner_user_id TEXT
             );
             CREATE TABLE IF NOT EXISTS chunks (
                 id TEXT PRIMARY KEY,
@@ -52,7 +55,9 @@ class SqliteRagStore:
                 source_uri TEXT NOT NULL,
                 source_type TEXT NOT NULL,
                 domain TEXT NOT NULL,
-                metadata_json TEXT NOT NULL
+                metadata_json TEXT NOT NULL,
+                knowledge_origin TEXT NOT NULL DEFAULT 'system_curated',
+                owner_user_id TEXT
             );
             CREATE TABLE IF NOT EXISTS evidence_units (
                 id TEXT PRIMARY KEY,
@@ -68,7 +73,9 @@ class SqliteRagStore:
                 vector_json TEXT,
                 subject TEXT,
                 predicate TEXT,
-                object TEXT
+                object TEXT,
+                knowledge_origin TEXT NOT NULL DEFAULT 'system_curated',
+                owner_user_id TEXT
             );
             CREATE INDEX IF NOT EXISTS evidence_document_idx ON evidence_units(document_id);
             CREATE INDEX IF NOT EXISTS evidence_subject_idx ON evidence_units(subject);
@@ -90,6 +97,30 @@ class SqliteRagStore:
             );
             """
         )
+        self._ensure_column(
+            "documents", "knowledge_origin", "TEXT NOT NULL DEFAULT 'system_curated'"
+        )
+        self._ensure_column("documents", "owner_user_id", "TEXT")
+        self._ensure_column(
+            "chunks", "knowledge_origin", "TEXT NOT NULL DEFAULT 'system_curated'"
+        )
+        self._ensure_column("chunks", "owner_user_id", "TEXT")
+        self._ensure_column(
+            "evidence_units", "knowledge_origin", "TEXT NOT NULL DEFAULT 'system_curated'"
+        )
+        self._ensure_column("evidence_units", "owner_user_id", "TEXT")
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS evidence_owner_idx "
+            "ON evidence_units(owner_user_id, knowledge_origin)"
+        )
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        columns = {
+            str(row["name"])
+            for row in self._connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            self._connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def upsert(
         self,
@@ -115,8 +146,8 @@ class SqliteRagStore:
                 """
                 INSERT OR REPLACE INTO documents
                 (id, title, source_uri, source_type, domain, text, metadata_json,
-                 published_at, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 published_at, fetched_at, knowledge_origin, owner_user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     document.id,
@@ -128,6 +159,8 @@ class SqliteRagStore:
                     json.dumps(document.metadata, ensure_ascii=False),
                     document.published_at,
                     document.fetched_at,
+                    document.knowledge_origin.value,
+                    document.owner_user_id,
                 ),
             )
             for chunk in chunks:
@@ -135,8 +168,8 @@ class SqliteRagStore:
                     """
                     INSERT INTO chunks
                     (id, document_id, ordinal, title, heading, content, source_uri,
-                     source_type, domain, metadata_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     source_type, domain, metadata_json, knowledge_origin, owner_user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         chunk.id,
@@ -149,6 +182,8 @@ class SqliteRagStore:
                         chunk.source_type,
                         chunk.domain,
                         json.dumps(chunk.metadata, ensure_ascii=False),
+                        chunk.knowledge_origin.value,
+                        chunk.owner_user_id,
                     ),
                 )
             for unit, vector in zip(units, vectors, strict=True):
@@ -170,8 +205,9 @@ class SqliteRagStore:
             """
             INSERT INTO evidence_units
             (id, kind, document_id, parent_id, title, embedding_text, source_uri,
-             source_type, domain, metadata_json, vector_json, subject, predicate, object)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             source_type, domain, metadata_json, vector_json, subject, predicate, object,
+             knowledge_origin, owner_user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 unit.id,
@@ -188,6 +224,8 @@ class SqliteRagStore:
                 unit.subject,
                 unit.predicate,
                 unit.object,
+                unit.knowledge_origin.value,
+                unit.owner_user_id,
             ),
         )
         self._connection.execute(
@@ -200,9 +238,13 @@ class SqliteRagStore:
         query: str,
         *,
         domain: str | None = None,
+        user_id: str | None = None,
+        origins: frozenset[KnowledgeOrigin] | None = None,
         limit: int = 5,
     ) -> tuple[SearchHit, ...]:
-        return self.search_sparse(query, domain=domain, limit=limit)
+        return self.search_sparse(
+            query, domain=domain, user_id=user_id, origins=origins, limit=limit
+        )
 
     def search_sparse(
         self,
@@ -210,6 +252,8 @@ class SqliteRagStore:
         *,
         domain: str | None = None,
         kinds: frozenset[EvidenceKind] | None = None,
+        user_id: str | None = None,
+        origins: frozenset[KnowledgeOrigin] | None = None,
         limit: int = 5,
     ) -> tuple[SearchHit, ...]:
         match_query = _fts_query(query)
@@ -224,6 +268,7 @@ class SqliteRagStore:
             placeholders = ",".join("?" for _ in kinds)
             filters.append(f"e.kind IN ({placeholders})")
             params.extend(kind.value for kind in sorted(kinds, key=lambda item: item.value))
+        _append_access_filters(filters, params, user_id=user_id, origins=origins, prefix="e.")
         where = f"AND {' AND '.join(filters)}" if filters else ""
         params.append(max(1, min(limit, 100)))
         rows = self._connection.execute(
@@ -242,6 +287,8 @@ class SqliteRagStore:
                 query,
                 domain=domain,
                 kinds=kinds,
+                user_id=user_id,
+                origins=origins,
                 limit=limit,
             )
         return tuple(
@@ -263,6 +310,8 @@ class SqliteRagStore:
         *,
         domain: str | None,
         kinds: frozenset[EvidenceKind] | None,
+        user_id: str | None,
+        origins: frozenset[KnowledgeOrigin] | None,
         limit: int,
     ) -> list[sqlite3.Row]:
         terms = re.findall(r"[\u4e00-\u9fff]{2}", query)
@@ -277,6 +326,7 @@ class SqliteRagStore:
             placeholders = ",".join("?" for _ in kinds)
             clauses.append(f"kind IN ({placeholders})")
             params.extend(kind.value for kind in sorted(kinds, key=lambda item: item.value))
+        _append_access_filters(clauses, params, user_id=user_id, origins=origins)
         params.append(max(1, min(limit, 100)))
         return self._connection.execute(
             f"""
@@ -294,6 +344,8 @@ class SqliteRagStore:
         *,
         domain: str | None = None,
         kinds: frozenset[EvidenceKind] | None = None,
+        user_id: str | None = None,
+        origins: frozenset[KnowledgeOrigin] | None = None,
         limit: int = 5,
     ) -> tuple[SearchHit, ...]:
         if self._embedder is None or not query.strip():
@@ -311,6 +363,7 @@ class SqliteRagStore:
             placeholders = ",".join("?" for _ in kinds)
             clauses.append(f"kind IN ({placeholders})")
             params.extend(kind.value for kind in sorted(kinds, key=lambda item: item.value))
+        _append_access_filters(clauses, params, user_id=user_id, origins=origins)
         rows = self._connection.execute(
             f"SELECT * FROM evidence_units WHERE {' AND '.join(clauses)}", params
         ).fetchall()
@@ -328,6 +381,8 @@ class SqliteRagStore:
         self,
         evidence_ids: Iterable[str | None],
         *,
+        user_id: str | None = None,
+        origins: frozenset[KnowledgeOrigin] | None = None,
         limit: int = 10,
     ) -> tuple[SearchHit, ...]:
         seed_ids = tuple(dict.fromkeys(item for item in evidence_ids if item))
@@ -345,6 +400,15 @@ class SqliteRagStore:
         if not nodes:
             return ()
         node_placeholders = ",".join("?" for _ in nodes)
+        access_filters: list[str] = []
+        access_params: list[object] = []
+        _append_access_filters(
+            access_filters,
+            access_params,
+            user_id=user_id,
+            origins=origins,
+        )
+        access_where = " AND ".join(access_filters)
         rows = self._connection.execute(
             f"""
             SELECT * FROM evidence_units
@@ -353,6 +417,7 @@ class SqliteRagStore:
               AND id NOT IN ({placeholders})
               AND parent_id IS NOT NULL
               AND source_uri <> ''
+              AND {access_where}
             ORDER BY id
             LIMIT ?
             """,
@@ -361,6 +426,7 @@ class SqliteRagStore:
                 *nodes,
                 *nodes,
                 *seed_ids,
+                *access_params,
                 max(1, min(limit, 100)),
             ),
         ).fetchall()
@@ -390,6 +456,8 @@ class SqliteRagStore:
             evidence_kind=EvidenceKind(row["kind"]),
             parent_id=row["parent_id"],
             channels=channels,
+            knowledge_origin=KnowledgeOrigin(row["knowledge_origin"]),
+            owner_user_id=row["owner_user_id"],
         )
 
     def count_documents(self) -> int:
@@ -485,6 +553,28 @@ class SqliteRagStore:
 
     def close(self) -> None:
         self._connection.close()
+
+
+def _append_access_filters(
+    filters: list[str],
+    params: list[object],
+    *,
+    user_id: str | None,
+    origins: frozenset[KnowledgeOrigin] | None,
+    prefix: str = "",
+) -> None:
+    owner_column = f"{prefix}owner_user_id"
+    origin_column = f"{prefix}knowledge_origin"
+    if user_id is None:
+        filters.append(f"{owner_column} IS NULL")
+    else:
+        filters.append(f"({owner_column} IS NULL OR {owner_column} = ?)")
+        params.append(user_id)
+    if origins:
+        ordered = sorted(origins, key=lambda item: item.value)
+        placeholders = ",".join("?" for _ in ordered)
+        filters.append(f"{origin_column} IN ({placeholders})")
+        params.extend(origin.value for origin in ordered)
 
 
 def _fts_query(query: str) -> str:
