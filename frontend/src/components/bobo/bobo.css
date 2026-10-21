@@ -1,0 +1,82 @@
+.bobo {
+  --bobo-size: 160px;
+  position: relative;
+  display: inline-grid;
+  width: var(--bobo-size);
+  margin: 0;
+  place-items: center;
+  color: var(--brand-pine);
+}
+
+.bobo-image-wrap {
+  width: var(--bobo-size);
+  height: var(--bobo-size);
+  transform-origin: 50% 85%;
+}
+
+.bobo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 14px 24px rgba(51, 60, 54, 0.18));
+  object-fit: contain;
+  user-select: none;
+}
+
+.bobo-state-mark {
+  position: absolute;
+  right: 5%;
+  bottom: 8%;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 8px 22px rgba(36, 51, 45, 0.12);
+  place-items: center;
+}
+
+.bobo-listen .bobo-state-mark {
+  color: var(--emotion-accent);
+}
+
+.bobo-explore .bobo-state-mark,
+.bobo-dreaming .bobo-state-mark {
+  color: #b8873d;
+}
+
+.bobo-thinking .bobo-state-mark {
+  color: var(--brand-sky);
+  animation: bobo-pulse 1.2s ease-in-out infinite;
+}
+
+.bobo figcaption {
+  margin-top: -8px;
+  padding: 7px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+@keyframes bobo-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bobo-thinking .bobo-state-mark {
+    animation: none;
+  }
+}
