@@ -55,7 +55,7 @@ class AgentService:
         allowed_tool_names = (
             frozenset()
             if decision.mode is SupportMode.LISTEN
-            else frozenset({"search_career_knowledge"})
+            else frozenset({"search_career_knowledge", "search_web"})
         )
         reply = await self._agent.respond(
             command.message,

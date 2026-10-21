@@ -112,8 +112,19 @@ async def test_service_allows_local_rag_outside_listen_mode() -> None:
         ChatCommand("user-1", "thread-1", "帮我梳理 Agent 产品经理需要哪些能力")
     )
 
-    assert agent.allowed_tool_names == frozenset({"search_career_knowledge"})
+    assert agent.allowed_tool_names == frozenset({"search_career_knowledge", "search_web"})
     assert "RAG 不是个人记忆" in agent.system_context
+
+
+@pytest.mark.asyncio
+async def test_service_denies_web_search_in_listen_mode() -> None:
+    events: list[str] = []
+    agent = RecordingAgent(events)
+    service = AgentService(RecordingMemoryStore(events), agent, SupportPolicy())
+
+    await service.chat(ChatCommand("user-1", "thread-1", "我被拒了，现在只想先说说"))
+
+    assert agent.allowed_tool_names == frozenset()
 
 
 @pytest.mark.asyncio
