@@ -17,4 +17,4 @@ class ChatResponse(BaseModel):
     support_mode: SupportMode
     memory_read_status: str
     memory_write_status: str
-
+    dreaming_status: str

@@ -8,6 +8,7 @@ from careerpilot.agent.service import ChatCommand, ChatResult
 from careerpilot.api.dependencies import build_agent_service
 from careerpilot.api.schemas import ChatRequest, ChatResponse
 from careerpilot.config import Settings, get_settings
+from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.memos import MemosCloudMemoryStore
 from careerpilot.rag.store import SqliteRagStore
 
@@ -23,6 +24,7 @@ def create_app(
     resolved_settings = settings or get_settings()
     owned_memory_store: MemosCloudMemoryStore | None = None
     owned_rag_store: SqliteRagStore | None = None
+    owned_cognitive_store: SqliteCognitiveStore | None = None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -31,16 +33,21 @@ def create_app(
             await owned_memory_store.aclose()
         if owned_rag_store is not None:
             owned_rag_store.close()
+        if owned_cognitive_store is not None:
+            owned_cognitive_store.close()
 
     app = FastAPI(title="CareerPilot Agent API", version="0.1.0", lifespan=lifespan)
 
     def resolve_chat_service() -> ChatService:
-        nonlocal chat_service, owned_memory_store, owned_rag_store
+        nonlocal chat_service, owned_memory_store, owned_rag_store, owned_cognitive_store
         if chat_service is None:
             try:
-                chat_service, owned_memory_store, owned_rag_store = build_agent_service(
-                    resolved_settings
-                )
+                (
+                    chat_service,
+                    owned_memory_store,
+                    owned_rag_store,
+                    owned_cognitive_store,
+                ) = build_agent_service(resolved_settings)
             except RuntimeError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
         return chat_service
@@ -65,6 +72,7 @@ def create_app(
             support_mode=result.support_mode,
             memory_read_status=result.memory_read_status,
             memory_write_status=result.memory_write_status,
+            dreaming_status=result.dreaming_status,
         )
 
     return app

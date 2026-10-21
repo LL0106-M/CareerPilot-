@@ -57,6 +57,10 @@ class Settings(BaseSettings):
         default=Path("data/rag/careerpilot.db"),
         validation_alias="CAREERPILOT_RAG_DB_PATH",
     )
+    memory_db_path: Path = Field(
+        default=Path("data/memory/careerpilot.db"),
+        validation_alias="CAREERPILOT_MEMORY_DB_PATH",
+    )
     dashscope_api_key: SecretStr | None = Field(
         default=None,
         validation_alias="DASHSCOPE_API_KEY",

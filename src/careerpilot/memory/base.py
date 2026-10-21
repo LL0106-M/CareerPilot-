@@ -1,9 +1,15 @@
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 
 class MemoryStoreError(RuntimeError):
     """Raised when a long-term memory provider cannot complete an operation."""
+
+
+class MemoryRetrievalMode(StrEnum):
+    PLANNING = "planning"
+    COMPANION = "companion"
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +32,7 @@ class MemoryStore(Protocol):
         user_id: str,
         conversation_id: str,
         query: str,
+        mode: MemoryRetrievalMode = MemoryRetrievalMode.PLANNING,
     ) -> MemoryContext: ...
 
     async def add_turn(
@@ -35,4 +42,3 @@ class MemoryStore(Protocol):
         user_message: str,
         assistant_message: str,
     ) -> None: ...
-

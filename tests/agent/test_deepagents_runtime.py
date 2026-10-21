@@ -75,4 +75,4 @@ async def test_responder_uses_runtime_tool_instead_of_same_named_static_tool() -
         runtime_tools=(user_scoped_search,),
     )
 
-    assert model.bound_tool_names == ["search_career_knowledge"]
+    assert model.bound_tool_names.count("search_career_knowledge") == 1

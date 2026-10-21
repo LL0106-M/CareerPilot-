@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from careerpilot.memory.base import MemoryStoreError
+from careerpilot.memory.base import MemoryRetrievalMode, MemoryStoreError
 from careerpilot.memory.memos import MemosCloudMemoryStore
 
 
@@ -15,12 +15,18 @@ async def test_search_sends_user_scope_and_parses_facts_and_preferences() -> Non
             "query": "我现在更看重稳定吗？",
             "user_id": "user-1",
             "conversation_id": "thread-1",
-            "relativity": 0.55,
-            "memory_limit_number": 6,
+            "relativity": 0.6,
+            "memory_limit_number": 5,
             "include_preference": True,
-            "preference_limit_number": 6,
+            "preference_limit_number": 4,
             "include_skill": False,
             "include_tool_memory": False,
+            "filter": {
+                "and": [
+                    {"agent_id": "careerpilot"},
+                    {"scene": "career_companion"},
+                ]
+            },
         }
         return httpx.Response(
             200,
@@ -53,6 +59,25 @@ async def test_search_sends_user_scope_and_parses_facts_and_preferences() -> Non
     assert [item.content for item in result.facts] == ["用户更看重可预期的工作节奏"]
     assert [item.content for item in result.preferences] == ["受挫时先倾听，不立即给计划"]
     assert result.facts[0].relevance == 0.91
+
+
+@pytest.mark.asyncio
+async def test_companion_search_broadens_recall_for_context_and_support_preferences() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["relativity"] == 0.45
+        assert payload["memory_limit_number"] == 8
+        assert payload["preference_limit_number"] == 8
+        return httpx.Response(200, json={"code": 0, "message": "ok", "data": {}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        store = MemosCloudMemoryStore("test-secret", http_client=client)
+        await store.search(
+            "user-1",
+            "thread-1",
+            "我今天很难受",
+            mode=MemoryRetrievalMode.COMPANION,
+        )
 
 
 @pytest.mark.asyncio

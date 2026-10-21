@@ -18,6 +18,7 @@ class StubChatService:
             support_mode=SupportMode.LISTEN,
             memory_read_status="available",
             memory_write_status="accepted",
+            dreaming_status="queued",
         )
 
 
@@ -41,6 +42,7 @@ def test_chat_returns_agent_reply_and_transparent_memory_status() -> None:
         "support_mode": "listen",
         "memory_read_status": "available",
         "memory_write_status": "accepted",
+        "dreaming_status": "queued",
     }
     assert service.received == ChatCommand(
         user_id="user-1",

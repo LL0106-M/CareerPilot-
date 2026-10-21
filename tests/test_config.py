@@ -14,6 +14,14 @@ def test_settings_reads_rag_database_path(monkeypatch) -> None:
     assert settings.rag_db_path == Path("var/index/career.db")
 
 
+def test_settings_reads_cognitive_memory_database_path(monkeypatch) -> None:
+    monkeypatch.setenv("CAREERPILOT_MEMORY_DB_PATH", "var/memory/career.db")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.memory_db_path == Path("var/memory/career.db")
+
+
 def test_settings_separates_exploration_and_reasoning_temperatures() -> None:
     settings = Settings(_env_file=None)
 

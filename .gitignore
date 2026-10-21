@@ -20,3 +20,6 @@ tmp/
 data/rag/*.db
 data/rag/*.db-shm
 data/rag/*.db-wal
+data/memory/*.db
+data/memory/*.db-shm
+data/memory/*.db-wal

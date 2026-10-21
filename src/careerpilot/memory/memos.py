@@ -3,7 +3,12 @@ from typing import Any
 
 import httpx
 
-from careerpilot.memory.base import MemoryContext, MemoryItem, MemoryStoreError
+from careerpilot.memory.base import (
+    MemoryContext,
+    MemoryItem,
+    MemoryRetrievalMode,
+    MemoryStoreError,
+)
 
 
 class MemosCloudMemoryStore:
@@ -32,17 +37,29 @@ class MemosCloudMemoryStore:
         user_id: str,
         conversation_id: str,
         query: str,
+        mode: MemoryRetrievalMode = MemoryRetrievalMode.PLANNING,
     ) -> MemoryContext:
+        retrieval = {
+            MemoryRetrievalMode.PLANNING: (0.60, 5, 4),
+            MemoryRetrievalMode.COMPANION: (0.45, 8, 8),
+        }
+        relativity, memory_limit, preference_limit = retrieval[mode]
         payload = {
             "query": query,
             "user_id": user_id,
             "conversation_id": conversation_id,
-            "relativity": 0.55,
-            "memory_limit_number": 6,
+            "relativity": relativity,
+            "memory_limit_number": memory_limit,
             "include_preference": True,
-            "preference_limit_number": 6,
+            "preference_limit_number": preference_limit,
             "include_skill": False,
             "include_tool_memory": False,
+            "filter": {
+                "and": [
+                    {"agent_id": "careerpilot"},
+                    {"scene": "career_companion"},
+                ]
+            },
         }
         result = await self._post("/search/memory", payload, operation="search")
         data = result.get("data")
