@@ -19,11 +19,15 @@ POST /v1/chat
 - 一次性的难受、自责和情绪标签不进入长期记忆，返回 `memory_write_status=skipped`；
 - MemOS 不可用时降级为当前会话回复，不伪造“记得”；
 - Deep Agents 作为 Harness；MVP 禁用通用子 Agent 和宿主机操作工具；
-- 通过 OpenAI-compatible API 使用 Qwen，默认模型标识为 `Qwen/Qwen3.8-27B`。
+- 通过阿里云百炼 OpenAI-compatible API 使用 Qwen，生产默认固定为
+  `qwen3.7-plus-2026-05-26`；
+- 本地 RAG 证据不足或用户明确询问实时信息时，可调用阿里云 DashScope 联网搜索；
+- 联网搜索默认使用 `turbo`，只有多源验证不足时才升级 `max`，不叠加第二层搜索 Agent；
 - 统一 Evidence Unit RAG：Passage、KG 三元组、表格事实/行使用同一 SQLite 索引；
 - 默认执行 Sparse + 可选 Dense 混合召回，并用 Query-to-Triple 做轻量关系扩展；
 - 使用 RRF、来源等级和证据角色重排，最多两轮，无新证据时停止并请求联网补充；
-- 网页来源注册表支持按 URL 设置刷新周期，抓取执行仍由外部 Search/Fetch Skill 负责。
+- 网页来源注册表支持按 URL 设置刷新周期；搜索已接入，网页全文抓取与定时入库仍属于
+  后续受治理的摄取任务。
 
 Dreaming Worker、PostgreSQL 产品状态、飞书 Tool 与 Web 前端仍属于下一阶段，尚未伪装成已完成能力。
 
@@ -42,12 +46,40 @@ Copy-Item .env.example .env
 在 `.env` 中配置：
 
 - `MEMOS_API_KEY`：MemOS Cloud 密钥；
-- `CAREERPILOT_MODEL_BASE_URL`：本地 vLLM 或云端 OpenAI-compatible 地址；
-- `CAREERPILOT_MODEL_API_KEY`：模型服务密钥；
-- `CAREERPILOT_MODEL_NAME`：服务端加载的 Qwen 模型标识。
+- `CAREERPILOT_MODEL_BASE_URL`：百炼工作空间的 OpenAI 兼容地址；
+- `CAREERPILOT_MODEL_API_KEY`：百炼 API Key；
+- `CAREERPILOT_MODEL_NAME`：生产使用 `qwen3.7-plus-2026-05-26`；
 - `CAREERPILOT_EXPLORATION_TEMPERATURE`：探索/改写温度，默认 `0.4`；
 - `CAREERPILOT_REASONING_TEMPERATURE`：证据规划与判断温度，默认 `0.0`；
 - `CAREERPILOT_EMBEDDING_MODEL`：可选的 OpenAI-compatible Embedding 模型；未配置时自动使用 Sparse + 图关系模式。
+- `DASHSCOPE_API_KEY`：联网搜索使用的百炼 API Key；
+- `CAREERPILOT_DASHSCOPE_BASE_URL`：同一工作空间的 DashScope `/api/v1` 地址；
+- `CAREERPILOT_SEARCH_MODEL`：默认与生产主模型使用同一固定快照；
+- `CAREERPILOT_SEARCH_DEFAULT_STRATEGY`：固定为 `turbo`；
+- `CAREERPILOT_SEARCH_ESCALATION_STRATEGY`：固定为 `max`。
+
+百炼控制台会给出同一工作空间的两个不同地址，例如：
+
+```dotenv
+CAREERPILOT_MODEL_BASE_URL=https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+CAREERPILOT_DASHSCOPE_BASE_URL=https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1
+```
+
+不要把真实 Key 写入 `.env.example`、README、Dockerfile 或前端环境变量。开发机使用被
+Git 忽略的 `.env`；线上使用云平台 Secret。若 Key 曾出现在截图、聊天记录或日志中，
+联调完成后应在百炼控制台轮换。
+
+联网检索的执行边界：
+
+```text
+search_career_knowledge
+  ├─ 证据足够：直接回答
+  └─ needs_online_search=true：search_web(turbo)
+       └─ 多源证据仍不足：search_web(max)
+```
+
+`search_web` 返回标题、URL、站点、策略与请求 ID，并统一标记为不可信外部证据。搜索结果
+不会写入个人 Memory，也不会在工具内部自动污染 RAG。倾听模式下该工具不可用。
 
 构建本地知识索引：
 
