@@ -95,6 +95,43 @@ class SqliteRagStore:
                 last_crawled_at TEXT,
                 content_hash TEXT
             );
+            CREATE TABLE IF NOT EXISTS job_records (
+                id TEXT PRIMARY KEY,
+                company_name TEXT NOT NULL,
+                role_title TEXT NOT NULL,
+                role_family TEXT NOT NULL,
+                recruiting_type TEXT NOT NULL,
+                organization_type TEXT NOT NULL,
+                employment_type TEXT NOT NULL,
+                locations_json TEXT NOT NULL,
+                deadline TEXT,
+                apply_url TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                source_level TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                posted_at TEXT,
+                verified_at TEXT NOT NULL,
+                job_description TEXT NOT NULL,
+                requirements TEXT NOT NULL,
+                status TEXT NOT NULL,
+                knowledge_origin TEXT NOT NULL DEFAULT 'system_curated',
+                owner_user_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS jobs_org_idx ON job_records(organization_type);
+            CREATE INDEX IF NOT EXISTS jobs_company_idx ON job_records(company_name);
+            CREATE INDEX IF NOT EXISTS jobs_owner_idx ON job_records(owner_user_id);
+            CREATE TABLE IF NOT EXISTS user_documents (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                category TEXT NOT NULL,
+                file_format TEXT NOT NULL,
+                size_text TEXT NOT NULL,
+                uploaded_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                retrieval_enabled INTEGER NOT NULL DEFAULT 1,
+                owner_user_id TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS user_docs_owner_idx ON user_documents(owner_user_id);
             """
         )
         self._ensure_column(
@@ -553,6 +590,95 @@ class SqliteRagStore:
 
     def close(self) -> None:
         self._connection.close()
+
+    # --- Jobs CRUD ------------------------------------------------------------
+
+    def list_jobs(
+        self,
+        *,
+        company_type: str | None = None,
+        company: str | None = None,
+        user_id: str | None = None,
+        limit: int = 200,
+    ) -> tuple[sqlite3.Row, ...]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if company_type:
+            clauses.append("organization_type = ?")
+            params.append(company_type)
+        if company:
+            clauses.append("company_name = ?")
+            params.append(company)
+        if user_id is None:
+            clauses.append("owner_user_id IS NULL")
+        else:
+            clauses.append("(owner_user_id IS NULL OR owner_user_id = ?)")
+            params.append(user_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(limit, 1000)))
+        rows = self._connection.execute(
+            f"""
+            SELECT * FROM job_records {where}
+            ORDER BY verified_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return tuple(rows)
+
+    def get_job(self, job_id: str) -> sqlite3.Row | None:
+        return self._connection.execute(
+            "SELECT * FROM job_records WHERE id = ?", (job_id,)
+        ).fetchone()
+
+    def upsert_job(self, job: dict[str, object]) -> None:
+        self._connection.execute(
+            """
+            INSERT OR REPLACE INTO job_records
+            (id, company_name, role_title, role_family, recruiting_type,
+             organization_type, employment_type, locations_json, deadline,
+             apply_url, source_url, source_level, source_name, posted_at,
+             verified_at, job_description, requirements, status,
+             knowledge_origin, owner_user_id)
+            VALUES (:id, :company_name, :role_title, :role_family,
+                    :recruiting_type, :organization_type, :employment_type,
+                    :locations_json, :deadline, :apply_url, :source_url,
+                    :source_level, :source_name, :posted_at, :verified_at,
+                    :job_description, :requirements, :status,
+                    COALESCE(:knowledge_origin, 'system_curated'),
+                    :owner_user_id)
+            """,
+            job,
+        )
+
+    # --- User document metadata -----------------------------------------------
+
+    def list_user_documents(self, user_id: str) -> tuple[sqlite3.Row, ...]:
+        return tuple(
+            self._connection.execute(
+                "SELECT * FROM user_documents WHERE owner_user_id = ? ORDER BY uploaded_at DESC",
+                (user_id,),
+            ).fetchall()
+        )
+
+    def upsert_user_document(self, doc: dict[str, object]) -> None:
+        self._connection.execute(
+            """
+            INSERT OR REPLACE INTO user_documents
+            (id, title, category, file_format, size_text, uploaded_at,
+             status, retrieval_enabled, owner_user_id)
+            VALUES (:id, :title, :category, :file_format, :size_text,
+                    :uploaded_at, :status, :retrieval_enabled, :owner_user_id)
+            """,
+            doc,
+        )
+
+    def delete_user_document(self, doc_id: str, user_id: str) -> bool:
+        cursor = self._connection.execute(
+            "DELETE FROM user_documents WHERE id = ? AND owner_user_id = ?",
+            (doc_id, user_id),
+        )
+        return cursor.rowcount > 0
 
 
 def _append_access_filters(
