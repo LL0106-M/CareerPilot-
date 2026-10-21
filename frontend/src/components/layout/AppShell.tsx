@@ -6,7 +6,6 @@ import {
   ChatsCircle,
   Compass,
   House,
-  MoonStars,
   Path,
 } from '@phosphor-icons/react'
 import type { ReactNode } from 'react'
@@ -17,7 +16,6 @@ import './app-shell.css'
 const navigation = [
   { to: '/today', label: '今天', icon: House },
   { to: '/chat', label: '对话', icon: ChatsCircle },
-  { to: '/dreaming', label: 'Dreaming', icon: MoonStars },
   { to: '/compass', label: '罗盘', icon: Compass },
   { to: '/journey', label: '航程', icon: Path },
   { to: '/knowledge/jobs', label: '知识库', icon: BookOpenText },

@@ -13,7 +13,7 @@ describe('CareerPilot app shell', () => {
     )
 
     expect(screen.getByRole('img', { name: 'CareerPilot' })).toBeInTheDocument()
-    for (const label of ['今天', '对话', 'Dreaming', '罗盘', '航程', '知识库', '记忆']) {
+    for (const label of ['今天', '对话', '罗盘', '航程', '知识库', '记忆']) {
       expect(screen.getByRole('link', { name: label })).toBeInTheDocument()
     }
   })
