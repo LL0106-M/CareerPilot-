@@ -179,6 +179,9 @@ CareerPilot 面向同时探索 2—3 条职业路径、已有行动意愿但方�
 
 ## 12. 待验证决策
 
+意图分类、槽位、任务拆解和能力路由的共创草案见
+[用户意图识别与任务拆解 PRD v0.1](./CareerPilot-Intent-and-Task-Decomposition-PRD-v0.1.md)。
+
 - Intent Router 使用规则、模型还是两阶段组合。
 - MemOS 的元数据过滤、删除和冲突表达能力是否满足生产要求。
 - Cognitive State 在 SQLite 上可支持到什么规模，何时迁移 PostgreSQL。
