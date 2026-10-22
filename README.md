@@ -241,6 +241,7 @@ AgenticRagOrchestrator.retrieve()
 |---|---|
 | `PRD/CareerPilot-MVP-PRD-v1.0.md` | 当前 MVP 重构基线：单 Agent、Memory/RAG-native Harness |
 | `PRD/CareerPilot-Intent-and-Task-Decomposition-PRD-v0.1.md` | 用户意图、槽位、任务拆解、能力路由与评估契约 |
+| `PRD/DREAMING-Idea.md` | 每日申请总结、小胜利、阻碍、Idea 与职业航向的产品构想 |
 | `PRD/CareerPilot-MVP-PRD.md` | MVP 产品需求：背景、用户画像、核心闭环、竞品分析 |
 | `PRD/CareerPilot-Memory-RAG-Technical-Design.md` | 长期记忆、Dreaming、Agentic RAG 技术设计 |
 | `PRD/CareerPilot-RAG-MVP-Design.md` | RAG MVP 检索 Skill、统一 Markdown、切分与索引方案 |
