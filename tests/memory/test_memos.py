@@ -17,15 +17,15 @@ async def test_search_sends_user_scope_and_parses_facts_and_preferences() -> Non
             "conversation_id": "thread-1",
             "relativity": 0.6,
             "memory_limit_number": 5,
-            "include_preference": True,
+            "include_memory_view": ["detail_factual", "preference"],
             "preference_limit_number": 4,
-            "include_skill": False,
-            "include_tool_memory": False,
             "filter": {
-                "and": [
-                    {"agent_id": "careerpilot"},
-                    {"scene": "career_companion"},
-                ]
+                "user": {
+                    "and": [
+                        {"tags": {"contains": "careerpilot"}},
+                        {"scene": "career_companion"},
+                    ]
+                }
             },
         }
         return httpx.Response(
@@ -81,12 +81,14 @@ async def test_companion_search_broadens_recall_for_context_and_support_preferen
 
 
 @pytest.mark.asyncio
-async def test_add_turn_uses_private_agent_scoped_payload() -> None:
+async def test_add_turn_uses_private_user_scoped_payload() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         assert payload["user_id"] == "user-1"
         assert payload["conversation_id"] == "thread-1"
-        assert payload["agent_id"] == "careerpilot"
+        assert "agent_id" not in payload
+        assert payload["tags"] == ["careerpilot", "candidate"]
+        assert payload["info"]["scene"] == "career_companion"
         assert payload["allow_public"] is False
         assert payload["messages"] == [
             {"role": "user", "content": "我希望先被理解"},

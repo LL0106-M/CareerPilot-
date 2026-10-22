@@ -50,15 +50,15 @@ class MemosCloudMemoryStore:
             "conversation_id": conversation_id,
             "relativity": relativity,
             "memory_limit_number": memory_limit,
-            "include_preference": True,
+            "include_memory_view": ["detail_factual", "preference"],
             "preference_limit_number": preference_limit,
-            "include_skill": False,
-            "include_tool_memory": False,
             "filter": {
-                "and": [
-                    {"agent_id": "careerpilot"},
-                    {"scene": "career_companion"},
-                ]
+                "user": {
+                    "and": [
+                        {"tags": {"contains": "careerpilot"}},
+                        {"scene": "career_companion"},
+                    ]
+                }
             },
         }
         result = await self._post("/search/memory", payload, operation="search")
@@ -80,7 +80,6 @@ class MemosCloudMemoryStore:
         payload = {
             "user_id": user_id,
             "conversation_id": conversation_id,
-            "agent_id": "careerpilot",
             "source": "careerpilot_web",
             "allow_public": False,
             "async_mode": True,
