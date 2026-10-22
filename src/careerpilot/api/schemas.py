@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from careerpilot.context.contracts import RetrievalSource, TaskIntent
 from careerpilot.support.policy import SupportMode
 
 
@@ -15,6 +16,8 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     support_mode: SupportMode
+    primary_intent: TaskIntent
+    retrieval_sources: tuple[RetrievalSource, ...]
     memory_read_status: str
     memory_write_status: str
     dreaming_status: str

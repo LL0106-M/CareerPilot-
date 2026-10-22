@@ -8,6 +8,9 @@
 >
 > 不包含：模型选型、Prompt 实现、向量数据库选型、Runtime 内部代码设计
 
+> 实现状态：已落地确定性 P0 `IntentFrame → RetrievalPlan → CompiledContext` 基线；
+> 结构化模型分类、跨轮 Slot Resolver 和 RAG 二级路由仍待实现与评估。
+
 ## 1. 文档目的
 
 本文定义 CareerPilot 如何把用户的自然表达转化为可执行、可追踪、可纠正的任务状态，重点回答：

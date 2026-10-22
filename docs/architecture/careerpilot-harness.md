@@ -38,8 +38,9 @@ and permissions remain structured CareerPilot state.
 
 ```text
 user message
-→ SupportPolicy resolves the initial interaction mode
-→ CareerContextCompiler retrieves MemOS and cognitive state
+→ IntentInterpreter resolves support mode, task intent and current-message slots
+→ IntentAwareRetrievalRouter produces a governed RetrievalPlan
+→ CareerContextCompiler reads only the planned MemOS and cognitive sources
 → PromptComposer produces attributed, bounded context
 → CareerPilotHarness loads durable session history
 → ModelGateway streams from the configured provider
@@ -53,7 +54,30 @@ user message
 The first implementation caps a turn at four model steps. A model cannot bypass the tool allowlist:
 even a malformed or adversarial request for a hidden tool receives a structured forbidden result.
 
-### 3.1 Runtime protocol
+### 3.1 Context planning protocol
+
+The context layer compiles three stable contracts before the runtime starts:
+
+```text
+user message
+→ IntentFrame
+→ RetrievalPlan
+→ CompiledContext
+→ CareerPilotHarness
+```
+
+`IntentFrame` separates support mode from the primary and secondary task intents and carries only
+current-message slots with explicit provenance. `RetrievalPlan` selects from personal memory,
+cognitive state, private documents, career knowledge, jobs, and web. It also produces the runtime
+tool allowlist. A route expresses permission and purpose; each RAG subsystem remains responsible for
+its own offline/online retrieval strategy.
+
+The current interpreter is a deterministic P0 baseline behind an async `IntentInterpreter` port.
+It avoids adding another model call to every turn and provides a testable fallback for a future
+structured semantic classifier. Explicit support mode and no-history instructions remain hard
+constraints. Memory and RAG are skipped when the current context is sufficient.
+
+### 3.2 Runtime protocol
 
 `CareerPilotHarness.stream()` is the canonical execution interface. It is an async generator of
 provider-neutral `HarnessEvent` values. `run()` consumes that same stream and folds the terminal
@@ -92,9 +116,10 @@ sent to the model; events describe execution to product clients and operations s
 | Product state | CareerPilot product store | Tasks, documents, permissions and UI state |
 | Career knowledge | RAG store | Reusable, sourced external knowledge |
 
-Memory retrieval happens before the first model request. The model may request additional governed
-knowledge through a tool, but it cannot write directly to MemOS. Post-turn admission remains a
-deterministic policy boundary; consolidation produces reviewable proposals.
+Memory retrieval happens before the first model request only when selected by `RetrievalPlan`.
+The model may request planned, governed knowledge through a tool, but it cannot write directly to
+MemOS or widen its own source permissions. Post-turn admission remains a deterministic policy
+boundary; consolidation produces reviewable proposals.
 
 ## 5. Model boundary
 

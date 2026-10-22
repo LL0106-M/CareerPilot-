@@ -85,6 +85,8 @@ def create_app(
         return ChatResponse(
             reply=result.reply,
             support_mode=result.support_mode,
+            primary_intent=result.primary_intent,
+            retrieval_sources=result.retrieval_sources,
             memory_read_status=result.memory_read_status,
             memory_write_status=result.memory_write_status,
             dreaming_status=result.dreaming_status,

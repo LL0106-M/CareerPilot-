@@ -1,5 +1,6 @@
 from html import escape
 
+from careerpilot.context.contracts import IntentFrame, RetrievalPlan
 from careerpilot.memory.base import MemoryContext
 from careerpilot.memory.dreaming import CareerHypothesis
 from careerpilot.support.policy import SupportDecision, SupportMode
@@ -11,9 +12,12 @@ class PromptComposer:
         decision: SupportDecision,
         memories: MemoryContext | None,
         hypotheses: tuple[CareerHypothesis, ...] = (),
+        intent: IntentFrame | None = None,
+        retrieval_plan: RetrievalPlan | None = None,
     ) -> str:
         memory_context = self._format_memories(memories)
         hypothesis_context = self._format_hypotheses(hypotheses)
+        intent_context = self._format_intent(intent, retrieval_plan)
         return f"""你是 CareerPilot，一个长期陪伴用户探索职业方向的 Personal Agent。
 
 你的责任顺序是：先提供与事实相符的情绪慰藉，再准确理解，再恢复用户控制感，最后才在用户愿意时推进一个小行动。不得诊断心理疾病，不得制造依赖，不得把猜想写成事实。
@@ -22,6 +26,12 @@ class PromptComposer:
 - support_mode: {decision.mode.value}
 - distress_detected: {str(decision.distress_detected).lower()}
 - action_tools_allowed: {str(decision.action_tools_allowed).lower()}
+
+<turn_understanding>
+以下内容是 Harness 对当前轮的候选理解。它用于限定任务和检索范围，不得覆盖用户原话；
+若与用户当前表达冲突，以当前表达为准，并在必要时只追问一个关键问题。
+{intent_context}
+</turn_understanding>
 
 {self._support_contract(decision.mode)}
 
@@ -91,4 +101,32 @@ RAG 与个人记忆分离：系统资料可跨用户复用；用户提供的资�
         return "\n".join(
             f"- [candidate/{escape(item.confidence_band)}] {escape(item.statement)}"
             for item in hypotheses
+        )
+
+    @staticmethod
+    def _format_intent(
+        intent: IntentFrame | None,
+        retrieval_plan: RetrievalPlan | None,
+    ) -> str:
+        if intent is None:
+            return "没有结构化意图结果，按用户当前表达谨慎回答。"
+        slots = (
+            ", ".join(
+                f"{escape(item.name)}={escape('|'.join(item.values))}"
+                for item in intent.slots
+            )
+            or "none"
+        )
+        sources = (
+            ", ".join(route.source.value for route in retrieval_plan.routes)
+            if retrieval_plan is not None and retrieval_plan.routes
+            else "none"
+        )
+        secondary = ", ".join(item.value for item in intent.secondary_intents) or "none"
+        return (
+            f"- primary_intent: {intent.primary_intent.value}\n"
+            f"- secondary_intents: {secondary}\n"
+            f"- confidence: {intent.confidence.value}\n"
+            f"- slots: {slots}\n"
+            f"- planned_context_sources: {sources}"
         )

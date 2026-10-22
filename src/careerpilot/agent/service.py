@@ -5,6 +5,7 @@ from langchain_core.tools import BaseTool
 
 from careerpilot.agent.base import AgentResponder
 from careerpilot.agent.prompt import PromptComposer
+from careerpilot.context.contracts import RetrievalSource, TaskIntent
 from careerpilot.harness.context import CareerContextCompiler, ContextRequest
 from careerpilot.harness.memory import MemoryLifecycle
 from careerpilot.memory.base import MemoryStore
@@ -28,6 +29,8 @@ class ChatCommand:
 class ChatResult:
     reply: str
     support_mode: SupportMode
+    primary_intent: TaskIntent
+    retrieval_sources: tuple[RetrievalSource, ...]
     memory_read_status: str
     memory_write_status: str
     dreaming_status: str
@@ -71,7 +74,7 @@ class AgentService:
         )
         runtime_tools = (
             ()
-            if context.decision.mode is SupportMode.LISTEN or self._rag_tool_factory is None
+            if not context.allowed_tool_names or self._rag_tool_factory is None
             else (self._rag_tool_factory(command.user_id),)
         )
         reply = await self._agent.respond(
@@ -92,6 +95,10 @@ class AgentService:
         return ChatResult(
             reply=reply,
             support_mode=context.decision.mode,
+            primary_intent=context.intent.primary_intent,
+            retrieval_sources=tuple(
+                route.source for route in context.retrieval_plan.routes
+            ),
             memory_read_status=context.memory_read_status,
             memory_write_status=memory_result.write_status,
             dreaming_status=memory_result.consolidation_status,

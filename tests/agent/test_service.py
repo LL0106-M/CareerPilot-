@@ -160,6 +160,20 @@ async def test_service_allows_local_rag_outside_listen_mode() -> None:
 
 
 @pytest.mark.asyncio
+async def test_service_skips_memory_when_general_knowledge_does_not_need_it() -> None:
+    events: list[str] = []
+    agent = RecordingAgent(events)
+    service = AgentService(RecordingMemoryStore(events), agent, SupportPolicy())
+
+    result = await service.chat(ChatCommand("user-1", "thread-1", "产品经理需要哪些能力"))
+
+    assert result.memory_read_status == "skipped"
+    assert events == ["agent"]
+    assert "primary_intent: general_question" in agent.system_context
+    assert "planned_context_sources: career_knowledge" in agent.system_context
+
+
+@pytest.mark.asyncio
 async def test_service_binds_agentic_rag_tool_to_authenticated_user() -> None:
     events: list[str] = []
     bound_user_ids: list[str] = []
@@ -224,7 +238,8 @@ async def test_service_keeps_transient_emotion_out_of_long_term_memory() -> None
     result = await service.chat(ChatCommand("user-1", "thread-1", "我今天被拒了，很难受"))
 
     assert result.memory_write_status == "skipped"
-    assert events == ["search:companion", "agent"]
+    assert result.memory_read_status == "skipped"
+    assert events == ["agent"]
 
 
 @pytest.mark.asyncio

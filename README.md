@@ -20,9 +20,9 @@ DeepAgents 或 LangGraph 控制运行循环；模型供应商只通过 `ModelGat
 API
  └─ AgentService（一次 Turn 的应用编排）
      ├─ CareerContextCompiler
-     │   ├─ SupportPolicy / 意图模式
-     │   ├─ MemOS Personal Memory
-     │   ├─ Cognitive State
+     │   ├─ IntentInterpreter / SupportPolicy
+     │   ├─ IntentAwareRetrievalRouter
+     │   ├─ 按计划读取 MemOS / Cognitive State
      │   └─ PromptComposer
      ├─ CareerPilotHarness
      │   ├─ ModelGateway
@@ -69,10 +69,10 @@ Agent 不知道"本地够不够"、"搜了几轮"、"用的 turbo 还是 max"—
 
 | 决策 | 谁管 | Agent 能不能碰 |
 |---|---|---|
-| 能用什么 tool | SupportPolicy + allowed_tool_names | ✗ |
+| 能用什么 tool | IntentAwareRetrievalRouter + allowed_tool_names | ✗ |
 | 要不要调 search_career_knowledge | Agent 自己的思考循环 | ✓ |
 | 本地搜还是联网搜 | AgenticRagOrchestrator 内部 | ✗ |
-| 查用户长期记忆 | CareerContextCompiler 前置召回 | ✗ |
+| 是否查用户长期记忆 | RetrievalPlan 决策，CareerContextCompiler 执行 | ✗ |
 | 要不要写用户记忆 | MemoryLifecycle 后置评估 | ✗ |
 | Session 如何持久化 | CareerPilotHarness + SQLite | ✗ |
 | 用什么 system prompt | CareerContextCompiler 组装 | ✗ |
@@ -81,6 +81,7 @@ Agent 不知道"本地够不够"、"搜了几轮"、"用的 turbo 还是 max"—
 
 ```text
 src/careerpilot/
+├── context/        IntentFrame、P0 意图识别、槽位提取与一级检索路由
 ├── harness/        自有 Loop、模型协议、Context、Memory 生命周期、工具策略与 Session
 ├── agent/          CareerPilot Agent 定义、Prompt 与 Turn 应用编排
 ├── api/            FastAPI 路由与 schema（/health, /v1/chat）
@@ -101,8 +102,9 @@ src/careerpilot/
 | 能力 | 说明 |
 |---|---|
 | 四种支持模式 | `listen` / `organize` / `explore` / `act`，用户显式选择优先 |
+| 意图与一级路由 | P0 `TaskIntent`、基础槽位、`RetrievalPlan`；按需选择 Memory、Cognitive State、Private RAG、Career RAG、Jobs 与 Web |
 | 情绪优先 | 有负面情绪时先提供具体慰藉，不把"能行动"误判为"应该行动" |
-| 长期记忆 | MemOS 搜索在模型调用之前、写入在完整回复之后；返回读写状态供前端展示 |
+| 长期记忆 | 仅在路由判断个人历史会改善回答时前置查询 MemOS；写入仍在完整回复之后独立准入 |
 | 记忆写入策略 | 一次性的难受、自责和情绪标签不进入长期记忆（返回 `skipped`）；仅稳定偏好 / 长期约束 / 明确要求记住的内容被接受 |
 | 优雅降级 | MemOS 不可用时降级为当前会话回复，不伪造"记得" |
 | Agent Harness | CareerPilot 自有事件驱动运行时；拥有模型/工具循环、显式状态机、流式事件、最大步数、工具策略和持久 Session |
@@ -208,8 +210,11 @@ Invoke-RestMethod `
 {
   "reply": "...",
   "support_mode": "listen",
-  "memory_read_status": "available",
-  "memory_write_status": "skipped"
+  "primary_intent": "emotional_support",
+  "retrieval_sources": [],
+  "memory_read_status": "skipped",
+  "memory_write_status": "skipped",
+  "dreaming_status": "skipped"
 }
 ```
 
