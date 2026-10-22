@@ -22,6 +22,14 @@ def test_settings_reads_cognitive_memory_database_path(monkeypatch) -> None:
     assert settings.memory_db_path == Path("var/memory/career.db")
 
 
+def test_settings_reads_harness_session_database_path(monkeypatch) -> None:
+    monkeypatch.setenv("CAREERPILOT_SESSION_DB_PATH", "var/sessions/career.db")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.session_db_path == Path("var/sessions/career.db")
+
+
 def test_settings_separates_exploration_and_reasoning_temperatures() -> None:
     settings = Settings(_env_file=None)
 

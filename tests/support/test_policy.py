@@ -1,9 +1,6 @@
-from pathlib import Path
-
 import pytest
 
 from careerpilot.support.policy import SupportMode, SupportPolicy
-from careerpilot.support.skill_loader import SkillLoader
 
 
 @pytest.mark.parametrize(
@@ -33,14 +30,3 @@ def test_explicit_mode_overrides_heuristics() -> None:
     assert decision.mode is SupportMode.LISTEN
     assert decision.action_tools_allowed is False
     assert decision.distress_detected is True
-
-
-def test_skill_loader_builds_comfort_first_runtime_contract(tmp_path: Path) -> None:
-    skill_path = tmp_path / "SKILL.md"
-    skill_path.write_text("先提供具体慰藉，再决定是否推进。", encoding="utf-8")
-
-    context = SkillLoader(skill_path).runtime_context(SupportMode.LISTEN)
-
-    assert "先提供具体慰藉" in context
-    assert "禁止调用行动工具" in context
-    assert "用户当前模式：listen" in context

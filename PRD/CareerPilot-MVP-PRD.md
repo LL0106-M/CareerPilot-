@@ -1,5 +1,9 @@
 # CareerPilot 就业陪伴 Personal Agent｜MVP 产品需求文档
 
+> 历史设计稿：该文档保留完整研究、交互与技术讨论，不再作为当前 MVP 的唯一范围基线。
+> 当前精简产品基线见 [CareerPilot-MVP-PRD-v1.0](./CareerPilot-MVP-PRD-v1.0.md)，
+> Harness 技术边界见 [CareerPilot Harness Architecture](../docs/architecture/careerpilot-harness.md)。
+
 > 文档版本：v0.5  
 > 文档状态：MVP 评审稿  
 > 面向对象：产品、设计、研发、测试、运营  

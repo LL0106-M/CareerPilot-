@@ -1,7 +1,8 @@
-from careerpilot.agent.deepagents_runtime import DeepAgentsResponder
 from careerpilot.agent.model import create_qwen_model
+from careerpilot.agent.runtime import CareerPilotResponder
 from careerpilot.agent.service import AgentService
 from careerpilot.config import Settings
+from careerpilot.harness.session import SqliteSessionStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.memos import MemosCloudMemoryStore
 from careerpilot.rag.embeddings import create_embedding_provider
@@ -13,7 +14,13 @@ from careerpilot.support.policy import SupportPolicy
 
 def build_agent_service(
     settings: Settings,
-) -> tuple[AgentService, MemosCloudMemoryStore, SqliteRagStore, SqliteCognitiveStore]:
+) -> tuple[
+    AgentService,
+    MemosCloudMemoryStore,
+    SqliteRagStore,
+    SqliteCognitiveStore,
+    SqliteSessionStore,
+]:
     if settings.memos_api_key is None:
         raise RuntimeError("MEMOS_API_KEY is not configured")
     memory_store = MemosCloudMemoryStore(
@@ -25,9 +32,10 @@ def build_agent_service(
         embedder=create_embedding_provider(settings),
     )
     cognitive_store = SqliteCognitiveStore(settings.memory_db_path)
+    session_store = SqliteSessionStore(settings.session_db_path)
     model = create_qwen_model(settings)
     provider = _build_search_provider(settings)
-    agent = DeepAgentsResponder(model)
+    agent = CareerPilotResponder(model, session_store=session_store)
     return (
         AgentService(
             memory_store,
@@ -41,6 +49,7 @@ def build_agent_service(
         memory_store,
         rag_store,
         cognitive_store,
+        session_store,
     )
 
 

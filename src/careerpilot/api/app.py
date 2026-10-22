@@ -8,6 +8,7 @@ from careerpilot.agent.service import ChatCommand, ChatResult
 from careerpilot.api.dependencies import build_agent_service
 from careerpilot.api.schemas import ChatRequest, ChatResponse
 from careerpilot.config import Settings, get_settings
+from careerpilot.harness.session import SqliteSessionStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.memos import MemosCloudMemoryStore
 from careerpilot.rag.store import SqliteRagStore
@@ -26,6 +27,7 @@ def create_app(
     owned_memory_store: MemosCloudMemoryStore | None = None
     owned_rag_store: SqliteRagStore | None = None
     owned_cognitive_store: SqliteCognitiveStore | None = None
+    owned_session_store: SqliteSessionStore | None = None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -36,11 +38,14 @@ def create_app(
             owned_rag_store.close()
         if owned_cognitive_store is not None:
             owned_cognitive_store.close()
+        if owned_session_store is not None:
+            owned_session_store.close()
 
     app = FastAPI(title="CareerPilot Agent API", version="0.1.0", lifespan=lifespan)
 
     def resolve_chat_service() -> ChatService:
-        nonlocal chat_service, owned_memory_store, owned_rag_store, owned_cognitive_store
+        nonlocal chat_service, owned_memory_store, owned_rag_store
+        nonlocal owned_cognitive_store, owned_session_store
         if chat_service is None:
             try:
                 (
@@ -48,6 +53,7 @@ def create_app(
                     owned_memory_store,
                     owned_rag_store,
                     owned_cognitive_store,
+                    owned_session_store,
                 ) = build_agent_service(resolved_settings)
             except RuntimeError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc

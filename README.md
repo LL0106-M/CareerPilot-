@@ -13,56 +13,29 @@
 
 ## 架构概览
 
-CareerPilot 是一个**被严格约束的单 Agent 系统**。它把 Agent 锁在受控的 sandbox 里，只让模型做它擅长的事——基于上下文和工具观察生成回复。所有"危险"的决策（能不能用工具、什么时候搜资料、要不要写记忆）都外置到了 guard 层。
-
-### 三层结构
+CareerPilot 是一个**单前台 Agent、Memory/RAG-native 的自有 Harness**。项目不依赖
+DeepAgents 或 LangGraph 控制运行循环；模型供应商只通过 `ModelGateway` 接入。
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│ Guard Layer（不在 Agent 循环内）                              │
-│                                                              │
-│  SupportPolicy.decide()                                       │
-│    → 判定 support_mode + distress                            │
-│    → 决定 Agent 的 allowed_tool_names                        │
-│                                                              │
-│  MemoryStore.search()                                         │
-│    → Agent 启动前查好长期记忆                                  │
-│    → 作为 <personal_memory_context> 注入 system prompt        │
-│                                                              │
-│  PromptComposer.compose()                                     │
-│    → 组装 Skill 上下文 + 安全边界 + 记忆摘要                  │
-│    → 写入 allowed_tool_names                                  │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ system prompt + user message + tools
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Agent Loop（Deep Agents / LangGraph runtime）                 │
-│                                                              │
-│   LLM 思考 ──▶ 需要 tool call？                               │
-│        │是          │否                                      │
-│        ▼            ▼                                        │
-│   search_career   生成最终 AIMessage                          │
-│   _knowledge                                                │
-│        │                                                     │
-│        ▼                                                     │
-│   Tool observation ──▶ 再思考 ──▶ 循环或结束                  │
-│                                                              │
-│   Guardrails:                                                │
-│   · listen 模式下 tools 为空                                  │
-│   · 只有 search_career_knowledge 一个 tool                    │
-│   · 无通用 sub-agent、无 host operation                       │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Post-Hoc Memory Write（不在 Agent 循环内）                    │
-│                                                              │
-│  MemoryWritePolicy.should_write(user_message)                 │
-│    → 仅稳定偏好 / 长期约束 / 明确要求记住的内容被 accepted    │
-│    → 一次性情绪标签返回 skipped，不写入                        │
-│    → Agent 已输出回复，不参与此决策                            │
-└─────────────────────────────────────────────────────────────┘
+API
+ └─ AgentService（一次 Turn 的应用编排）
+     ├─ CareerContextCompiler
+     │   ├─ SupportPolicy / 意图模式
+     │   ├─ MemOS Personal Memory
+     │   ├─ Cognitive State
+     │   └─ PromptComposer
+     ├─ CareerPilotHarness
+     │   ├─ ModelGateway
+     │   ├─ ToolRegistry / ToolPolicy
+     │   ├─ model → tool → model 循环
+     │   └─ SQLite Session Log
+     ├─ AgenticRagOrchestrator
+     └─ MemoryLifecycle
+         ├─ MemoryWritePolicy
+         └─ Dreaming / Consolidation Queue
 ```
+
+Harness 控制模型在每一步**看见什么、能做什么、留下什么**。模型负责语义理解和工具选择；权限、最大步数、Session、记忆准入和检索边界由确定性代码执行。
 
 ### Agent 看不到的内部循环
 
@@ -99,20 +72,22 @@ Agent 不知道"本地够不够"、"搜了几轮"、"用的 turbo 还是 max"—
 | 能用什么 tool | SupportPolicy + allowed_tool_names | ✗ |
 | 要不要调 search_career_knowledge | Agent 自己的思考循环 | ✓ |
 | 本地搜还是联网搜 | AgenticRagOrchestrator 内部 | ✗ |
-| 查用户长期记忆 | AgentService 前置注入 prompt | ✗ |
-| 要不要写用户记忆 | MemoryWritePolicy 后置评估 | ✗ |
-| 用什么 system prompt | PromptComposer 启动前组装 | ✗ |
+| 查用户长期记忆 | CareerContextCompiler 前置召回 | ✗ |
+| 要不要写用户记忆 | MemoryLifecycle 后置评估 | ✗ |
+| Session 如何持久化 | CareerPilotHarness + SQLite | ✗ |
+| 用什么 system prompt | CareerContextCompiler 组装 | ✗ |
 
 ### 模块划分
 
 ```text
 src/careerpilot/
-├── agent/          Deep Agents runtime、prompt 构建、服务编排
+├── harness/        自有 Loop、模型协议、Context、Memory 生命周期、工具策略与 Session
+├── agent/          CareerPilot Agent 定义、Prompt 与 Turn 应用编排
 ├── api/            FastAPI 路由与 schema（/health, /v1/chat）
 ├── memory/         MemOS Cloud 长期记忆 + 本地 cognitive store + MemoryWritePolicy + dreaming
 ├── rag/            SQLite 证据索引、混合召回、RRF 重排、AgenticRagOrchestrator
 ├── search/         阿里云 DashScope web search（turbo → max 两级升级）
-├── support/        SupportPolicy + SkillLoader
+├── support/        确定性的 SupportPolicy
 ├── ingestion/      岗位信息摄取流水线（Source → Transform → Validate → Load）
 └── config.py       运行时配置（pydantic-settings，从 .env 加载）
 ```
@@ -130,7 +105,7 @@ src/careerpilot/
 | 长期记忆 | MemOS 搜索在模型调用之前、写入在完整回复之后；返回读写状态供前端展示 |
 | 记忆写入策略 | 一次性的难受、自责和情绪标签不进入长期记忆（返回 `skipped`）；仅稳定偏好 / 长期约束 / 明确要求记住的内容被接受 |
 | 优雅降级 | MemOS 不可用时降级为当前会话回复，不伪造"记得" |
-| Agent Harness | Deep Agents 作为 runtime；MVP 禁用 generic sub-agent 和 host operation tools |
+| Agent Harness | CareerPilot 自有运行时；拥有模型/工具循环、最大步数、工具策略和持久 Session |
 | LLM | 通过阿里云百炼 OpenAI-compatible API 使用 Qwen，生产默认固定 `qwen3.7-plus-2026-05-26` |
 | Web Search | 本地 RAG 证据不足或用户明确询问实时信息时，调用 DashScope web search；默认 `turbo`，多源验证不足时升级 `max`，不叠加第二层搜索 Agent |
 | 统一 RAG | 统一 Evidence Unit 索引（Passage / KG 三元组 / 表格事实共一个 SQLite 文件） |
@@ -202,7 +177,7 @@ CAREERPILOT_DASHSCOPE_BASE_URL=https://{WorkspaceId}.cn-beijing.maas.aliyuncs.co
 .venv\Scripts\python.exe scripts\ingest_job_records.py data\incoming\jobs.json
 ```
 
-岗位检索与核验规则位于 `skills/career-job-intelligence/`。流水线采用 Source → Transform → Validate → Load 分层，相同内容只更新抓取时间，不重复切分或生成向量。
+岗位摄取流水线采用 Source → Transform → Validate → Load 分层，相同内容只更新抓取时间，不重复切分或生成向量。
 
 ### 4. 启动 API
 
@@ -267,5 +242,4 @@ AgenticRagOrchestrator.retrieve()
 | `PRD/CareerPilot-MVP-PRD.md` | MVP 产品需求：背景、用户画像、核心闭环、竞品分析 |
 | `PRD/CareerPilot-Memory-RAG-Technical-Design.md` | 长期记忆、Dreaming、Agentic RAG 技术设计 |
 | `PRD/CareerPilot-RAG-MVP-Design.md` | RAG MVP 检索 Skill、统一 Markdown、切分与索引方案 |
-| `skills/career-job-intelligence/SKILL.md` | 岗位智能 Skill 规格 |
-| `skills/career-emotional-support/SKILL.md` | 情绪陪伴 Skill 规格 |
+| `docs/architecture/careerpilot-harness.md` | 自有 Harness 的边界、运行流程与迁移决策 |
