@@ -2,7 +2,13 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from careerpilot.harness.contracts import ModelRequest, ModelResponse, ToolCall
+from careerpilot.harness.contracts import (
+    ModelRequest,
+    ModelResponse,
+    ModelStreamEvent,
+    ToolCall,
+)
+from careerpilot.harness.events import HarnessEventType, RunPhase
 from careerpilot.harness.runtime import CareerPilotHarness, MaxStepsExceeded
 from careerpilot.harness.session import InMemorySessionStore
 
@@ -15,6 +21,18 @@ class RecordingGateway:
     async def generate(self, request: ModelRequest) -> ModelResponse:
         self.requests.append(request)
         return self.responses.pop(0)
+
+
+@dataclass
+class StreamingGateway:
+    responses: list[tuple[list[str], ModelResponse]]
+
+    async def stream(self, request: ModelRequest):
+        del request
+        deltas, response = self.responses.pop(0)
+        for delta in deltas:
+            yield ModelStreamEvent(text_delta=delta)
+        yield ModelStreamEvent(response=response)
 
 
 @pytest.mark.asyncio
@@ -78,3 +96,92 @@ async def test_harness_stops_runaway_model() -> None:
         await harness.run(
             user_message="循环", system_context="test", session_id="s1"
         )
+
+
+@pytest.mark.asyncio
+async def test_harness_streams_ordered_provider_neutral_events() -> None:
+    gateway = StreamingGateway(
+        [(["先", "梳理"], ModelResponse(text="先梳理", usage={"output_tokens": 2}))]
+    )
+    harness = CareerPilotHarness(gateway)
+
+    events = [
+        event
+        async for event in harness.stream(
+            user_message="我有点乱",
+            system_context="organize",
+            session_id="s1",
+            run_id="run-1",
+        )
+    ]
+
+    assert [event.type for event in events] == [
+        HarnessEventType.RUN_STARTED,
+        HarnessEventType.MODEL_STARTED,
+        HarnessEventType.TEXT_DELTA,
+        HarnessEventType.TEXT_DELTA,
+        HarnessEventType.MODEL_COMPLETED,
+        HarnessEventType.RUN_COMPLETED,
+    ]
+    assert [event.sequence for event in events] == list(range(1, 7))
+    text_deltas = [
+        event.data["text"]
+        for event in events
+        if event.type is HarnessEventType.TEXT_DELTA
+    ]
+    assert text_deltas == [
+        "先",
+        "梳理",
+    ]
+    assert events[-1].phase is RunPhase.COMPLETED
+    assert events[-1].run_id == "run-1"
+    assert events[-1].data["usage"] == {"output_tokens": 2}
+
+
+@pytest.mark.asyncio
+async def test_harness_emits_tool_lifecycle_between_model_steps() -> None:
+    gateway = RecordingGateway(
+        [
+            ModelResponse(tool_calls=(ToolCall("call-1", "missing", {"query": "x"}),)),
+            ModelResponse(text="已降级处理。"),
+        ]
+    )
+    harness = CareerPilotHarness(gateway)
+
+    events = [
+        event
+        async for event in harness.stream(
+            user_message="查一下",
+            system_context="test",
+            session_id="s1",
+        )
+    ]
+
+    event_types = [event.type for event in events]
+    assert event_types.index(HarnessEventType.TOOL_REQUESTED) < event_types.index(
+        HarnessEventType.TOOL_STARTED
+    )
+    assert event_types.index(HarnessEventType.TOOL_STARTED) < event_types.index(
+        HarnessEventType.TOOL_COMPLETED
+    )
+    assert events[-1].step == 2
+    assert events[-1].data["tool_names"] == ["missing"]
+
+
+@pytest.mark.asyncio
+async def test_harness_emits_failure_before_raising() -> None:
+    gateway = RecordingGateway([ModelResponse()])
+    harness = CareerPilotHarness(gateway)
+    events = []
+
+    with pytest.raises(RuntimeError, match="neither text nor tool calls"):
+        async for event in harness.stream(
+            user_message="hello",
+            system_context="test",
+            session_id="s1",
+        ):
+            events.append(event)
+
+    assert events[-1].type is HarnessEventType.RUN_FAILED
+    assert events[-1].phase is RunPhase.FAILED
+    assert events[-1].data["error_type"] == "RuntimeError"

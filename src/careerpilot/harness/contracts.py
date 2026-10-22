@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -39,8 +40,18 @@ class ModelResponse:
     usage: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class ModelStreamEvent:
+    """One provider-neutral item from a streaming model invocation."""
+
+    text_delta: str = ""
+    response: ModelResponse | None = None
+
+
 class ModelGateway(Protocol):
     async def generate(self, request: ModelRequest) -> ModelResponse: ...
+
+    def stream(self, request: ModelRequest) -> AsyncIterator[ModelStreamEvent]: ...
 
 
 class SessionStore(Protocol):

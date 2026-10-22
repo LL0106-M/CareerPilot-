@@ -35,7 +35,7 @@ API
          └─ Dreaming / Consolidation Queue
 ```
 
-Harness 控制模型在每一步**看见什么、能做什么、留下什么**。模型负责语义理解和工具选择；权限、最大步数、Session、记忆准入和检索边界由确定性代码执行。
+Harness 控制模型在每一步**看见什么、能做什么、留下什么**。模型负责语义理解和工具选择；权限、最大步数、Session、记忆准入和检索边界由确定性代码执行。运行时以异步生成器输出稳定的 CareerPilot 事件协议，现有一次性问答接口则归并同一条事件流，不维护第二套执行循环。
 
 ### Agent 看不到的内部循环
 
@@ -105,7 +105,7 @@ src/careerpilot/
 | 长期记忆 | MemOS 搜索在模型调用之前、写入在完整回复之后；返回读写状态供前端展示 |
 | 记忆写入策略 | 一次性的难受、自责和情绪标签不进入长期记忆（返回 `skipped`）；仅稳定偏好 / 长期约束 / 明确要求记住的内容被接受 |
 | 优雅降级 | MemOS 不可用时降级为当前会话回复，不伪造"记得" |
-| Agent Harness | CareerPilot 自有运行时；拥有模型/工具循环、最大步数、工具策略和持久 Session |
+| Agent Harness | CareerPilot 自有事件驱动运行时；拥有模型/工具循环、显式状态机、流式事件、最大步数、工具策略和持久 Session |
 | LLM | 通过阿里云百炼 OpenAI-compatible API 使用 Qwen，生产默认固定 `qwen3.7-plus-2026-05-26` |
 | Web Search | 本地 RAG 证据不足或用户明确询问实时信息时，调用 DashScope web search；默认 `turbo`，多源验证不足时升级 `max`，不叠加第二层搜索 Agent |
 | 统一 RAG | 统一 Evidence Unit 索引（Passage / KG 三元组 / 表格事实共一个 SQLite 文件） |

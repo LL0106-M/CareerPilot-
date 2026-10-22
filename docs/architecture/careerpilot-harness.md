@@ -42,7 +42,7 @@ user message
 → CareerContextCompiler retrieves MemOS and cognitive state
 → PromptComposer produces attributed, bounded context
 → CareerPilotHarness loads durable session history
-→ ModelGateway invokes the configured provider
+→ ModelGateway streams from the configured provider
 → ToolPolicy filters requested tools
 → ToolRegistry validates and executes an allowed call
 → the result is appended and the model continues
@@ -52,6 +52,35 @@ user message
 
 The first implementation caps a turn at four model steps. A model cannot bypass the tool allowlist:
 even a malformed or adversarial request for a hidden tool receives a structured forbidden result.
+
+### 3.1 Runtime protocol
+
+`CareerPilotHarness.stream()` is the canonical execution interface. It is an async generator of
+provider-neutral `HarnessEvent` values. `run()` consumes that same stream and folds the terminal
+event into `HarnessRunResult`, so non-streaming application code does not maintain a second loop.
+
+```text
+run.started
+→ model.started
+→ model.text_delta *
+→ model.completed
+→ [tool.requested → tool.started → tool.completed → model.started] *
+→ run.completed | run.failed | run.cancelled
+```
+
+Every event carries `run_id`, `session_id`, monotonic `sequence`, `phase`, and `step`. Payloads are
+JSON-compatible and do not expose LangChain or provider event classes. An API transport can map the
+same stream to SSE or WebSocket, while an event store or trace collector can consume it directly.
+
+`AgentRunState` enforces legal phase transitions:
+
+```text
+created → running → model ⇄ tools → completed
+                       └───────→ failed / cancelled
+```
+
+Model messages and runtime events are deliberately different protocols. Messages form the context
+sent to the model; events describe execution to product clients and operations systems.
 
 ## 4. Memory layers
 
@@ -69,9 +98,10 @@ deterministic policy boundary; consolidation produces reviewable proposals.
 
 ## 5. Model boundary
 
-`ModelGateway` accepts CareerPilot-owned messages and tool schemas. The initial provider adapter uses
-LangChain's chat-model transport, but provider objects never enter the runtime or application layer.
-Replacing that adapter with a direct OpenAI-compatible client does not change the harness contracts.
+`ModelGateway` accepts CareerPilot-owned messages and tool schemas and emits `ModelStreamEvent`
+values. The initial provider adapter uses LangChain's chat-model transport, but provider chunks never
+enter the runtime or application layer. Replacing that adapter with a direct OpenAI-compatible client
+does not change the harness event contract.
 
 ## 6. Persistence and failure semantics
 
@@ -79,11 +109,17 @@ Session messages are append-only rows in SQLite and include assistant tool calls
 RAG, cognitive state, product state, and sessions use separate files because they have different
 retention and migration requirements.
 
-Current limitations that must be resolved before public production deployment:
+The runtime already exposes ordered streaming events, explicit phases, terminal failure events,
+cooperative cancellation semantics, tool lifecycle events, accumulated usage, and a compatibility
+collector for existing request/response callers.
+
+Current limitations that must still be resolved before public production deployment:
 
 - add per-session concurrency control and optimistic turn ownership;
 - persist explicit turn/step events, not only reconstructed messages;
-- add cancellation, provider timeouts, retry budgets, and streaming events;
+- expose the runtime stream through an authenticated SSE or WebSocket endpoint;
+- add provider timeouts, bounded retry budgets, and idempotency keys for side-effecting tools;
+- add token budgets, context compaction, repeated-action detection, and long-task checkpoints;
 - replace keyword-only intent routing with an evaluated structured classifier;
 - add Memory retrieval and write-admission evaluation datasets;
 - derive user identity from authentication rather than request JSON.

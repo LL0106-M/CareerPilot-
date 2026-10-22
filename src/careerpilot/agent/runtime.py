@@ -1,7 +1,10 @@
+from collections.abc import AsyncIterator
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from careerpilot.agent.base import AgentResponder
+from careerpilot.harness.events import HarnessEvent
 from careerpilot.harness.model import LangChainModelGateway
 from careerpilot.harness.runtime import CareerPilotHarness
 from careerpilot.harness.session import InMemorySessionStore
@@ -43,3 +46,22 @@ class CareerPilotResponder(AgentResponder):
             runtime_tools=runtime_tools,
         )
         return result.reply
+
+    async def stream(
+        self,
+        user_message: str,
+        system_context: str,
+        thread_id: str,
+        allowed_tool_names: frozenset[str] | None = None,
+        runtime_tools: tuple[BaseTool, ...] = (),
+        run_id: str | None = None,
+    ) -> AsyncIterator[HarnessEvent]:
+        async for event in self._harness.stream(
+            user_message=user_message,
+            system_context=system_context,
+            session_id=thread_id,
+            allowed_tool_names=allowed_tool_names,
+            runtime_tools=runtime_tools,
+            run_id=run_id,
+        ):
+            yield event

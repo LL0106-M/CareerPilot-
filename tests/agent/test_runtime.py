@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
 from careerpilot.agent.runtime import CareerPilotResponder
+from careerpilot.harness.events import HarnessEventType
 
 
 class ToolCapableFakeChatModel(FakeMessagesListChatModel):
@@ -133,3 +134,23 @@ async def test_runtime_tool_overrides_static_tool_with_same_name() -> None:
 
     assert calls == ["user"]
     assert model.bound_tool_names.count("search_career_knowledge") == 1
+
+
+@pytest.mark.asyncio
+async def test_responder_exposes_runtime_event_stream() -> None:
+    model = ToolCapableFakeChatModel(responses=[AIMessage(content="我们先梳理。")])
+    responder = CareerPilotResponder(model)
+
+    events = [
+        event
+        async for event in responder.stream(
+            "我有点乱",
+            "当前模式 organize",
+            "thread-stream",
+            run_id="run-stream",
+        )
+    ]
+
+    assert events[0].type is HarnessEventType.RUN_STARTED
+    assert events[-1].type is HarnessEventType.RUN_COMPLETED
+    assert events[-1].data["reply"] == "我们先梳理。"
