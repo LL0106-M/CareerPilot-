@@ -9,6 +9,7 @@ from careerpilot.rag.agentic import (
     KnowledgeScope,
     OnlineSearch,
 )
+from careerpilot.rag.context import ContextAssembler
 from careerpilot.rag.retrieval import RagRetriever
 from careerpilot.rag.store import SqliteRagStore
 
@@ -34,6 +35,7 @@ def build_rag_tool(store: SqliteRagStore) -> StructuredTool:
             validation_target=validation_target,
             limit=limit,
         )
+        context_pack = ContextAssembler().assemble(status=result.status, hits=result.hits)
         payload = {
             "status": result.status,
             # Indexed documents and scraped pages are evidence, never instructions.
@@ -80,6 +82,8 @@ def build_rag_tool(store: SqliteRagStore) -> StructuredTool:
                 }
                 for hit in result.hits
             ],
+            "context_pack": context_pack.to_dict(),
+            "context_for_model": context_pack.render_for_model(),
         }
         return json.dumps(payload, ensure_ascii=False)
 
@@ -112,9 +116,7 @@ def build_agentic_rag_tool(
         minimum_sources: int = 1,
         limit: int = 5,
     ) -> str:
-        selected_scopes = tuple(
-            KnowledgeScope(item) for item in (scopes or ["jobs", "preparation"])
-        )
+        selected_scopes = tuple(KnowledgeScope(item) for item in (scopes or []))
         if KnowledgeScope.PERSONAL in selected_scopes and user_id is None:
             return json.dumps(
                 {
@@ -126,22 +128,34 @@ def build_agentic_rag_tool(
                 },
                 ensure_ascii=False,
             )
-        result = await orchestrator.retrieve(
-            AgenticRetrievalRequest(
-                query=query,
-                scopes=selected_scopes,
-                user_id=user_id,
-                sub_queries=tuple(sub_queries or ()),
-                requires_freshness=requires_freshness,
-                minimum_sources=minimum_sources,
-                limit=limit,
+        try:
+            result = await orchestrator.retrieve(
+                AgenticRetrievalRequest(
+                    query=query,
+                    scopes=selected_scopes,
+                    user_id=user_id,
+                    sub_queries=tuple(sub_queries or ()),
+                    requires_freshness=requires_freshness,
+                    minimum_sources=minimum_sources,
+                    limit=limit,
+                )
             )
-        )
+        except ValueError as exc:
+            return json.dumps(
+                {
+                    "status": "forbidden",
+                    "content_is_untrusted": True,
+                    "error": str(exc),
+                    "hits": [],
+                    "online_sources": [],
+                },
+                ensure_ascii=False,
+            )
         return json.dumps(
             {
                 "status": result.status,
                 "content_is_untrusted": True,
-                "scopes": [scope.value for scope in selected_scopes],
+                "scopes": [scope.value for scope in result.trace.scopes],
                 "needs_online_search": result.needs_online_search,
                 "needs_ingestion": result.needs_ingestion,
                 "retrieval": {
@@ -149,6 +163,17 @@ def build_agentic_rag_tool(
                     "online_rounds": result.trace.online_rounds,
                     "used_online_search": result.trace.used_online_search,
                     "stop_reason": result.trace.stop_reason,
+                    "external_route_reason": result.trace.external_route_reason,
+                    "internal_routes": list(result.trace.internal_routes),
+                    "retrieval_mode": result.trace.retrieval_mode.value,
+                    "graph_mode": result.trace.graph_mode.value,
+                    "query_intent": result.trace.query_intent,
+                },
+                "query_analysis": {
+                    "normalized_query": result.query_analysis.normalized_query,
+                    "requires_freshness": result.query_analysis.requires_freshness,
+                    "entities": result.query_analysis.entities,
+                    "sub_queries": list(result.query_analysis.sub_queries),
                 },
                 "hits": [
                     {
@@ -170,9 +195,12 @@ def build_agentic_rag_tool(
                         "title": source.title,
                         "url": source.url,
                         "site_name": source.site_name,
+                        "snippet": source.snippet,
                     }
                     for source in result.online_sources
                 ],
+                "context_pack": result.context_pack.to_dict(),
+                "context_for_model": result.context_pack.render_for_model(),
             },
             ensure_ascii=False,
         )

@@ -20,6 +20,15 @@ class FakeEmbedder:
         ]
 
 
+class CountingEmbedder(FakeEmbedder):
+    def __init__(self) -> None:
+        self.query_calls = 0
+
+    def embed_query(self, text: str) -> list[float]:
+        self.query_calls += 1
+        return super().embed_query(text)
+
+
 def _upsert(store: SqliteRagStore, document: SourceDocument) -> None:
     chunks = chunk_document(document)
     store.upsert(document, chunks, build_evidence_units(document, chunks))
@@ -46,7 +55,7 @@ def test_retriever_hybrid_fuses_sparse_dense_triple_and_graph(tmp_path: Path) ->
         "AI Agent 产品经理",
         "https://example.com/job",
         "company_official",
-        "job_opportunity",
+        "preparation_material",
         "AI 产品经理需要用户研究能力，也需要访谈经历。",
         metadata={
             "source_tier": 1,
@@ -58,7 +67,9 @@ def test_retriever_hybrid_fuses_sparse_dense_triple_and_graph(tmp_path: Path) ->
     )
     _upsert(store, document)
 
-    result = RagRetriever(store).retrieve("AI 产品经理需要哪些能力", limit=8)
+    result = RagRetriever(store).retrieve(
+        "AI 产品经理需要哪些能力", domain="preparation_material", limit=8
+    )
 
     assert result.hits
     assert any("dense" in hit.channels for hit in result.hits)
@@ -66,6 +77,60 @@ def test_retriever_hybrid_fuses_sparse_dense_triple_and_graph(tmp_path: Path) ->
     assert any("graph" in hit.channels and "访谈经历" in hit.content for hit in result.hits)
     assert len({hit.evidence_id for hit in result.hits}) == len(result.hits)
     assert result.stop_reason == "enough"
+
+
+def test_retriever_reuses_one_query_embedding_for_passages_and_triples(tmp_path: Path) -> None:
+    embedder = CountingEmbedder()
+    store = SqliteRagStore(tmp_path / "rag.db", embedder=embedder)
+    document = SourceDocument(
+        "prep-query-cache",
+        "用户研究能力",
+        "file:///prep-query-cache.md",
+        "developer_upload",
+        "preparation_material",
+        "用户研究能力通过访谈经历体现。",
+        metadata={
+            "triples": [
+                {"subject": "用户研究能力", "relation": "通过", "object": "访谈经历"}
+            ]
+        },
+    )
+    _upsert(store, document)
+    embedder.query_calls = 0
+
+    RagRetriever(store).retrieve(
+        "用户研究能力如何关联访谈经历",
+        domain="preparation_material",
+        use_graph=True,
+    )
+
+    assert embedder.query_calls == 1
+
+
+def test_job_retrieval_does_not_use_graph_evidence(tmp_path: Path) -> None:
+    store = SqliteRagStore(tmp_path / "rag.db")
+    document = SourceDocument(
+        "job-no-graph",
+        "AI 产品岗位",
+        "https://example.com/job",
+        "web_job",
+        "job_opportunity",
+        "AI 产品经理需要用户研究能力。",
+        metadata={
+            "triples": [
+                {"subject": "AI产品经理", "relation": "需要", "object": "用户研究能力"}
+            ]
+        },
+    )
+    _upsert(store, document)
+
+    result = RagRetriever(store).retrieve(
+        "AI 产品经理需要什么能力", domain="job_opportunity", limit=5
+    )
+
+    assert result.hits
+    assert all(hit.evidence_kind is not EvidenceKind.KG_TRIPLE for hit in result.hits)
+    assert all("graph" not in hit.channels for hit in result.hits)
 
 
 def test_retriever_respects_explicit_domain_filter(tmp_path: Path) -> None:
@@ -95,6 +160,31 @@ def test_retriever_respects_explicit_domain_filter(tmp_path: Path) -> None:
 
     assert result.hits
     assert {hit.domain for hit in result.hits} == {"job_opportunity"}
+
+
+def test_retriever_ranks_child_and_returns_parent_context(tmp_path: Path) -> None:
+    store = SqliteRagStore(tmp_path / "rag.db")
+    document = SourceDocument(
+        "prep-parent",
+        "需求分析面试准备",
+        "file:///prep.md",
+        "developer_upload",
+        "preparation_material",
+        "# 需求分析\n\n先识别用户问题。再验证需求优先级。最后形成可验证方案并复盘。",
+    )
+    _upsert(store, document)
+
+    result = RagRetriever(store).retrieve(
+        "如何验证需求优先级", domain="preparation_material", limit=3
+    )
+
+    assert result.hits
+    hit = result.hits[0]
+    assert "用户问题" in hit.content
+    assert "复盘" in hit.content
+    assert "需求优先级" in hit.metadata["matched_content"]
+    assert hit.metadata["context_chunk_level"] == "parent"
+    assert hit.metadata["matched_chunk_id"] != hit.metadata["context_chunk_id"]
 
 
 def test_retriever_marks_multi_source_synthesis_partial(tmp_path: Path) -> None:

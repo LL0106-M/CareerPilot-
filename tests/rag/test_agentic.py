@@ -97,6 +97,9 @@ async def test_agentic_rag_searches_online_when_local_evidence_is_insufficient(
     assert result.needs_ingestion is True
     assert result.trace.used_online_search is True
     assert result.trace.stop_reason == "online_evidence"
+    assert result.trace.local_rounds == 0
+    assert result.trace.retrieval_mode.value == "web_only"
+    assert result.hits == ()
 
 
 @pytest.mark.asyncio

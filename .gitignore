@@ -13,8 +13,12 @@ node_modules/
 .next/
 dist/
 coverage/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 tmp/
+.workbuddy/
 
 # Generated knowledge indexes; version source documents instead.
 data/rag/*.db
@@ -23,3 +27,4 @@ data/rag/*.db-wal
 data/memory/*.db
 data/memory/*.db-shm
 data/memory/*.db-wal
+data/models/

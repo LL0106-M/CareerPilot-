@@ -1,7 +1,7 @@
 import hashlib
 import re
 
-from careerpilot.rag.models import DocumentChunk, SourceDocument
+from careerpilot.rag.models import ChunkLevel, DocumentChunk, SourceDocument
 
 _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*$")
 
@@ -11,38 +11,84 @@ def chunk_document(
     *,
     max_chars: int = 900,
     overlap_chars: int = 100,
+    parent_max_chars: int | None = None,
 ) -> tuple[DocumentChunk, ...]:
     if max_chars < 20:
         raise ValueError("max_chars must be at least 20")
     if overlap_chars < 0 or overlap_chars >= max_chars:
         raise ValueError("overlap_chars must be between 0 and max_chars")
+    parent_limit = parent_max_chars or max(1_800, max_chars)
+    if parent_limit < max_chars:
+        raise ValueError("parent_max_chars must be greater than or equal to max_chars")
 
     sections = _markdown_sections(document.text, document.title)
     chunks: list[DocumentChunk] = []
     ordinal = 0
     for heading, body in sections:
-        for content in _split_text(body, max_chars, overlap_chars):
-            digest = hashlib.sha256(
-                f"{document.id}:{ordinal}:{heading}:{content}".encode()
-            ).hexdigest()[:20]
+        for parent_content in _split_text(body, parent_limit, 0):
+            parent_id = _chunk_id(document.id, "parent", heading, parent_content)
             chunks.append(
                 DocumentChunk(
-                    id=f"chunk-{digest}",
+                    id=parent_id,
                     document_id=document.id,
                     ordinal=ordinal,
                     title=document.title,
                     heading=heading,
-                    content=content,
+                    content=parent_content,
                     source_uri=document.source_uri,
                     source_type=document.source_type,
                     domain=document.domain,
-                    metadata=dict(document.metadata),
+                    metadata={
+                        **document.metadata,
+                        "chunk_level": ChunkLevel.PARENT.value,
+                        "heading_path": [heading],
+                    },
                     knowledge_origin=document.knowledge_origin,
                     owner_user_id=document.owner_user_id,
+                    parent_id=None,
+                    chunk_level=ChunkLevel.PARENT,
                 )
             )
             ordinal += 1
+            for child_content in _split_text(parent_content, max_chars, overlap_chars):
+                child_id = _chunk_id(
+                    document.id,
+                    "child",
+                    heading,
+                    f"{parent_id}:{child_content}",
+                )
+                chunks.append(
+                    DocumentChunk(
+                        id=child_id,
+                        document_id=document.id,
+                        ordinal=ordinal,
+                        title=document.title,
+                        heading=heading,
+                        content=child_content,
+                        source_uri=document.source_uri,
+                        source_type=document.source_type,
+                        domain=document.domain,
+                        metadata={
+                            **document.metadata,
+                            "chunk_level": ChunkLevel.CHILD.value,
+                            "parent_id": parent_id,
+                            "heading_path": [heading],
+                        },
+                        knowledge_origin=document.knowledge_origin,
+                        owner_user_id=document.owner_user_id,
+                        parent_id=parent_id,
+                        chunk_level=ChunkLevel.CHILD,
+                    )
+                )
+                ordinal += 1
     return tuple(chunks)
+
+
+def _chunk_id(document_id: str, level: str, heading: str, content: str) -> str:
+    digest = hashlib.sha256(
+        f"{document_id}:{level}:{heading}:{content}".encode()
+    ).hexdigest()[:20]
+    return f"chunk-{digest}"
 
 
 def _markdown_sections(text: str, default_heading: str) -> list[tuple[str, str]]:

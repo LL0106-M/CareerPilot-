@@ -2,14 +2,31 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Protocol
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
+from fastapi.middleware.cors import CORSMiddleware
 
 from careerpilot.agent.service import ChatCommand, ChatResult
-from careerpilot.api.dependencies import build_agent_service
-from careerpilot.api.schemas import ChatRequest, ChatResponse
+from careerpilot.api.auth import (
+    COOKIE_NAME,
+    Identity,
+    generate_conversation_id,
+    read_or_create_identity,
+)
+from careerpilot.api.dependencies import build_agent_service, build_search_provider
+from careerpilot.api.schemas import (
+    ChatRequest,
+    ChatResponse,
+    HypothesisDecisionRequest,
+    JourneyUpdateRequest,
+    RagQueryRequest,
+)
 from careerpilot.config import Settings, get_settings
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.memos import MemosCloudMemoryStore
+from careerpilot.product_store import ProductStore
+from careerpilot.rag.agentic import AgenticRagOrchestrator, AgenticRetrievalRequest
+from careerpilot.rag.embeddings import create_embedding_provider
+from careerpilot.rag.routing import KnowledgeScope
 from careerpilot.rag.store import SqliteRagStore
 
 
@@ -26,6 +43,7 @@ def create_app(
     owned_memory_store: MemosCloudMemoryStore | None = None
     owned_rag_store: SqliteRagStore | None = None
     owned_cognitive_store: SqliteCognitiveStore | None = None
+    owned_product_store: ProductStore | None = None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -36,8 +54,29 @@ def create_app(
             owned_rag_store.close()
         if owned_cognitive_store is not None:
             owned_cognitive_store.close()
+        if owned_product_store is not None:
+            owned_product_store.close()
 
-    app = FastAPI(title="CareerPilot Agent API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="CareerPilot Agent API", version="0.2.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=resolved_settings.allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Accept"],
+    )
+
+    def resolve_identity(
+        response: Response,
+        careerpilot_owner: str | None = Cookie(default=None, alias=COOKIE_NAME),
+    ) -> Identity:
+        return read_or_create_identity(
+            response,
+            careerpilot_owner,
+            secret=resolved_settings.cookie_secret.get_secret_value(),
+            secure_cookie=resolved_settings.secure_cookies,
+            accept_unsigned=resolved_settings.environment != "production",
+        )
 
     def resolve_chat_service() -> ChatService:
         nonlocal chat_service, owned_memory_store, owned_rag_store, owned_cognitive_store
@@ -58,20 +97,36 @@ def create_app(
         if rag_store is not None:
             return rag_store
         if owned_rag_store is None:
-            owned_rag_store = SqliteRagStore(resolved_settings.rag_db_path)
+            owned_rag_store = SqliteRagStore(
+                resolved_settings.rag_db_path,
+                embedder=create_embedding_provider(resolved_settings),
+            )
         return owned_rag_store
+
+    def resolve_product_store() -> ProductStore:
+        nonlocal owned_product_store
+        if owned_product_store is None:
+            owned_product_store = ProductStore(resolved_settings.product_db_path)
+        return owned_product_store
 
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": resolved_settings.app_name}
 
     @app.post("/v1/chat", response_model=ChatResponse)
-    async def chat(request: ChatRequest) -> ChatResponse:
+    async def chat(
+        request: ChatRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> ChatResponse:
+        """Chat endpoint. ``owner_id`` is derived from an HttpOnly cookie —
+        the client request body can never override it.
+        """
         service = resolve_chat_service()
+        conversation_id = request.conversation_id or generate_conversation_id()
         result = await service.chat(
             ChatCommand(
-                user_id=request.user_id,
-                conversation_id=request.conversation_id,
+                user_id=identity.owner_id,
+                conversation_id=conversation_id,
                 message=request.message,
                 requested_mode=request.support_mode,
             )
@@ -84,18 +139,72 @@ def create_app(
             dreaming_status=result.dreaming_status,
         )
 
-    # ----- Jobs API ---------------------------------------------------------
+    @app.post("/v1/rag/query")
+    async def query_rag(
+        request: RagQueryRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        """Standalone RAG boundary with external and internal query routing."""
+        orchestrator = AgenticRagOrchestrator(
+            resolve_rag_store(),
+            web_search=build_search_provider(resolved_settings),
+        )
+        result = await orchestrator.retrieve(
+            AgenticRetrievalRequest(
+                query=request.query,
+                scopes=tuple(KnowledgeScope(scope) for scope in request.scopes or ()),
+                user_id=identity.owner_id,
+                sub_queries=tuple(request.sub_queries),
+                requires_freshness=request.requires_freshness,
+                minimum_sources=request.minimum_sources,
+                limit=request.limit,
+            )
+        )
+        return {
+            "status": result.status,
+            "scopes": [scope.value for scope in result.trace.scopes],
+            "needs_online_search": result.needs_online_search,
+            "needs_ingestion": result.needs_ingestion,
+            "route": {
+                "external_reason": result.trace.external_route_reason,
+                "internal": list(result.trace.internal_routes),
+                "retrieval_mode": result.trace.retrieval_mode.value,
+                "graph_mode": result.trace.graph_mode.value,
+            },
+            "query_analysis": {
+                "normalized_query": result.query_analysis.normalized_query,
+                "intent": result.query_analysis.intent.value,
+                "requires_freshness": result.query_analysis.requires_freshness,
+                "entities": result.query_analysis.entities,
+                "sub_queries": list(result.query_analysis.sub_queries),
+            },
+            "retrieval": {
+                "local_rounds": result.trace.local_rounds,
+                "online_rounds": result.trace.online_rounds,
+                "used_online_search": result.trace.used_online_search,
+                "stop_reason": result.trace.stop_reason,
+            },
+            "context_pack": result.context_pack.to_dict(),
+            "context_for_model": result.context_pack.render_for_model(),
+        }
+
+    @app.get("/v1/rag/health")
+    async def rag_health() -> dict[str, object]:
+        return resolve_rag_store().index_health()
+
+    # ----- Jobs (public, owner_id = None) ----------------------------------
 
     @app.get("/v1/knowledge/jobs")
     async def list_jobs(
         company_type: str | None = Query(default=None),
         company: str | None = Query(default=None),
-        user_id: str | None = Query(default=None),
         limit: int = Query(default=200, ge=1, le=1000),
     ) -> dict[str, list[dict[str, object]]]:
         store = resolve_rag_store()
+        # Jobs are curated knowledge, not user-owned. owner_id=None
+        # matches the RAG ingestion contract.
         rows = store.list_jobs(
-            company_type=company_type, company=company, user_id=user_id, limit=limit
+            company_type=company_type, company=company, user_id=None, limit=limit
         )
         return {"items": [_row_to_job(row) for row in rows]}
 
@@ -111,22 +220,19 @@ def create_app(
 
     @app.get("/v1/knowledge/preparation")
     async def list_preparation(
-        user_id: str | None = Query(default=None),
         limit: int = Query(default=200, ge=1, le=1000),
     ) -> dict[str, list[dict[str, object]]]:
-        # MVP: no dedicated preparation table yet. Return empty list; the
-        # ingestion pipeline will be added before this endpoint returns real data.
-        del user_id, limit
+        del limit
         return {"items": []}
 
-    # ----- Personal document metadata ---------------------------------------
+    # ----- Personal documents (user-owned) --------------------------------
 
     @app.get("/v1/me/documents")
     async def list_my_documents(
-        user_id: str = Query(default=..., min_length=1, max_length=128),
+        identity: Identity = Depends(resolve_identity),
     ) -> dict[str, list[dict[str, object]]]:
         store = resolve_rag_store()
-        rows = store.list_user_documents(user_id)
+        rows = store.list_user_documents(identity.owner_id)
         return {
             "items": [
                 {
@@ -146,11 +252,55 @@ def create_app(
     @app.delete("/v1/me/documents/{doc_id}")
     async def delete_my_document(
         doc_id: str,
-        user_id: str = Query(default=..., min_length=1, max_length=128),
+        identity: Identity = Depends(resolve_identity),
     ) -> dict[str, str]:
         store = resolve_rag_store()
-        if not store.delete_user_document(doc_id, user_id):
+        if not store.delete_user_document(doc_id, identity.owner_id):
             raise HTTPException(status_code=404, detail="document not found")
+        return {"status": "ok"}
+
+    # ----- Owner-scoped product state -------------------------------------
+
+    @app.get("/v1/me/dashboard")
+    async def get_dashboard(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        return resolve_product_store().dashboard(identity.owner_id)
+
+    @app.post("/v1/me/hypotheses/{hypothesis_id}/decision")
+    async def decide_hypothesis(
+        hypothesis_id: str,
+        body: HypothesisDecisionRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, str]:
+        if not resolve_product_store().decide_hypothesis(
+            identity.owner_id, hypothesis_id, body.decision
+        ):
+            raise HTTPException(status_code=404, detail="hypothesis not found")
+        return {"status": "ok"}
+
+    @app.post("/v1/me/hypotheses/{hypothesis_id}/verification-task")
+    async def create_verification_task(
+        hypothesis_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        task = resolve_product_store().create_verification_task(
+            identity.owner_id, hypothesis_id
+        )
+        if task is None:
+            raise HTTPException(status_code=404, detail="hypothesis not found")
+        return task
+
+    @app.patch("/v1/me/journey/{task_id}")
+    async def update_journey_task(
+        task_id: str,
+        body: JourneyUpdateRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, str]:
+        if not resolve_product_store().update_task(
+            identity.owner_id, task_id, body.state, body.reflection
+        ):
+            raise HTTPException(status_code=404, detail="task not found")
         return {"status": "ok"}
 
     return app

@@ -26,7 +26,7 @@ def build_agent_service(
     )
     cognitive_store = SqliteCognitiveStore(settings.memory_db_path)
     model = create_qwen_model(settings)
-    provider = _build_search_provider(settings)
+    provider = build_search_provider(settings)
     agent = DeepAgentsResponder(model)
     return (
         AgentService(
@@ -45,10 +45,10 @@ def build_agent_service(
 
 
 def build_agent_tools(settings: Settings, rag_store: SqliteRagStore) -> list:
-    return [build_agentic_rag_tool(rag_store, _build_search_provider(settings))]
+    return [build_agentic_rag_tool(rag_store, build_search_provider(settings))]
 
 
-def _build_search_provider(settings: Settings) -> AliyunWebSearchProvider | None:
+def build_search_provider(settings: Settings) -> AliyunWebSearchProvider | None:
     if settings.search_configured:
         assert settings.dashscope_api_key is not None
         assert settings.dashscope_base_url is not None

@@ -9,6 +9,11 @@ class KnowledgeOrigin(StrEnum):
     USER_PROVIDED = "user_provided"
 
 
+class ChunkLevel(StrEnum):
+    PARENT = "parent"
+    CHILD = "child"
+
+
 @dataclass(frozen=True, slots=True)
 class SourceDocument:
     id: str
@@ -44,6 +49,8 @@ class DocumentChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
     knowledge_origin: KnowledgeOrigin = KnowledgeOrigin.SYSTEM_CURATED
     owner_user_id: str | None = None
+    parent_id: str | None = None
+    chunk_level: ChunkLevel = ChunkLevel.CHILD
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +76,8 @@ class SearchHit:
 class EvidenceKind(StrEnum):
     PASSAGE = "passage"
     KG_TRIPLE = "kg_triple"
+    TABLE = "table"
+    TABLE_COLUMN = "table_column"
     TABLE_FACT = "table_fact"
     TABLE_ROW = "table_row"
     API_OBJECT = "api_object"
@@ -109,3 +118,16 @@ class WebSource:
     status: str = "active"
     last_crawled_at: str | None = None
     content_hash: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ImageAsset:
+    id: str
+    document_id: str
+    page_number: int
+    object_uri: str
+    image_type: str = "image"
+    bbox: tuple[float, float, float, float] | None = None
+    caption: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    owner_user_id: str | None = None

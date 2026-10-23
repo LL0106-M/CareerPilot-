@@ -171,6 +171,11 @@ export const demoDreams: DreamingInsight[] = [
     summary: '你最近同时关注国央企和 AI 产品，也许真正想验证的是：怎样在可预期的环境里保留创造空间。',
     evidenceCount: 4,
     status: '待查看',
+    details: {
+      '认知更新': '稳定感与创造性可能不是二选一，你更在意的是边界清楚且能参与创造。',
+      '情绪观察': '准备事项不断增加时，你更容易担心自己还不够好。',
+      '下一步建议': '选一个真实岗位，用 30 分钟核对工作节奏和创造空间。',
+    },
   },
   {
     id: 'dream-002',
@@ -189,6 +194,7 @@ export const demoHypotheses: CareerHypothesis[] = [
     confidence: '中',
     status: '待确认',
     evidence: ['近期更关注稳定岗位', '仍持续投入 AI 产品项目', '明确不喜欢完全重复的工作'],
+    section: 'environment',
   },
   {
     id: 'hyp-002',
@@ -196,17 +202,18 @@ export const demoHypotheses: CareerHypothesis[] = [
     confidence: '高',
     status: '继续观察',
     evidence: ['作品集项目后职业描述明显具体', '两次实践复盘产生了新的岗位问题'],
+    section: 'strengths',
   },
 ]
 
 export const demoJourney: JourneyItem[] = [
-  { id: 'task-001', title: '完成中国移动岗位要求拆解', due: '今天', state: '进行中', related: '中国移动｜产品运营管理' },
-  { id: 'task-002', title: '准备一个 AI 项目失败复盘', due: '明天', state: '准备开始', related: '腾讯｜AI 产品经理' },
-  { id: 'task-003', title: '记录这周对工作节奏的观察', due: '周日', state: '等待结果', related: '职业偏好验证' },
+  { id: 'task-001', title: '完成中国移动岗位要求拆解', due: '今天', state: '进行中', related: '中国移动｜产品运营管理', hypothesisId: 'hyp-001', why: '验证稳定组织中的产品工作是否仍保留创造空间。' },
+  { id: 'task-002', title: '准备一个 AI 项目失败复盘', due: '明天', state: '准备开始', related: '腾讯｜AI 产品经理', hypothesisId: 'hyp-002', why: '验证真实项目复盘能否更好展示你的判断力。' },
+  { id: 'task-003', title: '记录这周对工作节奏的观察', due: '周日', state: '准备开始', related: '职业偏好验证', hypothesisId: 'hyp-001', why: '用真实体验判断你能持续接受的工作节奏。' },
 ]
 
 export const demoMemories: MemoryItem[] = [
-  { id: 'mem-001', type: '长期目标', content: '正在探索 AI 产品与国央企产品方向。', source: '对话确认', createdAt: '10 月 12 日' },
-  { id: 'mem-002', type: '偏好', content: '更看重可持续的工作节奏和稳定的成长空间。', source: '用户明确表达', createdAt: '10 月 15 日' },
-  { id: 'mem-003', type: '事实', content: '正在完成一项职业陪伴 Agent 项目。', source: '用户要求记住', createdAt: '10 月 18 日' },
+  { id: 'mem-001', type: '偏好', content: '想去做和环境保护相关的工作。', source: '对话确认', createdAt: '10 月 12 日', compassSection: 'interests' },
+  { id: 'mem-002', type: '情绪', content: '担心自己不够优秀。', source: '对话观察', createdAt: '10 月 5 日', compassSection: 'risks' },
+  { id: 'mem-003', type: '事实', content: '安静的环境能让我更专注。', source: '用户确认', createdAt: '9 月 28 日', compassSection: 'environment' },
 ]

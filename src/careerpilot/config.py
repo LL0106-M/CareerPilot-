@@ -10,12 +10,24 @@ class Settings(BaseSettings):
     """Runtime settings loaded from environment variables only."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", ".env.embedding"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     app_name: str = "careerpilot-agent"
+    environment: Literal["development", "test", "production"] = Field(
+        default="development",
+        validation_alias="CAREERPILOT_ENVIRONMENT",
+    )
+    cookie_secret: SecretStr = Field(
+        default=SecretStr("careerpilot-development-cookie-secret-change-me"),
+        validation_alias="CAREERPILOT_COOKIE_SECRET",
+    )
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173",
+        validation_alias="CAREERPILOT_CORS_ORIGINS",
+    )
     model_base_url: str = Field(
         default="http://127.0.0.1:8000/v1",
         validation_alias="CAREERPILOT_MODEL_BASE_URL",
@@ -48,6 +60,13 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="CAREERPILOT_EMBEDDING_API_KEY",
     )
+    embedding_query_instruction: str = Field(
+        default=(
+            "Retrieve relevant career knowledge, job information, and interview "
+            "preparation evidence for the user query."
+        ),
+        validation_alias="CAREERPILOT_EMBEDDING_QUERY_INSTRUCTION",
+    )
     memos_api_key: SecretStr | None = Field(default=None, validation_alias="MEMOS_API_KEY")
     memos_base_url: str = Field(
         default="https://memos.memtensor.cn/api/openmem/v1",
@@ -60,6 +79,10 @@ class Settings(BaseSettings):
     memory_db_path: Path = Field(
         default=Path("data/memory/careerpilot.db"),
         validation_alias="CAREERPILOT_MEMORY_DB_PATH",
+    )
+    product_db_path: Path = Field(
+        default=Path("data/product/careerpilot.db"),
+        validation_alias="CAREERPILOT_PRODUCT_DB_PATH",
     )
     dashscope_api_key: SecretStr | None = Field(
         default=None,
@@ -95,6 +118,14 @@ class Settings(BaseSettings):
     @property
     def search_configured(self) -> bool:
         return self.dashscope_api_key is not None and self.dashscope_base_url is not None
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def secure_cookies(self) -> bool:
+        return self.environment == "production"
 
 
 @lru_cache
