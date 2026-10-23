@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from careerpilot.actions.models import AuthorizationState, PermissionGrant
+from careerpilot.actions.models import (
+    ActionConfirmation,
+    ActionPreview,
+    ActionReceipt,
+    AuthorizationState,
+    PermissionGrant,
+)
 from careerpilot.actions.registry import CapabilityRegistry
 
 
@@ -32,6 +38,48 @@ class SqliteActionStore:
                 resource_constraints_json TEXT NOT NULL,
                 granted_at TEXT NOT NULL,
                 revoked_at TEXT
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS action_previews (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                capability TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                preview_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS action_confirmations (
+                action_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                preview_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                used_idempotency_key TEXT
+            )
+            """
+        )
+        self._connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS action_receipts (
+                id TEXT PRIMARY KEY,
+                action_id TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                external_reference TEXT,
+                observations_json TEXT NOT NULL,
+                retryable INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(owner_id, action_id, idempotency_key)
             )
             """
         )
@@ -130,6 +178,140 @@ class SqliteActionStore:
         )
         self._connection.commit()
         return cursor.rowcount == 1
+
+    def save_preview(self, preview: ActionPreview) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO action_previews (
+                id, owner_id, provider_id, capability, payload_json, preview_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                preview.id,
+                preview.owner_id,
+                preview.provider_id,
+                preview.capability,
+                json.dumps(preview.payload, sort_keys=True, separators=(",", ":")),
+                preview.preview_hash,
+                preview.created_at,
+            ),
+        )
+        self._connection.commit()
+
+    def get_preview(self, owner_id: str, action_id: str) -> ActionPreview | None:
+        row = self._connection.execute(
+            "SELECT * FROM action_previews WHERE id = ? AND owner_id = ?",
+            (action_id, owner_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return ActionPreview(
+            id=row["id"],
+            owner_id=row["owner_id"],
+            provider_id=row["provider_id"],
+            capability=row["capability"],
+            payload=json.loads(row["payload_json"]),
+            preview_hash=row["preview_hash"],
+            created_at=row["created_at"],
+        )
+
+    def save_confirmation(self, confirmation: ActionConfirmation) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO action_confirmations (
+                action_id, owner_id, token, preview_hash, created_at, used_idempotency_key
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(action_id) DO UPDATE SET
+                token = excluded.token,
+                preview_hash = excluded.preview_hash,
+                created_at = excluded.created_at,
+                used_idempotency_key = NULL
+            """,
+            (
+                confirmation.action_id,
+                confirmation.owner_id,
+                confirmation.token,
+                confirmation.preview_hash,
+                confirmation.created_at,
+                confirmation.used_idempotency_key,
+            ),
+        )
+        self._connection.commit()
+
+    def get_confirmation(self, owner_id: str, action_id: str) -> ActionConfirmation | None:
+        row = self._connection.execute(
+            "SELECT * FROM action_confirmations WHERE action_id = ? AND owner_id = ?",
+            (action_id, owner_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return ActionConfirmation(
+            action_id=row["action_id"],
+            owner_id=row["owner_id"],
+            token=row["token"],
+            preview_hash=row["preview_hash"],
+            created_at=row["created_at"],
+            used_idempotency_key=row["used_idempotency_key"],
+        )
+
+    def consume_confirmation(self, owner_id: str, action_id: str, idempotency_key: str) -> bool:
+        cursor = self._connection.execute(
+            """
+            UPDATE action_confirmations SET used_idempotency_key = ?
+            WHERE action_id = ? AND owner_id = ? AND used_idempotency_key IS NULL
+            """,
+            (idempotency_key, action_id, owner_id),
+        )
+        self._connection.commit()
+        return cursor.rowcount == 1
+
+    def save_receipt(self, receipt: ActionReceipt) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO action_receipts (
+                id, action_id, owner_id, provider_id, status, idempotency_key,
+                external_reference, observations_json, retryable, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                receipt.id,
+                receipt.action_id,
+                receipt.owner_id,
+                receipt.provider_id,
+                receipt.status,
+                receipt.idempotency_key,
+                receipt.external_reference,
+                json.dumps(receipt.observations),
+                int(receipt.retryable),
+                receipt.created_at,
+            ),
+        )
+        self._connection.commit()
+
+    def find_receipt(
+        self, owner_id: str, action_id: str, idempotency_key: str
+    ) -> ActionReceipt | None:
+        row = self._connection.execute(
+            """
+            SELECT * FROM action_receipts
+            WHERE owner_id = ? AND action_id = ? AND idempotency_key = ?
+            """,
+            (owner_id, action_id, idempotency_key),
+        ).fetchone()
+        if row is None:
+            return None
+        return ActionReceipt(
+            id=row["id"],
+            action_id=row["action_id"],
+            owner_id=row["owner_id"],
+            provider_id=row["provider_id"],
+            status=row["status"],
+            idempotency_key=row["idempotency_key"],
+            external_reference=row["external_reference"],
+            observations=tuple(json.loads(row["observations_json"])),
+            retryable=bool(row["retryable"]),
+            created_at=row["created_at"],
+        )
 
     def close(self) -> None:
         self._connection.close()

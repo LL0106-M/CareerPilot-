@@ -47,3 +47,38 @@ class AuthorizationState:
     grant_id: str | None = None
     scope_snapshot: tuple[str, ...] = ()
     last_used_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActionPreview:
+    id: str
+    owner_id: str
+    provider_id: str
+    capability: str
+    payload: dict[str, Any]
+    preview_hash: str
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ActionConfirmation:
+    action_id: str
+    owner_id: str
+    token: str
+    preview_hash: str
+    created_at: str
+    used_idempotency_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActionReceipt:
+    id: str
+    action_id: str
+    owner_id: str
+    provider_id: str
+    status: str
+    idempotency_key: str
+    external_reference: str | None
+    observations: tuple[str, ...]
+    retryable: bool
+    created_at: str
