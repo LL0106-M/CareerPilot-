@@ -70,3 +70,18 @@ def test_search_strategy_rejects_nested_agent_mode(monkeypatch) -> None:
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_action_connector_settings_are_explicit_and_secrets_stay_secret(monkeypatch) -> None:
+    monkeypatch.setenv("CAREERPILOT_ACTION_DB_PATH", "var/actions/career.db")
+    monkeypatch.setenv("CAREERPILOT_WPS_ACCESS_TOKEN", "wps-secret")
+    monkeypatch.setenv("CAREERPILOT_NETEASE_AUTHORIZATION_CODE", "mail-secret")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.action_db_path == Path("var/actions/career.db")
+    assert settings.wps_access_token is not None
+    assert settings.wps_access_token.get_secret_value() == "wps-secret"
+    assert "wps-secret" not in repr(settings)
+    assert settings.netease_authorization_code is not None
+    assert "mail-secret" not in repr(settings)

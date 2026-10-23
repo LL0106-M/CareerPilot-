@@ -84,6 +84,50 @@ class Settings(BaseSettings):
         default=Path("data/product/careerpilot.db"),
         validation_alias="CAREERPILOT_PRODUCT_DB_PATH",
     )
+    action_db_path: Path = Field(
+        default=Path("data/actions/careerpilot.db"),
+        validation_alias="CAREERPILOT_ACTION_DB_PATH",
+    )
+    feishu_cli_executable: str = Field(
+        default="lark-cli",
+        validation_alias="CAREERPILOT_FEISHU_CLI_EXECUTABLE",
+    )
+    feishu_cli_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        validation_alias="CAREERPILOT_FEISHU_CLI_TIMEOUT_SECONDS",
+    )
+    wps_base_url: str = Field(
+        default="https://openapi.wps.cn",
+        validation_alias="CAREERPILOT_WPS_BASE_URL",
+    )
+    wps_access_token: SecretStr | None = Field(
+        default=None,
+        validation_alias="CAREERPILOT_WPS_ACCESS_TOKEN",
+    )
+    wps_drive_id: str | None = Field(default=None, validation_alias="CAREERPILOT_WPS_DRIVE_ID")
+    wps_parent_id: str | None = Field(
+        default=None,
+        validation_alias="CAREERPILOT_WPS_PARENT_ID",
+    )
+    netease_imap_host: str = Field(
+        default="imap.163.com",
+        validation_alias="CAREERPILOT_NETEASE_IMAP_HOST",
+    )
+    netease_imap_port: int = Field(
+        default=993,
+        ge=1,
+        le=65535,
+        validation_alias="CAREERPILOT_NETEASE_IMAP_PORT",
+    )
+    netease_account: str | None = Field(
+        default=None,
+        validation_alias="CAREERPILOT_NETEASE_ACCOUNT",
+    )
+    netease_authorization_code: SecretStr | None = Field(
+        default=None,
+        validation_alias="CAREERPILOT_NETEASE_AUTHORIZATION_CODE",
+    )
     dashscope_api_key: SecretStr | None = Field(
         default=None,
         validation_alias="DASHSCOPE_API_KEY",

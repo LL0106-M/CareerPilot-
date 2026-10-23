@@ -24,7 +24,7 @@ def _utc_now() -> str:
 
 class SqliteActionStore:
     def __init__(self, path: str | Path) -> None:
-        self._connection = sqlite3.connect(path)
+        self._connection = sqlite3.connect(path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute(
             """

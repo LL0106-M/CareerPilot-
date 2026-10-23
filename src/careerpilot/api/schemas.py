@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,3 +44,34 @@ class HypothesisDecisionRequest(BaseModel):
 class JourneyUpdateRequest(BaseModel):
     state: str = Field(pattern="^(准备开始|进行中|已完成)$")
     reflection: str | None = Field(default=None, max_length=2_000)
+
+
+class IntegrationGrantRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    capabilities: list[str] = Field(min_length=1, max_length=10)
+    purpose: str = Field(min_length=1, max_length=200)
+    scope_snapshot: list[str] = Field(default_factory=list, max_length=20)
+    resource_constraints: dict[str, Any] = Field(default_factory=dict)
+
+
+class ActionPreviewRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    provider_id: str = Field(min_length=1, max_length=64)
+    capability: str = Field(min_length=1, max_length=128)
+    payload: dict[str, Any]
+
+
+class ActionConfirmRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    preview_hash: str = Field(min_length=64, max_length=64)
+
+
+class ActionApplyRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    confirmation_token: str | None = Field(default=None, max_length=256)
+    preview_hash: str = Field(min_length=64, max_length=64)
+    idempotency_key: str = Field(min_length=1, max_length=128)

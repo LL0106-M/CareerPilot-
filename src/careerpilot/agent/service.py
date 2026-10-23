@@ -46,6 +46,7 @@ class AgentService:
         prompt_composer: PromptComposer | None = None,
         memory_write_policy: MemoryWritePolicy | None = None,
         rag_tool_factory: Callable[[str], BaseTool] | None = None,
+        action_tool_factory: Callable[[str], tuple[BaseTool, ...]] | None = None,
         cognitive_store: CognitiveStore | None = None,
         dreaming_trigger_policy: DreamingTriggerPolicy | None = None,
     ) -> None:
@@ -55,6 +56,7 @@ class AgentService:
         self._prompt_composer = prompt_composer or PromptComposer()
         self._memory_write_policy = memory_write_policy or MemoryWritePolicy()
         self._rag_tool_factory = rag_tool_factory
+        self._action_tool_factory = action_tool_factory
         self._cognitive_store = cognitive_store
         self._dreaming_trigger_policy = dreaming_trigger_policy or DreamingTriggerPolicy()
 
@@ -84,16 +86,20 @@ class AgentService:
                 hypotheses = ()
 
         system_context = self._prompt_composer.compose(decision, memories, hypotheses)
-        allowed_tool_names = (
-            frozenset()
-            if decision.mode is SupportMode.LISTEN
-            else frozenset({"search_career_knowledge"})
-        )
-        runtime_tools = (
-            ()
-            if decision.mode is SupportMode.LISTEN or self._rag_tool_factory is None
-            else (self._rag_tool_factory(command.user_id),)
-        )
+        if decision.mode is SupportMode.LISTEN:
+            allowed_tool_names = frozenset()
+            runtime_tools = ()
+        else:
+            allowed_names = {"search_career_knowledge"}
+            tools: list[BaseTool] = []
+            if self._rag_tool_factory is not None:
+                tools.append(self._rag_tool_factory(command.user_id))
+            if self._action_tool_factory is not None:
+                action_tools = self._action_tool_factory(command.user_id)
+                tools.extend(action_tools)
+                allowed_names.update(tool.name for tool in action_tools)
+            allowed_tool_names = frozenset(allowed_names)
+            runtime_tools = tuple(tools)
         reply = await self._agent.respond(
             command.message,
             system_context,

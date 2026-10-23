@@ -178,3 +178,37 @@ async def test_timeout_is_stored_as_unknown_without_automatic_retry(tmp_path) ->
         assert len(connector.calls) == 1
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_read_capability_does_not_require_per_call_confirmation(tmp_path) -> None:
+    connector = RecordingConnector()
+    store = SqliteActionStore(tmp_path / "actions.db")
+    service = ActionService(
+        registry=build_mvp_capability_registry(),
+        store=store,
+        connectors={"netease_mail": connector},
+    )
+    try:
+        store.grant(
+            owner_id="owner-a",
+            provider_id="netease_mail",
+            capabilities=("email.search_recruiting",),
+            purpose="recruiting_email_assistance",
+        )
+        preview = service.preview(
+            "owner-a", "netease_mail", "email.search_recruiting", {"limit": 10}
+        )
+
+        receipt = await service.apply(
+            "owner-a",
+            preview.id,
+            None,
+            preview.preview_hash,
+            "read-request-1",
+        )
+
+        assert receipt.status == "completed"
+        assert len(connector.calls) == 1
+    finally:
+        store.close()

@@ -1,3 +1,7 @@
+from collections.abc import Callable
+
+from langchain_core.tools import BaseTool
+
 from careerpilot.agent.deepagents_runtime import DeepAgentsResponder
 from careerpilot.agent.model import create_qwen_model
 from careerpilot.agent.service import AgentService
@@ -13,6 +17,7 @@ from careerpilot.support.policy import SupportPolicy
 
 def build_agent_service(
     settings: Settings,
+    action_tool_factory: Callable[[str], tuple[BaseTool, ...]] | None = None,
 ) -> tuple[AgentService, MemosCloudMemoryStore, SqliteRagStore, SqliteCognitiveStore]:
     if settings.memos_api_key is None:
         raise RuntimeError("MEMOS_API_KEY is not configured")
@@ -36,6 +41,7 @@ def build_agent_service(
             rag_tool_factory=lambda user_id: build_agentic_rag_tool(
                 rag_store, provider, user_id=user_id
             ),
+            action_tool_factory=action_tool_factory,
             cognitive_store=cognitive_store,
         ),
         memory_store,

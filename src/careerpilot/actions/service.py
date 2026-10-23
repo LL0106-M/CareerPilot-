@@ -105,7 +105,7 @@ class ActionService:
         self,
         owner_id: str,
         action_id: str,
-        confirmation_token: str,
+        confirmation_token: str | None,
         preview_hash: str,
         idempotency_key: str,
     ) -> ActionReceipt:
@@ -114,16 +114,22 @@ class ActionService:
             return existing
 
         preview = self._store.get_preview(owner_id, action_id)
-        confirmation = self._store.get_confirmation(owner_id, action_id)
-        if preview is None or confirmation is None or confirmation.token != confirmation_token:
-            raise ConfirmationError("confirmation is invalid")
-        if preview.preview_hash != preview_hash or confirmation.preview_hash != preview_hash:
+        if preview is None:
+            raise ConfirmationError("action preview was not found")
+        definition = self._registry.get(preview.provider_id, preview.capability)
+        if preview.preview_hash != preview_hash:
             raise ConfirmationError("preview hash does not match")
-        if confirmation.used_idempotency_key is not None:
-            raise ConfirmationError("confirmation was already used")
         self._require_grant(owner_id, preview.provider_id, preview.capability)
-        if not self._store.consume_confirmation(owner_id, action_id, idempotency_key):
-            raise ConfirmationError("confirmation was already used")
+        if definition.requires_confirmation:
+            confirmation = self._store.get_confirmation(owner_id, action_id)
+            if confirmation is None or confirmation.token != confirmation_token:
+                raise ConfirmationError("confirmation is invalid")
+            if confirmation.preview_hash != preview_hash:
+                raise ConfirmationError("preview hash does not match")
+            if confirmation.used_idempotency_key is not None:
+                raise ConfirmationError("confirmation was already used")
+            if not self._store.consume_confirmation(owner_id, action_id, idempotency_key):
+                raise ConfirmationError("confirmation was already used")
 
         connector = self._connectors[preview.provider_id]
         try:
