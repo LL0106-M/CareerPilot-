@@ -85,3 +85,10 @@ def test_action_connector_settings_are_explicit_and_secrets_stay_secret(monkeypa
     assert "wps-secret" not in repr(settings)
     assert settings.netease_authorization_code is not None
     assert "mail-secret" not in repr(settings)
+
+
+def test_wps_signing_keys_must_be_configured_as_a_pair(monkeypatch) -> None:
+    monkeypatch.setenv("CAREERPILOT_WPS_ACCESS_KEY", "app-id")
+
+    with pytest.raises(ValidationError, match="configured together"):
+        Settings(_env_file=None)

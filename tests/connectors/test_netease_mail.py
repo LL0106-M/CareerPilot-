@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -64,7 +65,7 @@ async def test_netease_search_is_read_only_bounded_and_metadata_only() -> None:
 
     outcome = await connector.execute(
         "email.search_recruiting",
-        {"since": "2026-10-01", "limit": 1, "keywords": ["interview", "面试"]},
+        {"since": "2026-10-01", "limit": 1},
     )
 
     assert factories == [("imap.163.com", 993)]
@@ -79,8 +80,22 @@ async def test_netease_search_is_read_only_bounded_and_metadata_only() -> None:
     assert metadata == {
         "date": "Thu, 22 Oct 2026 10:00:00 +0800",
         "from": "recruiter@example.com",
-        "message_id": "<message-2@example.com>",
+        "message_id_hash": hashlib.sha256(b"<message-2@example.com>").hexdigest(),
         "subject": "Interview invitation",
     }
     assert "mail-secret" not in repr(outcome)
     assert "body" not in metadata
+
+
+@pytest.mark.asyncio
+async def test_netease_rejects_unbounded_lookback() -> None:
+    connector = NeteaseMailConnector(
+        host="imap.163.com",
+        port=993,
+        account="person@163.com",
+        authorization_code="mail-secret",
+        imap_factory=lambda host, port: FakeImap(),
+    )
+
+    with pytest.raises(ValueError, match="90 days"):
+        await connector.execute("email.search_recruiting", {"since": "2020-01-01", "limit": 1})

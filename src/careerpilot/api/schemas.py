@@ -52,7 +52,7 @@ class IntegrationGrantRequest(BaseModel):
     capabilities: list[str] = Field(min_length=1, max_length=10)
     purpose: str = Field(min_length=1, max_length=200)
     scope_snapshot: list[str] = Field(default_factory=list, max_length=20)
-    resource_constraints: dict[str, Any] = Field(default_factory=dict)
+    resource_constraints: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ActionPreviewRequest(BaseModel):

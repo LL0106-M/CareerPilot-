@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -105,6 +105,14 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="CAREERPILOT_WPS_ACCESS_TOKEN",
     )
+    wps_access_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="CAREERPILOT_WPS_ACCESS_KEY",
+    )
+    wps_secret_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="CAREERPILOT_WPS_SECRET_KEY",
+    )
     wps_drive_id: str | None = Field(default=None, validation_alias="CAREERPILOT_WPS_DRIVE_ID")
     wps_parent_id: str | None = Field(
         default=None,
@@ -158,6 +166,12 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_dashscope_base_url(cls, value: str | None) -> str | None:
         return value.rstrip("/") if value else None
+
+    @model_validator(mode="after")
+    def validate_wps_signing_pair(self) -> "Settings":
+        if (self.wps_access_key is None) != (self.wps_secret_key is None):
+            raise ValueError("WPS access key and secret key must be configured together")
+        return self
 
     @property
     def search_configured(self) -> bool:

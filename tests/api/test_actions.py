@@ -59,6 +59,7 @@ def test_authorization_is_visible_revocable_and_owner_scoped(tmp_path) -> None:
             for item in states_a
             if item["provider_id"] == "feishu" and item["capability"] == "document.create"
         )["grant_state"] == "granted"
+        assert all("configured" in item and "connection_state" in item for item in states_a)
         assert next(
             item
             for item in states_b
@@ -152,5 +153,45 @@ def test_action_routes_reject_unknown_fields_and_map_missing_grant(tmp_path) -> 
             },
         )
         assert unknown_field.status_code == 422
+
+        store.grant(
+            owner_id="550e8400-e29b-41d4-a716-446655440000",
+            provider_id="feishu",
+            capabilities=("document.create",),
+            purpose="career_artifact_creation",
+        )
+        credential_payload = client.post(
+            "/v1/me/actions/preview",
+            cookies=cookies,
+            json={
+                "provider_id": "feishu",
+                "capability": "document.create",
+                "payload": {"title": "Plan", "access_token": "must-not-be-accepted"},
+            },
+        )
+        assert credential_payload.status_code == 422
+    finally:
+        store.close()
+
+
+def test_revoke_route_enforces_provider_scope(tmp_path) -> None:
+    client, store, _ = build_client(tmp_path)
+    try:
+        cookies = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
+        grant = store.grant(
+            owner_id="550e8400-e29b-41d4-a716-446655440000",
+            provider_id="wps",
+            capabilities=("document.create",),
+            purpose="career_artifact_creation",
+        )
+
+        response = client.delete(
+            f"/v1/me/integrations/feishu/grants/{grant.id}", cookies=cookies
+        )
+
+        assert response.status_code == 404
+        assert store.find_active_grant(
+            "550e8400-e29b-41d4-a716-446655440000", "wps", "document.create"
+        ) is not None
     finally:
         store.close()

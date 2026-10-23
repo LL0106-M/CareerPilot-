@@ -1,9 +1,10 @@
 """Read-only NetEase Mail recruiting metadata search over IMAP SSL."""
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from email import policy
 from email.parser import BytesParser
 from imaplib import IMAP4_SSL
@@ -40,11 +41,11 @@ class NeteaseMailConnector:
         return True
 
     def _search(self, payload: dict) -> ConnectorOutcome:
+        since = self._imap_date(payload.get("since"))
         session = self._imap_factory(self._host, self._port)
         try:
             session.login(self._account, self._authorization_code)
             session.select("INBOX", readonly=True)
-            since = self._imap_date(payload.get("since"))
             status, results = session.search(None, "SINCE", since)
             if status != "OK":
                 raise RuntimeError("NetEase Mail search failed")
@@ -52,9 +53,7 @@ class NeteaseMailConnector:
             message_ids = results[0].split()[-limit:][::-1]
             keywords = tuple(
                 keyword.casefold()
-                for keyword in payload.get(
-                    "keywords", ("interview", "recruit", "offer", "面试", "招聘", "录用")
-                )
+                for keyword in ("interview", "recruit", "offer", "面试", "招聘", "录用")
             )
             matches = []
             for message_id in message_ids:
@@ -79,6 +78,9 @@ class NeteaseMailConnector:
             parsed = value
         else:
             parsed = datetime.fromisoformat(value).date()
+        today = date.today()
+        if parsed > today or parsed < today - timedelta(days=90):
+            raise ValueError("since must be within the last 90 days")
         return parsed.strftime("%d-%b-%Y")
 
     @staticmethod
@@ -92,6 +94,8 @@ class NeteaseMailConnector:
         return {
             "date": str(message.get("Date", "")),
             "from": str(message.get("From", "")),
-            "message_id": str(message.get("Message-ID", "")),
+            "message_id_hash": hashlib.sha256(
+                str(message.get("Message-ID", "")).encode()
+            ).hexdigest(),
             "subject": str(message.get("Subject", "")),
         }

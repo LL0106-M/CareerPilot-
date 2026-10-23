@@ -192,6 +192,7 @@ Copy-Item .env.example .env
 | `CAREERPILOT_ACTION_DB_PATH` | owner 隔离的授权、动作预览、确认与回执 SQLite 文件 |
 | `CAREERPILOT_FEISHU_CLI_EXECUTABLE` | 官方 `lark-cli` 可执行文件；需先完成用户授权 |
 | `CAREERPILOT_WPS_ACCESS_TOKEN` | 本机 MVP 的 WPS token；同时配置 drive/parent 才启用 |
+| `CAREERPILOT_WPS_ACCESS_KEY` / `CAREERPILOT_WPS_SECRET_KEY` | WPS 后台开启接口签名时成对配置，用于 KSO-1 |
 | `CAREERPILOT_NETEASE_ACCOUNT` | 网易邮箱账号；同时配置客户端授权码才启用只读搜索 |
 
 百炼控制台会给出同一工作空间的两个不同地址：
@@ -212,7 +213,7 @@ MVP 的 Agent 只看到四个稳定领域能力：
 | 飞书 | `document.create` | L3 写 | 是 |
 | 飞书 | `calendar.create` | L3 写 | 是 |
 | WPS | `document.create` | L3 写 | 是 |
-| 网易邮箱 | `email.search_recruiting` | L1 只读 | 否（仍须先授权） |
+| 网易邮箱 | `email.search_recruiting` | L1 只读，最多回看 90 天，Message-ID 哈希化 | 否（仍须先授权） |
 
 授权与动作 API：
 

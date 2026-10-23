@@ -44,3 +44,13 @@ def test_revoked_grant_is_immediately_unusable(tmp_path) -> None:
         assert store.find_active_grant("owner-a", "wps", "document.create") is None
     finally:
         store.close()
+
+
+def test_store_creates_default_parent_directory(tmp_path) -> None:
+    path = tmp_path / "nested" / "actions" / "careerpilot.db"
+
+    store = SqliteActionStore(path)
+    try:
+        assert path.exists()
+    finally:
+        store.close()

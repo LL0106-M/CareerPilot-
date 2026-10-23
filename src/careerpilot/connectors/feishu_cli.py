@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Protocol
 
-from careerpilot.actions.service import ConnectorOutcome
+from careerpilot.actions.service import ConnectorError, ConnectorOutcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,8 +80,10 @@ class FeishuCliConnector:
             argv, stdin_text=stdin_text, timeout_seconds=self._timeout_seconds
         )
         if result.timed_out:
-            raise TimeoutError("Feishu CLI timed out")
+            raise ConnectorError("Feishu CLI timed out", retryable=False, uncertain=True)
         envelope = self._parse_envelope(result)
+        if envelope.get("identity") != "user":
+            raise ConnectorError("Feishu CLI must use user identity", retryable=False)
         data = envelope.get("data", {})
         if capability == "document.create":
             document = data.get("document", data)
@@ -93,10 +95,57 @@ class FeishuCliConnector:
             observations = tuple(value for value in (event.get("app_link"),) if value)
         if not reference:
             raise RuntimeError("Feishu CLI returned no external reference")
-        return ConnectorOutcome(external_reference=reference, observations=observations)
+        verification_kind = "document" if capability == "document.create" else "calendar"
+        return ConnectorOutcome(
+            external_reference=reference,
+            observations=observations,
+            verification_kind=verification_kind,
+        )
 
     async def verify(self, outcome: ConnectorOutcome) -> bool:
-        return bool(outcome.external_reference)
+        if (
+            not outcome.external_reference
+            or outcome.verification_kind not in {"document", "calendar"}
+        ):
+            return False
+        if outcome.verification_kind == "document":
+            argv = (
+                self._executable,
+                "docs",
+                "+fetch",
+                "--doc",
+                outcome.external_reference,
+                "--detail",
+                "with-ids",
+                "--as",
+                "user",
+                "--format",
+                "json",
+            )
+        else:
+            argv = (
+                self._executable,
+                "calendar",
+                "+get",
+                "--event-id",
+                outcome.external_reference,
+                "--as",
+                "user",
+                "--format",
+                "json",
+            )
+        result = await self._runner.run(
+            argv, stdin_text=None, timeout_seconds=self._timeout_seconds
+        )
+        if result.timed_out or result.returncode != 0:
+            return False
+        envelope = self._parse_envelope(result)
+        if envelope.get("identity") != "user":
+            return False
+        data = envelope.get("data", {})
+        entity = data.get(outcome.verification_kind, data)
+        returned_id = entity.get("document_id") or entity.get("event_id")
+        return returned_id == outcome.external_reference
 
     def _document_command(self, payload: dict) -> tuple[tuple[str, ...], str]:
         argv = [
@@ -112,7 +161,7 @@ class FeishuCliConnector:
         ]
         if parent_token := payload.get("parent_token"):
             argv.extend(("--parent-token", str(parent_token)))
-        argv.extend(("--format", "json"))
+        argv.extend(("--as", "user", "--format", "json"))
         return tuple(argv), str(payload.get("content", ""))
 
     def _calendar_command(self, payload: dict) -> tuple[tuple[str, ...], None]:
@@ -129,7 +178,7 @@ class FeishuCliConnector:
         ]
         if calendar_id := payload.get("calendar_id"):
             argv.extend(("--calendar-id", str(calendar_id)))
-        argv.extend(("--format", "json"))
+        argv.extend(("--as", "user", "--format", "json"))
         return tuple(argv), None
 
     @staticmethod
@@ -138,8 +187,10 @@ class FeishuCliConnector:
         try:
             envelope = json.loads(raw)
         except json.JSONDecodeError as error:
-            raise RuntimeError("Feishu CLI returned an invalid response") from error
+            raise ConnectorError(
+                "Feishu CLI returned an invalid response", retryable=False
+            ) from error
         if result.returncode != 0 or not envelope.get("ok", False):
             message = envelope.get("error", {}).get("message", "Feishu CLI request failed")
-            raise RuntimeError(str(message))
+            raise ConnectorError(str(message), retryable=False)
         return envelope

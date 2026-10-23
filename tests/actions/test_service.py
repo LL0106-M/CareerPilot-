@@ -7,8 +7,11 @@ from careerpilot.actions.registry import build_mvp_capability_registry
 from careerpilot.actions.service import (
     ActionService,
     ConfirmationError,
+    ConnectorError,
     ConnectorOutcome,
     GrantRequiredError,
+    IdempotencyConflictError,
+    ResourceConstraintError,
 )
 from careerpilot.actions.store import SqliteActionStore
 
@@ -33,6 +36,12 @@ class TimingOutConnector(RecordingConnector):
     async def execute(self, capability: str, payload: dict[str, Any]) -> ConnectorOutcome:
         self.calls.append((capability, payload))
         raise TimeoutError("provider outcome is uncertain")
+
+
+class FailingConnector(RecordingConnector):
+    async def execute(self, capability: str, payload: dict[str, Any]) -> ConnectorOutcome:
+        self.calls.append((capability, payload))
+        raise ConnectorError("provider rejected request", retryable=False)
 
 
 def build_service(tmp_path, connector=None):
@@ -66,18 +75,18 @@ def test_preview_requires_active_grant_and_normalizes_payload_hash(tmp_path) -> 
             "owner-a",
             "feishu",
             "document.create",
-            {"title": "Plan", "folder": "career"},
+            {"title": "Plan", "parent_token": "career"},
         )
         second = service.preview(
             "owner-a",
             "feishu",
             "document.create",
-            {"folder": "career", "title": "Plan"},
+            {"parent_token": "career", "title": "Plan"},
         )
 
         assert first.preview_hash == second.preview_hash
         assert first.owner_id == "owner-a"
-        assert first.payload == {"folder": "career", "title": "Plan"}
+        assert first.payload == {"content": "", "parent_token": "career", "title": "Plan"}
     finally:
         store.close()
 
@@ -209,6 +218,86 @@ async def test_read_capability_does_not_require_per_call_confirmation(tmp_path) 
         )
 
         assert receipt.status == "completed"
+        assert len(connector.calls) == 1
+    finally:
+        store.close()
+
+
+def test_reconfirming_used_preview_requires_a_new_preview(tmp_path) -> None:
+    service, store, _ = build_service(tmp_path)
+    try:
+        grant_feishu(store)
+        preview = service.preview("owner-a", "feishu", "document.create", {"title": "Plan"})
+        service.confirm("owner-a", preview.id, preview.preview_hash)
+
+        with pytest.raises(ConfirmationError, match="already confirmed"):
+            service.confirm("owner-a", preview.id, preview.preview_hash)
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_is_bound_across_previews(tmp_path) -> None:
+    service, store, connector = build_service(tmp_path)
+    try:
+        grant_feishu(store)
+        first = service.preview("owner-a", "feishu", "document.create", {"title": "First"})
+        first_confirmation = service.confirm("owner-a", first.id, first.preview_hash)
+        await service.apply(
+            "owner-a", first.id, first_confirmation.token, first.preview_hash, "shared-key"
+        )
+        second = service.preview("owner-a", "feishu", "document.create", {"title": "Second"})
+        second_confirmation = service.confirm("owner-a", second.id, second.preview_hash)
+
+        with pytest.raises(IdempotencyConflictError):
+            await service.apply(
+                "owner-a", second.id, second_confirmation.token, second.preview_hash, "shared-key"
+            )
+        assert len(connector.calls) == 1
+    finally:
+        store.close()
+
+
+def test_grant_resource_constraints_are_enforced_during_preview(tmp_path) -> None:
+    service, store, _ = build_service(tmp_path)
+    try:
+        store.grant(
+            owner_id="owner-a",
+            provider_id="feishu",
+            capabilities=("document.create",),
+            purpose="career_artifact_creation",
+            resource_constraints={"parent_token": ["allowed-folder"]},
+        )
+
+        with pytest.raises(ResourceConstraintError):
+            service.preview(
+                "owner-a",
+                "feishu",
+                "document.create",
+                {"title": "Plan", "parent_token": "other-folder"},
+            )
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_creates_terminal_failed_receipt(tmp_path) -> None:
+    connector = FailingConnector()
+    service, store, _ = build_service(tmp_path, connector)
+    try:
+        grant_feishu(store)
+        preview = service.preview("owner-a", "feishu", "document.create", {"title": "Plan"})
+        confirmation = service.confirm("owner-a", preview.id, preview.preview_hash)
+
+        receipt = await service.apply(
+            "owner-a", preview.id, confirmation.token, preview.preview_hash, "failed-request"
+        )
+        repeated = await service.apply(
+            "owner-a", preview.id, confirmation.token, preview.preview_hash, "failed-request"
+        )
+
+        assert receipt.status == "failed"
+        assert receipt == repeated
         assert len(connector.calls) == 1
     finally:
         store.close()

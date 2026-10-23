@@ -7,7 +7,14 @@ from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from careerpilot.actions.registry import build_mvp_capability_registry
-from careerpilot.actions.service import ActionService, ConfirmationError, GrantRequiredError
+from careerpilot.actions.service import (
+    ActionService,
+    ConfirmationError,
+    GrantRequiredError,
+    IdempotencyConflictError,
+    PayloadValidationError,
+    ResourceConstraintError,
+)
 from careerpilot.actions.store import SqliteActionStore
 from careerpilot.actions.tool import build_action_tools
 from careerpilot.agent.service import ChatCommand, ChatResult
@@ -168,6 +175,16 @@ def create_app(
                 access_token=resolved_settings.wps_access_token.get_secret_value(),
                 drive_id=resolved_settings.wps_drive_id,
                 parent_id=resolved_settings.wps_parent_id,
+                access_key=(
+                    resolved_settings.wps_access_key.get_secret_value()
+                    if resolved_settings.wps_access_key is not None
+                    else None
+                ),
+                secret_key=(
+                    resolved_settings.wps_secret_key.get_secret_value()
+                    if resolved_settings.wps_secret_key is not None
+                    else None
+                ),
             )
         if (
             resolved_settings.netease_account
@@ -389,6 +406,10 @@ def create_app(
         identity: Identity = Depends(resolve_identity),
     ) -> dict[str, object]:
         states = resolve_action_store().list_authorization(identity.owner_id, action_registry)
+        connection_states = {
+            provider_id: await resolve_action_service().connection_state(provider_id)
+            for provider_id in action_registry.provider_ids
+        }
         return {
             "items": [
                 {
@@ -403,6 +424,11 @@ def create_app(
                     "requires_confirmation": action_registry.get(
                         state.provider_id, state.capability
                     ).requires_confirmation,
+                    "configured": connection_states[state.provider_id][0],
+                    "connection_state": connection_states[state.provider_id][1],
+                    "last_used_at": resolve_action_store().last_used_at(
+                        identity.owner_id, state.provider_id
+                    ),
                 }
                 for state in states
             ]
@@ -441,8 +467,7 @@ def create_app(
         grant_id: str,
         identity: Identity = Depends(resolve_identity),
     ) -> dict[str, str]:
-        del provider_id
-        if not resolve_action_store().revoke(identity.owner_id, grant_id):
+        if not resolve_action_store().revoke(identity.owner_id, grant_id, provider_id):
             raise HTTPException(status_code=404, detail="grant not found")
         return {"status": "revoked"}
 
@@ -458,6 +483,10 @@ def create_app(
             definition = action_registry.get(body.provider_id, body.capability)
         except GrantRequiredError as error:
             raise HTTPException(status_code=403, detail=str(error)) from error
+        except ResourceConstraintError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        except PayloadValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         return {
@@ -507,6 +536,10 @@ def create_app(
             raise HTTPException(status_code=403, detail=str(error)) from error
         except ConfirmationError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        except IdempotencyConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ResourceConstraintError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
         except KeyError as error:
             raise HTTPException(status_code=503, detail="connector is not configured") from error
         return {
