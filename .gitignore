@@ -19,6 +19,7 @@ frontend/vite.config.d.ts
 
 tmp/
 .workbuddy/
+.worktrees/
 
 # Generated knowledge indexes; version source documents instead.
 data/rag/*.db
