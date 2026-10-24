@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import re
 
 from careerpilot.memory.models import (
     MemoryConfidence,
@@ -12,7 +13,7 @@ from careerpilot.memory.models import (
     MemoryStatus,
     MemoryType,
 )
-from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
+from careerpilot.memory.unified_store import MemoryVersionConflictError, SqliteUnifiedMemoryStore
 
 
 class MemoryQueryPurpose(StrEnum):
@@ -108,6 +109,41 @@ class MemoryService:
     def get(self, owner_id: str, memory_id: str) -> MemoryRecord:
         return self.store.get_memory(owner_id, memory_id)
 
+    def update(
+        self,
+        owner_id: str,
+        memory_id: str,
+        *,
+        expected_version: int,
+        **changes: object,
+    ) -> MemoryRecord:
+        current = self.get(owner_id, memory_id)
+        if current.version != expected_version:
+            raise MemoryVersionConflictError("Memory version conflict")
+        sensitivity = changes.get("sensitivity", current.sensitivity)
+        if (
+            current.status is MemoryStatus.ACTIVE
+            and sensitivity is MemorySensitivity.SENSITIVE
+            and current.sensitivity is not MemorySensitivity.SENSITIVE
+        ):
+            replacement = self.propose(
+                owner_id=owner_id,
+                memory_type=changes.get("type", current.type),
+                content=str(changes.get("content", current.content)),
+                origin=MemoryOrigin.USER_EXPLICIT,
+                source_type=current.source_type,
+                source_reference=current.source_reference,
+                sensitivity=MemorySensitivity.SENSITIVE,
+                confidence=changes.get("confidence", current.confidence),
+                importance=int(changes.get("importance", current.importance)),
+                metadata=current.metadata,
+            )
+            self.store.add_relation(owner_id, replacement.id, current.id, "supersedes")
+            return replacement
+        return self.store.update_memory(
+            owner_id, memory_id, expected_version=expected_version, **changes
+        )
+
     def list(
         self,
         owner_id: str,
@@ -167,6 +203,8 @@ class MemoryService:
         explicit_personal_recall: bool = False,
     ) -> MemoryContextBundle:
         tokens = tuple(token.casefold() for token in query.split() if token.strip())
+        query_cjk = "".join(re.findall(r"[\u4e00-\u9fff]", query))
+        query_bigrams = {query_cjk[index : index + 2] for index in range(len(query_cjk) - 1)}
         ranked: list[tuple[int, MemoryRecord]] = []
         for record in self.store.list_active_memories(owner_id, limit=200):
             if record.sensitivity is MemorySensitivity.SENSITIVE and (
@@ -175,6 +213,11 @@ class MemoryService:
                 continue
             content = record.content.casefold()
             score = sum(5 for token in tokens if token in content)
+            content_cjk = "".join(re.findall(r"[\u4e00-\u9fff]", content))
+            content_bigrams = {
+                content_cjk[index : index + 2] for index in range(len(content_cjk) - 1)
+            }
+            score += len(query_bigrams & content_bigrams) * 2
             if query.strip() and score == 0 and query.casefold() not in content:
                 continue
             score += record.importance

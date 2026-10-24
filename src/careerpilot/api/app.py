@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Protocol
 
 import httpx
@@ -34,8 +35,15 @@ from careerpilot.api.schemas import (
     ChatResponse,
     HypothesisDecisionRequest,
     IntegrationGrantRequest,
+    IdeaActionLinkRequest,
+    IdeaCreateRequest,
+    IdeaStageRequest,
+    IdeaUpdateRequest,
     JourneyUpdateRequest,
+    MemoryCreateRequest,
+    MemoryUpdateRequest,
     RagQueryRequest,
+    VersionRequest,
 )
 from careerpilot.config import Settings, get_settings
 from careerpilot.connectors.feishu_cli import FeishuCliConnector
@@ -43,7 +51,16 @@ from careerpilot.connectors.netease_mail import NeteaseMailConnector
 from careerpilot.connectors.wps import WpsConnector
 from careerpilot.harness.session import SqliteSessionStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
-from careerpilot.memory.memos import MemosCloudMemoryStore
+from careerpilot.memory.daily_review import DailyReview
+from careerpilot.memory.ideas import IdeaItem, IdeaService, IdeaStorageDeniedError
+from careerpilot.memory.base import MemoryStore
+from careerpilot.memory.models import MemoryRecord, MemoryStatus, MemoryType
+from careerpilot.memory.service import MemoryService
+from careerpilot.memory.unified_store import (
+    MemoryNotFoundError,
+    MemoryVersionConflictError,
+    SqliteUnifiedMemoryStore,
+)
 from careerpilot.product_store import ProductStore
 from careerpilot.rag.agentic import AgenticRagOrchestrator, AgenticRetrievalRequest
 from careerpilot.rag.embeddings import create_embedding_provider
@@ -61,14 +78,18 @@ def create_app(
     rag_store: SqliteRagStore | None = None,
     action_store: SqliteActionStore | None = None,
     action_service: ActionService | None = None,
+    memory_service: MemoryService | None = None,
+    idea_service: IdeaService | None = None,
+    cognitive_store: SqliteCognitiveStore | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
-    owned_memory_store: MemosCloudMemoryStore | None = None
+    owned_memory_store: MemoryStore | None = None
     owned_rag_store: SqliteRagStore | None = None
     owned_cognitive_store: SqliteCognitiveStore | None = None
     owned_session_store: SqliteSessionStore | None = None
     owned_product_store: ProductStore | None = None
     owned_action_store: SqliteActionStore | None = None
+    owned_unified_memory_store: SqliteUnifiedMemoryStore | None = None
     owned_http_clients: list[httpx.AsyncClient] = []
     action_registry = build_mvp_capability_registry()
 
@@ -87,6 +108,8 @@ def create_app(
             owned_product_store.close()
         if owned_action_store is not None:
             owned_action_store.close()
+        if owned_unified_memory_store is not None:
+            owned_unified_memory_store.close()
         for client in owned_http_clients:
             await client.aclose()
 
@@ -113,7 +136,7 @@ def create_app(
 
     def resolve_chat_service() -> ChatService:
         nonlocal chat_service, owned_memory_store, owned_rag_store
-        nonlocal owned_cognitive_store, owned_session_store
+        nonlocal owned_cognitive_store, owned_session_store, owned_unified_memory_store
         if chat_service is None:
             try:
                 (
@@ -122,6 +145,7 @@ def create_app(
                     owned_rag_store,
                     owned_cognitive_store,
                     owned_session_store,
+                    owned_unified_memory_store,
                 ) = build_agent_service(
                     resolved_settings,
                     action_tool_factory=lambda owner_id: build_action_tools(
@@ -211,6 +235,29 @@ def create_app(
             connectors=connectors,
         )
         return action_service
+
+    def resolve_memory_service() -> MemoryService:
+        nonlocal memory_service, owned_unified_memory_store
+        if memory_service is None:
+            owned_unified_memory_store = SqliteUnifiedMemoryStore(
+                resolved_settings.memory_db_path
+            )
+            memory_service = MemoryService(owned_unified_memory_store)
+        return memory_service
+
+    def resolve_idea_service() -> IdeaService:
+        nonlocal idea_service
+        if idea_service is None:
+            idea_service = IdeaService(resolve_memory_service())
+        return idea_service
+
+    def resolve_cognitive_store() -> SqliteCognitiveStore:
+        nonlocal cognitive_store, owned_cognitive_store
+        if cognitive_store is not None:
+            return cognitive_store
+        if owned_cognitive_store is None:
+            owned_cognitive_store = SqliteCognitiveStore(resolved_settings.memory_db_path)
+        return owned_cognitive_store
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -363,6 +410,252 @@ def create_app(
         if not store.delete_user_document(doc_id, identity.owner_id):
             raise HTTPException(status_code=404, detail="document not found")
         return {"status": "ok"}
+
+    # ----- Unified memory, ideas, and daily reviews ----------------------
+
+    @app.get("/v1/me/memories")
+    async def list_memories(
+        memory_type: MemoryType | None = Query(default=None, alias="type"),
+        status: MemoryStatus | None = Query(default=None),
+        query: str | None = Query(default=None, max_length=500),
+        limit: int = Query(default=100, ge=1, le=200),
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        records = resolve_memory_service().list(
+            identity.owner_id,
+            statuses=(status,) if status else None,
+            types=(memory_type,) if memory_type else None,
+            query=query,
+            limit=limit,
+        )
+        return {"items": [_memory_payload(item) for item in records]}
+
+    @app.post("/v1/me/memories", status_code=201)
+    async def create_memory(
+        body: MemoryCreateRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        record = resolve_memory_service().create_explicit(
+            owner_id=identity.owner_id,
+            memory_type=body.type,
+            content=body.content,
+            sensitivity=body.sensitivity,
+            importance=body.importance,
+        )
+        return _memory_payload(record)
+
+    @app.get("/v1/me/memories/{memory_id}")
+    async def get_memory(
+        memory_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            return _memory_payload(resolve_memory_service().get(identity.owner_id, memory_id))
+        except MemoryNotFoundError as error:
+            raise HTTPException(status_code=404, detail="memory not found") from error
+
+    @app.patch("/v1/me/memories/{memory_id}")
+    async def update_memory(
+        memory_id: str,
+        body: MemoryUpdateRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        changes = body.model_dump(exclude={"expected_version"}, exclude_none=True)
+        try:
+            record = resolve_memory_service().update(
+                identity.owner_id,
+                memory_id,
+                expected_version=body.expected_version,
+                **changes,
+            )
+        except MemoryNotFoundError as error:
+            raise HTTPException(status_code=404, detail="memory not found") from error
+        except MemoryVersionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return _memory_payload(record)
+
+    async def transition_memory(
+        memory_id: str,
+        body: VersionRequest,
+        identity: Identity,
+        operation: str,
+    ) -> dict[str, object]:
+        try:
+            method = getattr(resolve_memory_service(), operation)
+            record = method(
+                identity.owner_id, memory_id, expected_version=body.expected_version
+            )
+        except MemoryNotFoundError as error:
+            raise HTTPException(status_code=404, detail="memory not found") from error
+        except (MemoryVersionConflictError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return _memory_payload(record)
+
+    @app.post("/v1/me/memories/{memory_id}/confirm")
+    async def confirm_memory(
+        memory_id: str,
+        body: VersionRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        return await transition_memory(memory_id, body, identity, "confirm")
+
+    @app.post("/v1/me/memories/{memory_id}/pause")
+    async def pause_memory(
+        memory_id: str,
+        body: VersionRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        return await transition_memory(memory_id, body, identity, "pause")
+
+    @app.post("/v1/me/memories/{memory_id}/resume")
+    async def resume_memory(
+        memory_id: str,
+        body: VersionRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        return await transition_memory(memory_id, body, identity, "resume")
+
+    @app.delete("/v1/me/memories/{memory_id}")
+    async def delete_memory(
+        memory_id: str,
+        expected_version: int = Query(ge=1),
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        return await transition_memory(
+            memory_id, VersionRequest(expected_version=expected_version), identity, "delete"
+        )
+
+    @app.get("/v1/me/memory-candidates")
+    async def list_memory_candidates(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        records = resolve_memory_service().list(
+            identity.owner_id, statuses=(MemoryStatus.CANDIDATE,)
+        )
+        return {"items": [_memory_payload(item) for item in records]}
+
+    @app.get("/v1/me/ideas")
+    async def list_ideas(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        return {
+            "items": [
+                _idea_payload(item, resolve_memory_service())
+                for item in resolve_idea_service().list(identity.owner_id)
+            ]
+        }
+
+    @app.post("/v1/me/ideas", status_code=201)
+    async def create_idea(
+        body: IdeaCreateRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            item = resolve_idea_service().capture_explicit(
+                owner_id=identity.owner_id,
+                raw_text=body.raw_text,
+                title=body.title,
+                authorization=body.authorization,
+                sensitivity=body.sensitivity,
+                related_goal_memory_id=body.related_goal_memory_id,
+            )
+        except IdeaStorageDeniedError as error:
+            raise HTTPException(status_code=403, detail=str(error)) from error
+        except MemoryNotFoundError as error:
+            raise HTTPException(status_code=404, detail="related memory not found") from error
+        return _idea_payload(item, resolve_memory_service())
+
+    @app.get("/v1/me/ideas/{idea_id}")
+    async def get_idea(
+        idea_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            item = resolve_idea_service().get(identity.owner_id, idea_id)
+        except MemoryNotFoundError as error:
+            raise HTTPException(status_code=404, detail="idea not found") from error
+        return _idea_payload(item, resolve_memory_service())
+
+    @app.patch("/v1/me/ideas/{idea_id}")
+    async def update_idea(
+        idea_id: str,
+        body: IdeaUpdateRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            item = resolve_idea_service().set_next_step(
+                identity.owner_id,
+                idea_id,
+                expected_version=body.expected_version,
+                next_step=body.next_step,
+            )
+        except MemoryNotFoundError as error:
+            raise HTTPException(status_code=404, detail="idea not found") from error
+        except MemoryVersionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return _idea_payload(item, resolve_memory_service())
+
+    @app.post("/v1/me/ideas/{idea_id}/stage")
+    async def transition_idea(
+        idea_id: str,
+        body: IdeaStageRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            item = resolve_idea_service().update_stage(
+                identity.owner_id,
+                idea_id,
+                expected_version=body.expected_version,
+                stage=body.stage,
+            )
+        except MemoryNotFoundError as error:
+            raise HTTPException(status_code=404, detail="idea not found") from error
+        except (MemoryVersionConflictError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return _idea_payload(item, resolve_memory_service())
+
+    @app.post("/v1/me/ideas/{idea_id}/action-link")
+    async def link_idea_action(
+        idea_id: str,
+        body: IdeaActionLinkRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            item = resolve_idea_service().link_action(
+                identity.owner_id,
+                idea_id,
+                expected_version=body.expected_version,
+                action_reference=body.action_reference,
+            )
+        except MemoryNotFoundError as error:
+            raise HTTPException(status_code=404, detail="idea not found") from error
+        except MemoryVersionConflictError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return _idea_payload(item, resolve_memory_service())
+
+    @app.get("/v1/me/daily-reviews/{local_date}")
+    async def get_daily_review(
+        local_date: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        review = resolve_cognitive_store().get_daily_review(identity.owner_id, local_date)
+        if review is None:
+            raise HTTPException(status_code=404, detail="daily review not found")
+        return _daily_review_payload(review)
+
+    @app.get("/v1/me/daily-reviews")
+    async def list_daily_reviews(
+        limit: int = Query(default=30, ge=1, le=100),
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        return {
+            "items": [
+                _daily_review_payload(review)
+                for review in resolve_cognitive_store().list_daily_reviews(
+                    identity.owner_id, limit
+                )
+            ]
+        }
 
     # ----- Owner-scoped product state -------------------------------------
 
@@ -612,6 +905,64 @@ def _row_to_job(row) -> dict[str, object]:
         "updated_at": row["verified_at"],
         "description": row["job_description"],
         "requirements": row["requirements"],
+    }
+
+
+def _memory_payload(record: MemoryRecord) -> dict[str, object]:
+    return {
+        "id": record.id,
+        "type": record.type.value,
+        "content": record.content,
+        "status": record.status.value,
+        "sensitivity": record.sensitivity.value,
+        "origin": record.origin.value,
+        "source_type": record.source_type.value,
+        "source_reference": record.source_reference,
+        "confidence": record.confidence.value,
+        "importance": record.importance,
+        "version": record.version,
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
+        "last_used_at": record.last_used_at.isoformat() if record.last_used_at else None,
+        "expires_at": record.expires_at.isoformat() if record.expires_at else None,
+        "deleted_at": record.deleted_at.isoformat() if record.deleted_at else None,
+        "metadata": record.metadata,
+    }
+
+
+def _idea_payload(item: IdeaItem, memories: MemoryService) -> dict[str, object]:
+    memory = memories.get(item.owner_id, item.memory_id)
+    return {
+        "id": item.id,
+        "memory_id": item.memory_id,
+        "title": item.title,
+        "stage": item.stage.value,
+        "authorization": item.authorization.value,
+        "memory_status": memory.status.value,
+        "sensitivity": memory.sensitivity.value,
+        "related_goal_memory_id": item.related_goal_memory_id,
+        "next_step": item.next_step,
+        "action_reference": item.action_reference,
+        "version": item.version,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+def _daily_review_payload(review: DailyReview) -> dict[str, object]:
+    return {
+        "id": review.id,
+        "local_date": review.local_date,
+        "wins": list(review.wins),
+        "ideas": list(review.ideas),
+        "blockers": list(review.blockers),
+        "open_loops": list(review.open_loops),
+        "tomorrow_step": review.tomorrow_step,
+        "source_event_ids": list(review.source_event_ids),
+        "status": review.status,
+        "version": review.version,
+        "created_at": review.created_at.isoformat(),
+        "updated_at": review.updated_at.isoformat(),
     }
 
 

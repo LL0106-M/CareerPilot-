@@ -14,6 +14,7 @@ from careerpilot.memory.dreaming import (
     DreamingTriggerPolicy,
 )
 from careerpilot.memory.write_policy import MemoryWritePolicy
+from careerpilot.memory.service import MemoryService
 from careerpilot.support.policy import SupportMode, SupportPolicy
 
 
@@ -48,6 +49,7 @@ class AgentService:
         action_tool_factory: Callable[[str], tuple[BaseTool, ...]] | None = None,
         cognitive_store: CognitiveStore | None = None,
         dreaming_trigger_policy: DreamingTriggerPolicy | None = None,
+        unified_memory_service: MemoryService | None = None,
     ) -> None:
         self._agent = agent
         self._rag_tool_factory = rag_tool_factory
@@ -57,6 +59,7 @@ class AgentService:
             support_policy,
             prompt_composer or PromptComposer(),
             cognitive_store,
+            unified_memory_service=unified_memory_service,
         )
         self._memory_lifecycle = MemoryLifecycle(
             memory_store,

@@ -3,6 +3,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from careerpilot.context.contracts import RetrievalSource, TaskIntent
+from careerpilot.memory.ideas import IdeaStage, StorageAuthorization
+from careerpilot.memory.models import MemoryConfidence, MemorySensitivity, MemoryType
 from careerpilot.support.policy import SupportMode
 
 
@@ -78,3 +80,56 @@ class ActionApplyRequest(BaseModel):
     confirmation_token: str | None = Field(default=None, max_length=256)
     preview_hash: str = Field(min_length=64, max_length=64)
     idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class MemoryCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    type: MemoryType
+    content: str = Field(min_length=1, max_length=4_000)
+    sensitivity: MemorySensitivity = MemorySensitivity.NORMAL
+    importance: int = Field(default=3, ge=1, le=5)
+    expires_at: str | None = None
+
+
+class MemoryUpdateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    expected_version: int = Field(ge=1)
+    content: str | None = Field(default=None, min_length=1, max_length=4_000)
+    type: MemoryType | None = None
+    sensitivity: MemorySensitivity | None = None
+    confidence: MemoryConfidence | None = None
+    importance: int | None = Field(default=None, ge=1, le=5)
+    expires_at: str | None = None
+
+
+class VersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=1)
+
+
+class IdeaCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    raw_text: str = Field(min_length=1, max_length=4_000)
+    title: str = Field(min_length=1, max_length=200)
+    authorization: StorageAuthorization
+    sensitivity: MemorySensitivity = MemorySensitivity.NORMAL
+    related_goal_memory_id: str | None = Field(default=None, max_length=128)
+
+
+class IdeaUpdateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    expected_version: int = Field(ge=1)
+    next_step: str | None = Field(default=None, max_length=500)
+
+
+class IdeaStageRequest(VersionRequest):
+    stage: IdeaStage
+
+
+class IdeaActionLinkRequest(VersionRequest):
+    action_reference: str = Field(min_length=1, max_length=200)

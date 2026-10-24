@@ -42,3 +42,29 @@ class MemoryStore(Protocol):
         user_message: str,
         assistant_message: str,
     ) -> None: ...
+
+
+class DisabledMemoryStore:
+    """No-network auxiliary provider used when MemOS is not configured."""
+
+    async def search(
+        self,
+        user_id: str,
+        conversation_id: str,
+        query: str,
+        mode: MemoryRetrievalMode = MemoryRetrievalMode.PLANNING,
+    ) -> MemoryContext:
+        del user_id, conversation_id, query, mode
+        return MemoryContext()
+
+    async def add_turn(
+        self,
+        user_id: str,
+        conversation_id: str,
+        user_message: str,
+        assistant_message: str,
+    ) -> None:
+        del user_id, conversation_id, user_message, assistant_message
+
+    async def aclose(self) -> None:
+        return None

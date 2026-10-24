@@ -12,11 +12,14 @@ from careerpilot.context.intent import RuleBasedIntentInterpreter
 from careerpilot.context.router import IntentAwareRetrievalRouter
 from careerpilot.memory.base import (
     MemoryContext,
+    MemoryItem,
     MemoryRetrievalMode,
     MemoryStore,
     MemoryStoreError,
 )
 from careerpilot.memory.dreaming import CognitiveStore
+from careerpilot.memory.models import MemoryType
+from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
 from careerpilot.support.policy import SupportDecision, SupportMode, SupportPolicy
 
 
@@ -50,6 +53,7 @@ class CareerContextCompiler:
         cognitive_store: CognitiveStore | None = None,
         intent_interpreter: IntentInterpreter | None = None,
         retrieval_router: RetrievalRouter | None = None,
+        unified_memory_service: MemoryService | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._prompt_composer = prompt_composer or PromptComposer()
@@ -58,6 +62,7 @@ class CareerContextCompiler:
             support_policy
         )
         self._retrieval_router = retrieval_router or IntentAwareRetrievalRouter()
+        self._unified_memory_service = unified_memory_service
 
     async def compile(self, request: ContextRequest) -> CompiledContext:
         intent = await self._intent_interpreter.interpret(
@@ -70,17 +75,44 @@ class CareerContextCompiler:
         if retrieval_plan.uses(RetrievalSource.MEMORY):
             memory_read_status = "available"
             try:
-                memories = await self._memory_store.search(
-                    request.user_id,
-                    request.conversation_id,
-                    request.message,
-                    mode=(
-                        MemoryRetrievalMode.COMPANION
-                        if decision.mode is SupportMode.LISTEN
-                        else MemoryRetrievalMode.PLANNING
-                    ),
-                )
-            except MemoryStoreError:
+                if self._unified_memory_service is not None:
+                    bundle = self._unified_memory_service.search_context(
+                        owner_id=request.user_id,
+                        query=request.message,
+                        purpose=(
+                            MemoryQueryPurpose.COMPANION
+                            if decision.mode is SupportMode.LISTEN
+                            else MemoryQueryPurpose.PLANNING
+                        ),
+                        explicit_personal_recall=any(
+                            marker in request.message
+                            for marker in ("记得", "记忆", "你知道我的", "回忆")
+                        ),
+                    )
+                    memories = MemoryContext(
+                        facts=tuple(
+                            MemoryItem(item.id, item.content, item.type.value)
+                            for item in bundle.records
+                            if item.type is not MemoryType.PREFERENCE
+                        ),
+                        preferences=tuple(
+                            MemoryItem(item.id, item.content, item.type.value)
+                            for item in bundle.records
+                            if item.type is MemoryType.PREFERENCE
+                        ),
+                    )
+                else:
+                    memories = await self._memory_store.search(
+                        request.user_id,
+                        request.conversation_id,
+                        request.message,
+                        mode=(
+                            MemoryRetrievalMode.COMPANION
+                            if decision.mode is SupportMode.LISTEN
+                            else MemoryRetrievalMode.PLANNING
+                        ),
+                    )
+            except (MemoryStoreError, Exception):
                 memory_read_status = "unavailable"
 
         hypotheses = ()

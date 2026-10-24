@@ -36,7 +36,7 @@ class SqliteCognitiveStore:
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self._path)
+        self._connection = sqlite3.connect(self._path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._create_schema()
 
@@ -300,6 +300,18 @@ class SqliteCognitiveStore:
             version=row["version"],
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def list_daily_reviews(self, owner_id: str, limit: int = 30) -> tuple[DailyReview, ...]:
+        rows = self._connection.execute(
+            """SELECT local_date FROM daily_reviews WHERE owner_id=?
+            ORDER BY local_date DESC, rowid DESC LIMIT ?""",
+            (owner_id, max(1, min(limit, 100))),
+        ).fetchall()
+        return tuple(
+            review
+            for row in rows
+            if (review := self.get_daily_review(owner_id, row["local_date"])) is not None
         )
 
     def list_memory_patches(self, owner_id: str) -> tuple[StoredMemoryPatch, ...]:

@@ -8,7 +8,10 @@ from careerpilot.agent.service import AgentService
 from careerpilot.config import Settings
 from careerpilot.harness.session import SqliteSessionStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
+from careerpilot.memory.base import DisabledMemoryStore, MemoryStore
 from careerpilot.memory.memos import MemosCloudMemoryStore
+from careerpilot.memory.service import MemoryService
+from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
 from careerpilot.rag.embeddings import create_embedding_provider
 from careerpilot.rag.store import SqliteRagStore
 from careerpilot.rag.tool import build_agentic_rag_tool
@@ -21,22 +24,27 @@ def build_agent_service(
     action_tool_factory: Callable[[str], tuple[BaseTool, ...]] | None = None,
 ) -> tuple[
     AgentService,
-    MemosCloudMemoryStore,
+    MemoryStore,
     SqliteRagStore,
     SqliteCognitiveStore,
     SqliteSessionStore,
+    SqliteUnifiedMemoryStore,
 ]:
+    memory_store: MemoryStore
     if settings.memos_api_key is None:
-        raise RuntimeError("MEMOS_API_KEY is not configured")
-    memory_store = MemosCloudMemoryStore(
-        settings.memos_api_key.get_secret_value(),
-        base_url=settings.memos_base_url,
-    )
+        memory_store = DisabledMemoryStore()
+    else:
+        memory_store = MemosCloudMemoryStore(
+            settings.memos_api_key.get_secret_value(),
+            base_url=settings.memos_base_url,
+        )
     rag_store = SqliteRagStore(
         settings.rag_db_path,
         embedder=create_embedding_provider(settings),
     )
     cognitive_store = SqliteCognitiveStore(settings.memory_db_path)
+    unified_store = SqliteUnifiedMemoryStore(settings.memory_db_path)
+    unified_memory_service = MemoryService(unified_store)
     session_store = SqliteSessionStore(settings.session_db_path)
     model = create_qwen_model(settings)
     provider = build_search_provider(settings)
@@ -51,11 +59,13 @@ def build_agent_service(
             ),
             action_tool_factory=action_tool_factory,
             cognitive_store=cognitive_store,
+            unified_memory_service=unified_memory_service,
         ),
         memory_store,
         rag_store,
         cognitive_store,
         session_store,
+        unified_store,
     )
 
 
