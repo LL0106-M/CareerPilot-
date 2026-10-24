@@ -66,7 +66,13 @@ class FeishuCliConnector:
             stdin_text=None,
             timeout_seconds=self._timeout_seconds,
         )
-        return result.returncode == 0 and not result.timed_out
+        if result.returncode != 0 or result.timed_out:
+            return False
+        try:
+            envelope = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return False
+        return envelope.get("ok") is True and envelope.get("identity") == "user"
 
     async def execute(self, capability: str, payload: dict) -> ConnectorOutcome:
         if capability == "document.create":
@@ -83,7 +89,9 @@ class FeishuCliConnector:
             raise ConnectorError("Feishu CLI timed out", retryable=False, uncertain=True)
         envelope = self._parse_envelope(result)
         if envelope.get("identity") != "user":
-            raise ConnectorError("Feishu CLI must use user identity", retryable=False)
+            raise ConnectorError(
+                "Feishu CLI must use user identity", retryable=False, uncertain=True
+            )
         data = envelope.get("data", {})
         if capability == "document.create":
             document = data.get("document", data)
@@ -94,12 +102,19 @@ class FeishuCliConnector:
             reference = event.get("event_id")
             observations = tuple(value for value in (event.get("app_link"),) if value)
         if not reference:
-            raise RuntimeError("Feishu CLI returned no external reference")
+            raise ConnectorError(
+                "Feishu CLI returned no external reference", retryable=False, uncertain=True
+            )
         verification_kind = "document" if capability == "document.create" else "calendar"
         return ConnectorOutcome(
             external_reference=reference,
             observations=observations,
             verification_kind=verification_kind,
+            verification_context=(
+                {"calendar_id": str(payload.get("calendar_id", "primary"))}
+                if capability == "calendar.create"
+                else {}
+            ),
         )
 
     async def verify(self, outcome: ConnectorOutcome) -> bool:
@@ -123,12 +138,15 @@ class FeishuCliConnector:
                 "json",
             )
         else:
+            calendar_id = outcome.verification_context.get("calendar_id", "primary")
             argv = (
                 self._executable,
                 "calendar",
                 "+get",
                 "--event-id",
                 outcome.external_reference,
+                "--calendar-id",
+                calendar_id,
                 "--as",
                 "user",
                 "--format",
@@ -188,7 +206,9 @@ class FeishuCliConnector:
             envelope = json.loads(raw)
         except json.JSONDecodeError as error:
             raise ConnectorError(
-                "Feishu CLI returned an invalid response", retryable=False
+                "Feishu CLI returned an invalid response",
+                retryable=False,
+                uncertain=result.returncode == 0,
             ) from error
         if result.returncode != 0 or not envelope.get("ok", False):
             message = envelope.get("error", {}).get("message", "Feishu CLI request failed")

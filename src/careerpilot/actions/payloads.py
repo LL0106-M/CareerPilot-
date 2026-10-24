@@ -53,9 +53,31 @@ PAYLOAD_MODELS: dict[str, type[_StrictPayload]] = {
     "netease_mail:email.search_recruiting": NeteaseSearchPayload,
 }
 
+CONSTRAINT_FIELDS: dict[str, frozenset[str]] = {
+    "feishu:document.create": frozenset({"parent_token"}),
+    "feishu:calendar.create": frozenset({"calendar_id"}),
+    "wps:document.create": frozenset({"drive_id", "parent_id"}),
+    "netease_mail:email.search_recruiting": frozenset(),
+}
+
 
 def validate_capability_payload(
     provider_id: str, capability: str, payload: dict[str, Any]
 ) -> dict[str, Any]:
     model = PAYLOAD_MODELS[f"{provider_id}:{capability}"]
     return model.model_validate(payload).model_dump(mode="json", exclude_none=True)
+
+
+def validate_grant_constraints(
+    provider_id: str,
+    capabilities: list[str],
+    constraints: dict[str, list[str]],
+) -> None:
+    allowed_fields: set[str] = set()
+    for capability in capabilities:
+        allowed_fields.update(CONSTRAINT_FIELDS[f"{provider_id}:{capability}"])
+    unknown = set(constraints) - allowed_fields
+    if unknown:
+        raise ValueError(f"unknown resource constraint: {sorted(unknown)[0]}")
+    if any(not values for values in constraints.values()):
+        raise ValueError("resource constraint values cannot be empty")

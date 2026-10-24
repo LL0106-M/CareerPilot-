@@ -44,6 +44,17 @@ class FailingConnector(RecordingConnector):
         raise ConnectorError("provider rejected request", retryable=False)
 
 
+class UnexpectedConnector(RecordingConnector):
+    async def execute(self, capability: str, payload: dict[str, Any]) -> ConnectorOutcome:
+        self.calls.append((capability, payload))
+        raise ValueError("malformed success response after dispatch")
+
+
+class WpsResourceConnector(RecordingConnector):
+    def resource_context(self, capability: str) -> dict[str, str]:
+        return {"drive_id": "drive-1", "parent_id": "parent-1"}
+
+
 def build_service(tmp_path, connector=None):
     store = SqliteActionStore(tmp_path / "actions.db")
     selected_connector = connector or RecordingConnector()
@@ -276,6 +287,36 @@ def test_grant_resource_constraints_are_enforced_during_preview(tmp_path) -> Non
                 "document.create",
                 {"title": "Plan", "parent_token": "other-folder"},
             )
+        with pytest.raises(ResourceConstraintError):
+            service.preview(
+                "owner-a", "feishu", "document.create", {"title": "No target"}
+            )
+    finally:
+        store.close()
+
+
+def test_multi_capability_grant_only_applies_relevant_constraints(tmp_path) -> None:
+    service, store, _ = build_service(tmp_path)
+    try:
+        store.grant(
+            owner_id="owner-a",
+            provider_id="feishu",
+            capabilities=("document.create", "calendar.create"),
+            purpose="career_actions",
+            resource_constraints={
+                "parent_token": ["allowed-folder"],
+                "calendar_id": ["primary"],
+            },
+        )
+
+        preview = service.preview(
+            "owner-a",
+            "feishu",
+            "document.create",
+            {"title": "Plan", "parent_token": "allowed-folder"},
+        )
+
+        assert preview.payload["parent_token"] == "allowed-folder"
     finally:
         store.close()
 
@@ -299,5 +340,81 @@ async def test_provider_failure_creates_terminal_failed_receipt(tmp_path) -> Non
         assert receipt.status == "failed"
         assert receipt == repeated
         assert len(connector.calls) == 1
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_post_dispatch_error_is_recorded_as_unknown(tmp_path) -> None:
+    connector = UnexpectedConnector()
+    service, store, _ = build_service(tmp_path, connector)
+    try:
+        grant_feishu(store)
+        preview = service.preview("owner-a", "feishu", "document.create", {"title": "Plan"})
+        confirmation = service.confirm("owner-a", preview.id, preview.preview_hash)
+
+        receipt = await service.apply(
+            "owner-a", preview.id, confirmation.token, preview.preview_hash, "unknown-request"
+        )
+
+        assert receipt.status == "unknown"
+        assert receipt.retryable is False
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_is_owner_wide_across_providers(tmp_path) -> None:
+    connector = RecordingConnector()
+    store = SqliteActionStore(tmp_path / "actions.db")
+    service = ActionService(
+        registry=build_mvp_capability_registry(),
+        store=store,
+        connectors={"feishu": connector, "wps": connector},
+    )
+    try:
+        grant_feishu(store)
+        store.grant(
+            owner_id="owner-a",
+            provider_id="wps",
+            capabilities=("document.create",),
+            purpose="career_artifact_creation",
+        )
+        first = service.preview("owner-a", "feishu", "document.create", {"title": "First"})
+        first_confirmation = service.confirm("owner-a", first.id, first.preview_hash)
+        await service.apply(
+            "owner-a", first.id, first_confirmation.token, first.preview_hash, "owner-key"
+        )
+        second = service.preview("owner-a", "wps", "document.create", {"name": "Second"})
+        second_confirmation = service.confirm("owner-a", second.id, second.preview_hash)
+
+        with pytest.raises(IdempotencyConflictError):
+            await service.apply(
+                "owner-a", second.id, second_confirmation.token, second.preview_hash, "owner-key"
+            )
+        assert len(connector.calls) == 1
+    finally:
+        store.close()
+
+
+def test_wps_constraints_apply_to_connector_configured_resources(tmp_path) -> None:
+    connector = WpsResourceConnector()
+    store = SqliteActionStore(tmp_path / "actions.db")
+    service = ActionService(
+        registry=build_mvp_capability_registry(),
+        store=store,
+        connectors={"wps": connector},
+    )
+    try:
+        store.grant(
+            owner_id="owner-a",
+            provider_id="wps",
+            capabilities=("document.create",),
+            purpose="career_artifact_creation",
+            resource_constraints={"drive_id": ["different-drive"]},
+        )
+
+        with pytest.raises(ResourceConstraintError):
+            service.preview("owner-a", "wps", "document.create", {"name": "Plan"})
     finally:
         store.close()

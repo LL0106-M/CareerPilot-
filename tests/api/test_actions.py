@@ -195,3 +195,21 @@ def test_revoke_route_enforces_provider_scope(tmp_path) -> None:
         ) is not None
     finally:
         store.close()
+
+
+def test_grant_rejects_unknown_or_sensitive_resource_constraints(tmp_path) -> None:
+    client, store, _ = build_client(tmp_path)
+    try:
+        response = client.post(
+            "/v1/me/integrations/feishu/grants",
+            cookies={"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"},
+            json={
+                "capabilities": ["document.create"],
+                "purpose": "career_artifact_creation",
+                "resource_constraints": {"access_token": ["secret"]},
+            },
+        )
+
+        assert response.status_code == 422
+    finally:
+        store.close()

@@ -99,3 +99,19 @@ async def test_netease_rejects_unbounded_lookback() -> None:
 
     with pytest.raises(ValueError, match="90 days"):
         await connector.execute("email.search_recruiting", {"since": "2020-01-01", "limit": 1})
+
+
+@pytest.mark.asyncio
+async def test_netease_probe_authenticates_read_only_and_logs_out() -> None:
+    session = FakeImap()
+    connector = NeteaseMailConnector(
+        host="imap.163.com",
+        port=993,
+        account="person@163.com",
+        authorization_code="mail-secret",
+        imap_factory=lambda host, port: session,
+    )
+
+    assert await connector.probe() is True
+    assert ("select", "INBOX", True) in session.calls
+    assert session.logged_out is True

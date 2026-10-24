@@ -56,7 +56,7 @@ async def test_wps_create_posts_exact_contract_without_persisting_token() -> Non
     )
     assert outcome.external_reference == "file_1"
     assert "secret-token" not in repr(outcome)
-    assert requests[1].url.path == "/v7/files/file_1/meta"
+    assert requests[1].url.path == "/v7/drives/drive_1/files/file_1/meta"
 
 
 @pytest.mark.asyncio
@@ -94,3 +94,26 @@ async def test_wps_verify_returns_false_when_readback_id_does_not_match() -> Non
             parent_id="parent_1",
         )
         assert await connector.verify(ConnectorOutcome(external_reference="file_1")) is False
+
+
+@pytest.mark.asyncio
+async def test_wps_probe_performs_authenticated_read_only_request() -> None:
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"code": 0, "data": {"id": "parent_1"}})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://openapi.wps.cn"
+    ) as client:
+        connector = WpsConnector(
+            client=client,
+            access_token="secret-token",
+            drive_id="drive_1",
+            parent_id="parent_1",
+        )
+        assert await connector.probe() is True
+
+    assert requests[0].method == "GET"
+    assert requests[0].url.path == "/v7/drives/drive_1/files/parent_1/meta"

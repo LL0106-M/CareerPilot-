@@ -188,3 +188,30 @@ async def test_feishu_rejects_non_user_identity_and_verifies_by_readback() -> No
         "--format",
         "json",
     )
+
+
+@pytest.mark.asyncio
+async def test_calendar_verification_preserves_creation_calendar() -> None:
+    runner = RecordingRunner(
+        CommandResult(
+            0,
+            json.dumps(
+                {
+                    "ok": True,
+                    "identity": "user",
+                    "data": {"event_id": "event_1"},
+                }
+            ),
+            "",
+        )
+    )
+    connector = FeishuCliConnector(runner=runner)
+    outcome = ConnectorOutcome(
+        external_reference="event_1",
+        verification_kind="calendar",
+        verification_context={"calendar_id": "calendar_1"},
+    )
+
+    assert await connector.verify(outcome) is True
+    assert "--calendar-id" in runner.calls[0][0]
+    assert "calendar_1" in runner.calls[0][0]

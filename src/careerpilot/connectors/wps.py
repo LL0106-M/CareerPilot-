@@ -40,7 +40,13 @@ class WpsConnector:
             raise ValueError("WPS access_key and secret_key must be configured together")
 
     async def probe(self) -> bool:
-        return bool(self._access_token and self._drive_id and self._parent_id)
+        path = f"/v7/drives/{self._drive_id}/files/{self._parent_id}/meta"
+        try:
+            response = await self._client.get(path, headers=self._headers("GET", path, ""))
+            envelope = response.json()
+        except (httpx.HTTPError, ValueError):
+            return False
+        return not response.is_error and envelope.get("code", 0) == 0
 
     async def execute(self, capability: str, payload: dict) -> ConnectorOutcome:
         if capability != "document.create":
@@ -75,14 +81,16 @@ class WpsConnector:
         file_data = envelope.get("data", {})
         reference = file_data.get("id")
         if not reference:
-            raise ConnectorError("WPS returned no file reference", retryable=False)
+            raise ConnectorError(
+                "WPS returned no file reference", retryable=False, uncertain=True
+            )
         observations = tuple(value for value in (file_data.get("link_url"),) if value)
         return ConnectorOutcome(external_reference=reference, observations=observations)
 
     async def verify(self, outcome: ConnectorOutcome) -> bool:
         if not outcome.external_reference:
             return False
-        path = f"/v7/files/{outcome.external_reference}/meta"
+        path = f"/v7/drives/{self._drive_id}/files/{outcome.external_reference}/meta"
         try:
             response = await self._client.get(path, headers=self._headers("GET", path, ""))
         except httpx.HTTPError:
@@ -93,6 +101,11 @@ class WpsConnector:
         return envelope.get("code", 0) == 0 and envelope.get("data", {}).get(
             "id"
         ) == outcome.external_reference
+
+    def resource_context(self, capability: str) -> dict[str, str]:
+        if capability != "document.create":
+            return {}
+        return {"drive_id": self._drive_id, "parent_id": self._parent_id}
 
     def _headers(self, method: str, path: str, body: str) -> dict[str, str]:
         headers = {

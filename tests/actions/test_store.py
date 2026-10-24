@@ -1,3 +1,5 @@
+import sqlite3
+
 from careerpilot.actions.registry import build_mvp_capability_registry
 from careerpilot.actions.store import SqliteActionStore
 
@@ -52,5 +54,40 @@ def test_store_creates_default_parent_directory(tmp_path) -> None:
     store = SqliteActionStore(path)
     try:
         assert path.exists()
+    finally:
+        store.close()
+
+
+def test_store_migrates_provider_scoped_idempotency_keys(tmp_path) -> None:
+    path = tmp_path / "actions.db"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE action_executions (
+            owner_id TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            action_id TEXT NOT NULL,
+            preview_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            receipt_id TEXT,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(owner_id, provider_id, idempotency_key)
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = SqliteActionStore(path)
+    try:
+        columns = store._connection.execute("PRAGMA table_info(action_executions)").fetchall()
+        primary_key = [
+            row["name"]
+            for row in sorted(columns, key=lambda row: row["pk"])
+            if row["pk"]
+        ]
+
+        assert primary_key == ["owner_id", "idempotency_key"]
     finally:
         store.close()

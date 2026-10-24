@@ -30,7 +30,10 @@ class NeteaseMailConnector:
         self._imap_factory = imap_factory
 
     async def probe(self) -> bool:
-        return bool(self._host and self._account and self._authorization_code)
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(self._probe_sync), timeout=10)
+        except Exception:
+            return False
 
     async def execute(self, capability: str, payload: dict) -> ConnectorOutcome:
         if capability != "email.search_recruiting":
@@ -39,6 +42,15 @@ class NeteaseMailConnector:
 
     async def verify(self, outcome: ConnectorOutcome) -> bool:
         return True
+
+    def _probe_sync(self) -> bool:
+        session = self._imap_factory(self._host, self._port)
+        try:
+            login_status, _ = session.login(self._account, self._authorization_code)
+            select_status, _ = session.select("INBOX", readonly=True)
+            return login_status == "OK" and select_status == "OK"
+        finally:
+            session.logout()
 
     def _search(self, payload: dict) -> ConnectorOutcome:
         since = self._imap_date(payload.get("since"))

@@ -6,6 +6,7 @@ import httpx
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from careerpilot.actions.payloads import validate_grant_constraints
 from careerpilot.actions.registry import build_mvp_capability_registry
 from careerpilot.actions.service import (
     ActionService,
@@ -443,8 +444,13 @@ def create_app(
         try:
             for capability in body.capabilities:
                 action_registry.get(provider_id, capability)
+            validate_grant_constraints(
+                provider_id, body.capabilities, body.resource_constraints
+            )
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         grant = resolve_action_store().grant(
             owner_id=identity.owner_id,
             provider_id=provider_id,

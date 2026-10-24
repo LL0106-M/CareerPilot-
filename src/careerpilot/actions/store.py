@@ -57,10 +57,11 @@ class SqliteActionStore:
                 status TEXT NOT NULL,
                 receipt_id TEXT,
                 created_at TEXT NOT NULL,
-                PRIMARY KEY(owner_id, provider_id, idempotency_key)
+                PRIMARY KEY(owner_id, idempotency_key)
             )
             """
         )
+        self._migrate_action_execution_key_scope()
         self._connection.execute(
             """
             CREATE TABLE IF NOT EXISTS action_previews (
@@ -110,6 +111,53 @@ class SqliteActionStore:
             """
         )
         self._connection.commit()
+
+    def _migrate_action_execution_key_scope(self) -> None:
+        columns = self._connection.execute(
+            "PRAGMA table_info(action_executions)"
+        ).fetchall()
+        primary_key = [
+            row["name"]
+            for row in sorted(columns, key=lambda row: row["pk"])
+            if row["pk"]
+        ]
+        if primary_key == ["owner_id", "idempotency_key"]:
+            return
+        if primary_key != ["owner_id", "provider_id", "idempotency_key"]:
+            raise RuntimeError("unsupported action_executions schema")
+
+        with self._connection:
+            self._connection.execute(
+                "ALTER TABLE action_executions RENAME TO action_executions_legacy"
+            )
+            self._connection.execute(
+                """
+                CREATE TABLE action_executions (
+                    owner_id TEXT NOT NULL,
+                    provider_id TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    action_id TEXT NOT NULL,
+                    preview_hash TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    receipt_id TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(owner_id, idempotency_key)
+                )
+                """
+            )
+            self._connection.execute(
+                """
+                INSERT OR IGNORE INTO action_executions (
+                    owner_id, provider_id, idempotency_key, action_id,
+                    preview_hash, status, receipt_id, created_at
+                )
+                SELECT owner_id, provider_id, idempotency_key, action_id,
+                       preview_hash, status, receipt_id, created_at
+                FROM action_executions_legacy
+                ORDER BY CASE WHEN receipt_id IS NULL THEN 1 ELSE 0 END, created_at
+                """
+            )
+            self._connection.execute("DROP TABLE action_executions_legacy")
 
     def grant(
         self,
@@ -307,9 +355,9 @@ class SqliteActionStore:
                 existing = self._connection.execute(
                     """
                     SELECT action_id, preview_hash FROM action_executions
-                    WHERE owner_id = ? AND provider_id = ? AND idempotency_key = ?
+                    WHERE owner_id = ? AND idempotency_key = ?
                     """,
-                    (owner_id, provider_id, idempotency_key),
+                    (owner_id, idempotency_key),
                 ).fetchone()
                 if existing is not None:
                     self._connection.commit()
@@ -378,13 +426,12 @@ class SqliteActionStore:
             self._connection.execute(
                 """
                 UPDATE action_executions SET status = ?, receipt_id = ?
-                WHERE owner_id = ? AND provider_id = ? AND idempotency_key = ?
+                WHERE owner_id = ? AND idempotency_key = ?
                 """,
                 (
                     receipt.status,
                     receipt.id,
                     receipt.owner_id,
-                    receipt.provider_id,
                     receipt.idempotency_key,
                 ),
             )
@@ -420,9 +467,9 @@ class SqliteActionStore:
         row = self._connection.execute(
             """
             SELECT * FROM action_receipts
-            WHERE owner_id = ? AND provider_id = ? AND idempotency_key = ?
+            WHERE owner_id = ? AND idempotency_key = ?
             """,
-            (owner_id, provider_id, idempotency_key),
+            (owner_id, idempotency_key),
         ).fetchone()
         if row is None:
             return None

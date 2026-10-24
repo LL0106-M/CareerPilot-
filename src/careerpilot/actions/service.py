@@ -3,7 +3,7 @@
 import hashlib
 import json
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -12,7 +12,7 @@ from careerpilot.actions.models import (
     ActionPreview,
     ActionReceipt,
 )
-from careerpilot.actions.payloads import validate_capability_payload
+from careerpilot.actions.payloads import CONSTRAINT_FIELDS, validate_capability_payload
 from careerpilot.actions.registry import CapabilityRegistry
 from careerpilot.actions.store import SqliteActionStore, _utc_now
 
@@ -53,6 +53,7 @@ class ConnectorOutcome:
     external_reference: str | None = None
     observations: tuple[str, ...] = ()
     verification_kind: str | None = None
+    verification_context: dict[str, str] = field(default_factory=dict)
 
 
 class Connector(Protocol):
@@ -94,7 +95,7 @@ class ActionService:
             validated = validate_capability_payload(provider_id, capability, payload)
         except (KeyError, ValueError) as error:
             raise PayloadValidationError("invalid capability payload") from error
-        self._enforce_constraints(grant.resource_constraints, validated)
+        self._enforce_constraints(provider_id, capability, grant.resource_constraints, validated)
         normalized, preview_hash = _normalized_payload(validated)
         preview = ActionPreview(
             id=str(uuid4()),
@@ -143,7 +144,9 @@ class ActionService:
         if preview.preview_hash != preview_hash:
             raise ConfirmationError("preview hash does not match")
         grant = self._require_grant(owner_id, preview.provider_id, preview.capability)
-        self._enforce_constraints(grant.resource_constraints, preview.payload)
+        self._enforce_constraints(
+            preview.provider_id, preview.capability, grant.resource_constraints, preview.payload
+        )
         connector = self._connectors[preview.provider_id]
         if definition.requires_confirmation:
             confirmation = self._store.get_confirmation(owner_id, action_id)
@@ -194,8 +197,8 @@ class ActionService:
             external_reference = None
             retryable = False
         except Exception:
-            status = "failed"
-            observations = ("provider request failed",)
+            status = "unknown"
+            observations = ("provider outcome is uncertain",)
             external_reference = None
             retryable = False
 
@@ -229,8 +232,30 @@ class ActionService:
             raise GrantRequiredError(f"active grant required for {provider_id}:{capability}")
         return grant
 
-    @staticmethod
-    def _enforce_constraints(constraints: dict[str, Any], payload: dict[str, Any]) -> None:
-        for field, allowed_values in constraints.items():
-            if field in payload and payload[field] not in allowed_values:
-                raise ResourceConstraintError(f"resource is outside grant constraint: {field}")
+    def _enforce_constraints(
+        self,
+        provider_id: str,
+        capability: str,
+        constraints: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> None:
+        effective_resources = dict(payload)
+        if provider_id == "feishu" and capability == "document.create":
+            effective_resources.setdefault("parent_token", "my_library")
+        if provider_id == "feishu" and capability == "calendar.create":
+            effective_resources.setdefault("calendar_id", "primary")
+        connector = self._connectors.get(provider_id)
+        resource_context = getattr(connector, "resource_context", None)
+        if resource_context is not None:
+            effective_resources.update(resource_context(capability))
+        relevant_fields = CONSTRAINT_FIELDS[f"{provider_id}:{capability}"]
+        for field_name, allowed_values in constraints.items():
+            if field_name not in relevant_fields:
+                continue
+            if (
+                field_name not in effective_resources
+                or effective_resources[field_name] not in allowed_values
+            ):
+                raise ResourceConstraintError(
+                    f"resource is outside grant constraint: {field_name}"
+                )
