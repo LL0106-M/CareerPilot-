@@ -15,6 +15,7 @@ const TYPE_COLOR: Record<MemoryItem['type'], string> = {
   '长期目标': 'tag-hypothesis',
   '偏好': 'tag',
   '事实': 'tag-state',
+  '情绪': 'tag-warning',
 }
 
 export function MemoryPage() {

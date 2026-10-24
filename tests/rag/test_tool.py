@@ -51,23 +51,23 @@ async def test_rag_tool_reports_insufficient_without_fabricating(tmp_path: Path)
     raw = await tool.ainvoke({"query": "不存在的知识", "domain": None})
     result = json.loads(raw)
 
-    assert result == {
-        "status": "insufficient",
-        "content_is_untrusted": True,
-        "query_plan": {
+    assert result["status"] == "insufficient"
+    assert result["content_is_untrusted"] is True
+    assert result["query_plan"] == {
             "domain": None,
             "validation_target": "direct_fact",
             "queries": ["不存在的知识"],
             "minimum_sources": 1,
             "requires_freshness": False,
             "max_rounds": 2,
-        },
-        "evidence": {
+        }
+    assert result["evidence"] == {
             "distinct_sources": 0,
             "needs_online_search": True,
             "rounds": 1,
             "stop_reason": "needs_online_search",
             "clues": [],
-        },
-        "hits": [],
-    }
+        }
+    assert result["hits"] == []
+    assert result["context_pack"]["evidence"] == []
+    assert result["context_pack"]["relation_clues"] == []

@@ -45,11 +45,13 @@ class AgentService:
         prompt_composer: PromptComposer | None = None,
         memory_write_policy: MemoryWritePolicy | None = None,
         rag_tool_factory: Callable[[str], BaseTool] | None = None,
+        action_tool_factory: Callable[[str], tuple[BaseTool, ...]] | None = None,
         cognitive_store: CognitiveStore | None = None,
         dreaming_trigger_policy: DreamingTriggerPolicy | None = None,
     ) -> None:
         self._agent = agent
         self._rag_tool_factory = rag_tool_factory
+        self._action_tool_factory = action_tool_factory
         self._context_compiler = CareerContextCompiler(
             memory_store,
             support_policy,
@@ -72,17 +74,26 @@ class AgentService:
                 requested_mode=command.requested_mode,
             )
         )
-        runtime_tools = (
-            ()
-            if not context.allowed_tool_names or self._rag_tool_factory is None
-            else (self._rag_tool_factory(command.user_id),)
-        )
+        allowed_tool_names = set(context.allowed_tool_names)
+        runtime_tools: list[BaseTool] = []
+        if (
+            "search_career_knowledge" in allowed_tool_names
+            and self._rag_tool_factory is not None
+        ):
+            runtime_tools.append(self._rag_tool_factory(command.user_id))
+        if (
+            context.decision.mode is not SupportMode.LISTEN
+            and self._action_tool_factory is not None
+        ):
+            action_tools = self._action_tool_factory(command.user_id)
+            runtime_tools.extend(action_tools)
+            allowed_tool_names.update(tool.name for tool in action_tools)
         reply = await self._agent.respond(
             command.message,
             context.system_prompt,
             command.conversation_id,
-            allowed_tool_names=context.allowed_tool_names,
-            runtime_tools=runtime_tools,
+            allowed_tool_names=frozenset(allowed_tool_names),
+            runtime_tools=tuple(runtime_tools),
         )
         memory_result = await self._memory_lifecycle.commit_turn(
             user_id=command.user_id,

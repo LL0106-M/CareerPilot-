@@ -18,6 +18,7 @@ DeepAgents 或 LangGraph 控制运行循环；模型供应商只通过 `ModelGat
 
 ```text
 API
+ ├─ Action API（授权 → 预览 → 确认 → 执行 → 验证）
  └─ AgentService（一次 Turn 的应用编排）
      ├─ CareerContextCompiler
      │   ├─ IntentInterpreter / SupportPolicy
@@ -75,16 +76,21 @@ Agent 不知道"本地够不够"、"搜了几轮"、"用的 turbo 还是 max"—
 | 是否查用户长期记忆 | RetrievalPlan 决策，CareerContextCompiler 执行 | ✗ |
 | 要不要写用户记忆 | MemoryLifecycle 后置评估 | ✗ |
 | Session 如何持久化 | CareerPilotHarness + SQLite | ✗ |
+| 外部应用是否已授权 | Permission Grant + owner_id | 只能查询状态 |
+| 生成外部动作预览 | ActionService.preview() | ✓ |
+| 确认并执行写操作 | API confirmation boundary | ✗ |
 | 用什么 system prompt | CareerContextCompiler 组装 | ✗ |
 
 ### 模块划分
 
 ```text
 src/careerpilot/
+├── actions/        能力目录、授权、预览/确认/执行状态机与安全 Agent tools
 ├── context/        IntentFrame、P0 意图识别、槽位提取与一级检索路由
 ├── harness/        自有 Loop、模型协议、Context、Memory 生命周期、工具策略与 Session
 ├── agent/          CareerPilot Agent 定义、Prompt 与 Turn 应用编排
 ├── api/            FastAPI 路由与 schema（/health, /v1/chat）
+├── connectors/     飞书 CLI、WPS OpenAPI、网易邮箱只读 IMAP 适配器
 ├── memory/         MemOS Cloud 长期记忆 + 本地 cognitive store + MemoryWritePolicy + dreaming
 ├── rag/            SQLite 证据索引、混合召回、RRF 重排、AgenticRagOrchestrator
 ├── search/         阿里云 DashScope web search（turbo → max 两级升级）
@@ -113,15 +119,21 @@ src/careerpilot/
 | 统一 RAG | 统一 Evidence Unit 索引（Passage / KG 三元组 / 表格事实共一个 SQLite 文件） |
 | 混合召回 | 默认 Sparse + 可选 Dense，Query-to-Triple 轻量关系扩展；RRF + 来源等级 + 证据角色重排，最多两轮 |
 | 网页摄取 | 来源注册表支持按 URL 设置刷新周期；搜索已接入，网页全文抓取与定时入库属于后续受治理任务 |
+| 外部授权可见性 | 按用户、provider、capability 展示 `granted` / `not_granted`，支持即时撤权 |
+| 飞书 | 创建云文档、创建日程；通过官方 `lark-cli`，固定参数数组且不使用 shell |
+| WPS | 在配置的 drive/parent 下创建文档文件 |
+| 网易邮箱 | 只读搜索招聘邮件元数据；不读取正文、不发送邮件 |
+| 动作治理 | 写操作严格走 Preview → Confirm → Apply → Verify；确认令牌单次使用，幂等回执防重复执行 |
 
 ### 不在本阶段
 
 - Dreaming Worker（跨会话记忆整合）
 - PostgreSQL 产品状态（当前 RAG + Memory 均为 SQLite 单文件）
-- 飞书 Tool、Web 前端
-- 用户登录鉴权与会话级用户隔离
+- QQ 邮箱、微信连接器与邮件发送
+- WPS 富文本正文编辑、跨 provider 工作流和主动调度
+- 生产级多用户 OAuth 回调、加密 token vault 与正式账号登录
 
-> ⚠️ 当前接口是本地开发纵向切片，`user_id` 尚未由登录会话签发。接入鉴权与服务端用户隔离之前，不应直接暴露到公网。
+> ⚠️ 当前接口使用服务端签名的 HttpOnly owner cookie 做本地纵向切片隔离，但尚不是正式账号登录。环境变量凭据仅适合单机开发，不应直接暴露到公网或用于多租户部署。
 
 ---
 
@@ -154,6 +166,11 @@ Copy-Item .env.example .env
 | `CAREERPILOT_SEARCH_MODEL` | 默认与主模型同一快照 |
 | `CAREERPILOT_SEARCH_DEFAULT_STRATEGY` | 固定 `turbo` |
 | `CAREERPILOT_SEARCH_ESCALATION_STRATEGY` | 固定 `max` |
+| `CAREERPILOT_ACTION_DB_PATH` | owner 隔离的授权、动作预览、确认与回执 SQLite 文件 |
+| `CAREERPILOT_FEISHU_CLI_EXECUTABLE` | 官方 `lark-cli` 可执行文件；需先完成用户授权 |
+| `CAREERPILOT_WPS_ACCESS_TOKEN` | 本机 MVP 的 WPS token；同时配置 drive/parent 才启用 |
+| `CAREERPILOT_WPS_ACCESS_KEY` / `CAREERPILOT_WPS_SECRET_KEY` | WPS 后台开启接口签名时成对配置，用于 KSO-1 |
+| `CAREERPILOT_NETEASE_ACCOUNT` | 网易邮箱账号；同时配置客户端授权码才启用只读搜索 |
 
 百炼控制台会给出同一工作空间的两个不同地址：
 
@@ -163,6 +180,30 @@ CAREERPILOT_DASHSCOPE_BASE_URL=https://{WorkspaceId}.cn-beijing.maas.aliyuncs.co
 ```
 
 > 不要把真实 Key 写入 `.env.example`、README、Dockerfile 或前端环境变量。若 Key 曾出现在截图、聊天记录或日志中，联调完成后应在百炼控制台轮换。
+
+### 外部应用授权与动作边界
+
+MVP 的 Agent 只看到四个稳定领域能力：
+
+| Provider | Capability | 风险 | 每次确认 |
+|---|---|---:|---|
+| 飞书 | `document.create` | L3 写 | 是 |
+| 飞书 | `calendar.create` | L3 写 | 是 |
+| WPS | `document.create` | L3 写 | 是 |
+| 网易邮箱 | `email.search_recruiting` | L1 只读，最多回看 90 天，Message-ID 哈希化 | 否（仍须先授权） |
+
+授权与动作 API：
+
+- `GET /v1/me/integrations`：查看每项能力是否已授权；
+- `POST /v1/me/integrations/{provider}/grants`：记录用户明确授予的能力与用途；
+- `DELETE /v1/me/integrations/{provider}/grants/{grant_id}`：即时撤权；
+- `POST /v1/me/actions/preview`：规范化并冻结动作预览；
+- `POST /v1/me/actions/{id}/confirm`：把一次性确认令牌绑定到预览哈希；
+- `POST /v1/me/actions/{id}/apply`：带幂等键执行并返回 `completed` / `failed` / `unknown` 回执。
+
+写操作在执行前和执行时都会重新检查授权。Agent 本身只有“查看授权”和“生成预览”两个工具，没有 apply 工具；真正执行必须经过产品 API 的用户确认边界。外部数据不会自动写入 MemOS。
+
+本机飞书接入先按[官方 Lark CLI](https://github.com/larksuite/cli)安装并登录；WPS 使用[开放平台服务端 API](https://open.wps.cn/documents/app-integration-dev/guide/overview)。生产环境不得继续使用共享环境变量保存用户 token/邮箱授权码，应改为 OAuth 回调、owner 绑定和加密 token vault。
 
 ### 3. 构建本地知识索引
 
@@ -191,7 +232,6 @@ uv run uvicorn careerpilot.api.app:app --reload --port 8080
 
 ```powershell
 $body = @{
-  user_id = "demo-user"
   conversation_id = "demo-thread"
   message = "我投了很多简历都没回应，现在只想先说说"
   support_mode = "listen"
@@ -251,3 +291,5 @@ AgenticRagOrchestrator.retrieve()
 | `PRD/CareerPilot-Memory-RAG-Technical-Design.md` | 长期记忆、Dreaming、Agentic RAG 技术设计 |
 | `PRD/CareerPilot-RAG-MVP-Design.md` | RAG MVP 检索 Skill、统一 Markdown、切分与索引方案 |
 | `docs/architecture/careerpilot-harness.md` | 自有 Harness 的边界、运行流程与迁移决策 |
+| `skills/career-job-intelligence/SKILL.md` | 岗位智能 Skill 规格 |
+| `skills/career-emotional-support/SKILL.md` | 情绪陪伴 Skill 规格 |

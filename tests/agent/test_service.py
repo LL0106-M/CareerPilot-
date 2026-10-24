@@ -202,6 +202,43 @@ async def test_service_binds_agentic_rag_tool_to_authenticated_user() -> None:
 
 
 @pytest.mark.asyncio
+async def test_service_binds_safe_action_tools_in_planning_mode() -> None:
+    events: list[str] = []
+    bound_user_ids: list[str] = []
+
+    @tool
+    def get_integration_authorization() -> str:
+        """Read current authorization state."""
+        return "{}"
+
+    @tool
+    def preview_external_action() -> str:
+        """Preview an external action without applying it."""
+        return "{}"
+
+    def action_tool_factory(user_id: str) -> tuple[BaseTool, ...]:
+        bound_user_ids.append(user_id)
+        return get_integration_authorization, preview_external_action
+
+    agent = RecordingAgent(events)
+    service = AgentService(
+        RecordingMemoryStore(events),
+        agent,
+        SupportPolicy(),
+        action_tool_factory=action_tool_factory,
+    )
+
+    await service.chat(ChatCommand("user-8", "thread-1", "帮我把求职计划整理成飞书文档"))
+
+    assert bound_user_ids == ["user-8"]
+    assert [item.name for item in agent.runtime_tools] == [
+        "get_integration_authorization",
+        "preview_external_action",
+    ]
+    assert "apply_external_action" not in agent.allowed_tool_names
+
+
+@pytest.mark.asyncio
 async def test_service_denies_web_search_in_listen_mode() -> None:
     events: list[str] = []
     agent = RecordingAgent(events)

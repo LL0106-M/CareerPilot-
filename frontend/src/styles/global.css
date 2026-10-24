@@ -69,10 +69,9 @@ textarea:focus-visible {
 
 .page-title {
   margin: 0;
-  font-family: "STKaiti", "KaiTi", "Noto Serif SC", serif;
-  font-size: clamp(30px, 3vw, 44px);
-  font-weight: 700;
-  letter-spacing: -0.035em;
+  font-size: clamp(26px, 2.4vw, 38px);
+  font-weight: 720;
+  letter-spacing: -0.02em;
 }
 
 .muted {

@@ -1,5 +1,5 @@
 from careerpilot.rag.chunking import chunk_document
-from careerpilot.rag.models import SourceDocument
+from careerpilot.rag.models import ChunkLevel, SourceDocument
 
 
 def test_markdown_chunking_preserves_heading_and_source_metadata() -> None:
@@ -19,11 +19,16 @@ def test_markdown_chunking_preserves_heading_and_source_metadata() -> None:
 
     chunks = chunk_document(document, max_chars=45, overlap_chars=8)
 
-    assert len(chunks) >= 2
+    parents = [chunk for chunk in chunks if chunk.chunk_level is ChunkLevel.PARENT]
+    children = [chunk for chunk in chunks if chunk.chunk_level is ChunkLevel.CHILD]
+
+    assert parents
+    assert children
     assert chunks[0].document_id == "job-1"
     assert chunks[0].source_uri == "https://example.com/job/1"
-    assert any(chunk.heading == "岗位职责" for chunk in chunks)
-    assert any("RAG" in chunk.content for chunk in chunks)
+    assert any(chunk.heading == "岗位职责" for chunk in parents)
+    assert any("RAG" in chunk.content for chunk in children)
+    assert all(child.parent_id in {parent.id for parent in parents} for child in children)
     assert all(chunk.metadata["organization"] == "示例公司" for chunk in chunks)
 
 
@@ -38,3 +43,26 @@ def test_chunking_never_mixes_two_source_documents() -> None:
     assert all("乙" not in chunk.content for chunk in chunks if chunk.document_id == "a")
     assert all("甲" not in chunk.content for chunk in chunks if chunk.document_id == "b")
 
+
+def test_parent_child_chunking_keeps_children_inside_parent_boundary() -> None:
+    document = SourceDocument(
+        "resume",
+        "候选人简历",
+        "file:///resume.pdf",
+        "user_upload",
+        "personal_material",
+        "# 项目经历\n\n负责需求分析。完成用户访谈。推动产品上线并复盘效果。",
+    )
+
+    chunks = chunk_document(
+        document,
+        max_chars=20,
+        overlap_chars=3,
+        parent_max_chars=80,
+    )
+
+    parents = {chunk.id: chunk for chunk in chunks if chunk.chunk_level is ChunkLevel.PARENT}
+    children = [chunk for chunk in chunks if chunk.chunk_level is ChunkLevel.CHILD]
+    assert len(parents) == 1
+    assert len(children) > 1
+    assert all(child.content in parents[child.parent_id].content for child in children)

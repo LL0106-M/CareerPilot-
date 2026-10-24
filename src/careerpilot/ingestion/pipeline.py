@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from careerpilot.ingestion.jobs import job_to_document, normalize_job_record
+from careerpilot.ingestion.jobs import job_to_document, job_to_storage_record, normalize_job_record
 from careerpilot.rag.indexer import RagIndexer
 from careerpilot.rag.models import WebSource
 from careerpilot.rag.store import SqliteRagStore
@@ -68,6 +68,7 @@ class JobIngestionPipeline:
                 )
                 unchanged += 1
                 continue
+            self._store.upsert_job(job_to_storage_record(job))
             self._indexer.ingest_document(job_to_document(job, fetched_at=fetched_at))
             self._store.mark_source_crawled(
                 job.source_url,

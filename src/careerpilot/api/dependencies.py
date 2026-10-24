@@ -1,3 +1,7 @@
+from collections.abc import Callable
+
+from langchain_core.tools import BaseTool
+
 from careerpilot.agent.model import create_qwen_model
 from careerpilot.agent.runtime import CareerPilotResponder
 from careerpilot.agent.service import AgentService
@@ -14,6 +18,7 @@ from careerpilot.support.policy import SupportPolicy
 
 def build_agent_service(
     settings: Settings,
+    action_tool_factory: Callable[[str], tuple[BaseTool, ...]] | None = None,
 ) -> tuple[
     AgentService,
     MemosCloudMemoryStore,
@@ -34,7 +39,7 @@ def build_agent_service(
     cognitive_store = SqliteCognitiveStore(settings.memory_db_path)
     session_store = SqliteSessionStore(settings.session_db_path)
     model = create_qwen_model(settings)
-    provider = _build_search_provider(settings)
+    provider = build_search_provider(settings)
     agent = CareerPilotResponder(model, session_store=session_store)
     return (
         AgentService(
@@ -44,6 +49,7 @@ def build_agent_service(
             rag_tool_factory=lambda user_id: build_agentic_rag_tool(
                 rag_store, provider, user_id=user_id
             ),
+            action_tool_factory=action_tool_factory,
             cognitive_store=cognitive_store,
         ),
         memory_store,
@@ -54,10 +60,10 @@ def build_agent_service(
 
 
 def build_agent_tools(settings: Settings, rag_store: SqliteRagStore) -> list:
-    return [build_agentic_rag_tool(rag_store, _build_search_provider(settings))]
+    return [build_agentic_rag_tool(rag_store, build_search_provider(settings))]
 
 
-def _build_search_provider(settings: Settings) -> AliyunWebSearchProvider | None:
+def build_search_provider(settings: Settings) -> AliyunWebSearchProvider | None:
     if settings.search_configured:
         assert settings.dashscope_api_key is not None
         assert settings.dashscope_base_url is not None

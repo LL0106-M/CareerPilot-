@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from careerpilot.rag.models import SourceDocument
+from careerpilot.rag.models import KnowledgeOrigin, SourceDocument
 
 _TRACKING_KEYS = {"from", "source", "token", "spm"}
 _SOURCE_LEVELS = frozenset({"S", "A", "B", "C"})
@@ -166,7 +166,33 @@ def job_to_document(job: JobRecord, *, fetched_at: datetime) -> SourceDocument:
         },
         published_at=job.posted_at,
         fetched_at=fetched_at.isoformat(),
+        knowledge_origin=KnowledgeOrigin.SYSTEM_WEB,
     )
+
+
+def job_to_storage_record(job: JobRecord) -> dict[str, object]:
+    return {
+        "id": job.identity,
+        "company_name": job.company_name,
+        "role_title": job.role_title,
+        "role_family": job.role_family,
+        "recruiting_type": job.recruiting_type,
+        "organization_type": job.organization_type,
+        "employment_type": job.employment_type,
+        "locations_json": json.dumps(job.locations, ensure_ascii=False),
+        "deadline": job.deadline,
+        "apply_url": job.apply_url,
+        "source_url": job.source_url,
+        "source_level": job.source_level,
+        "source_name": job.source_name,
+        "posted_at": job.posted_at,
+        "verified_at": job.verified_at,
+        "job_description": job.job_description,
+        "requirements": job.requirements,
+        "status": job.status,
+        "knowledge_origin": "system_web",
+        "owner_user_id": None,
+    }
 
 
 def _required(record: Mapping[str, Any], field: str) -> str:
@@ -191,9 +217,7 @@ def _clean_url(value: str) -> str:
 
 def _locations(value: object) -> tuple[str, ...]:
     raw = (
-        value
-        if isinstance(value, (list, tuple))
-        else re.split(r"[、,，/;；\s]+", str(value or ""))
+        value if isinstance(value, (list, tuple)) else re.split(r"[、,，/;；\s]+", str(value or ""))
     )
     result = tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
     return result or ("未注明",)

@@ -13,6 +13,7 @@ class WebSearchSource:
     title: str
     site_name: str | None = None
     index: int | None = None
+    snippet: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,4 +23,3 @@ class WebSearchResponse:
     strategy: SearchStrategy
     request_id: str | None = None
     partial: bool = False
-

@@ -4,7 +4,11 @@ from dataclasses import dataclass, replace
 from typing import Protocol
 
 from careerpilot.rag.models import EvidenceKind, KnowledgeOrigin, SearchHit
+from careerpilot.rag.policy import GRAPH_INDEX_DOMAINS
+from careerpilot.rag.query_analysis import GraphSearchMode
 from careerpilot.rag.store import SqliteRagStore
+
+_NON_GRAPH_KINDS = frozenset(kind for kind in EvidenceKind if kind is not EvidenceKind.KG_TRIPLE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +102,8 @@ class RagRetriever:
         validation_target: str = "direct_fact",
         user_id: str | None = None,
         origins: frozenset[KnowledgeOrigin] | None = None,
+        use_graph: bool | None = None,
+        graph_mode: GraphSearchMode = GraphSearchMode.NONE,
         limit: int = 5,
     ) -> RetrievalResult:
         plan = self._planner.plan(
@@ -117,6 +123,13 @@ class RagRetriever:
                 stop_reason="needs_online_search",
             )
 
+        graph_enabled = use_graph if use_graph is not None else plan.domain in GRAPH_INDEX_DOMAINS
+        resolved_graph_mode = (
+            graph_mode
+            if graph_mode is not GraphSearchMode.NONE
+            else (GraphSearchMode.LOCAL if graph_enabled else GraphSearchMode.NONE)
+        )
+
         candidate_limit = max(limit * 3, 15)
         accumulated: dict[str, SearchHit] = {}
         clues: dict[str, RetrievalClue] = {}
@@ -133,6 +146,8 @@ class RagRetriever:
                 domain=plan.domain,
                 user_id=user_id,
                 origins=origins,
+                use_graph=graph_enabled,
+                graph_mode=resolved_graph_mode,
                 candidate_limit=candidate_limit,
             )
             fused = _rrf_fuse(ranked_lists, candidate_limit)
@@ -146,7 +161,9 @@ class RagRetriever:
                     accumulated[hit.evidence_id] = hit
                     clues.setdefault(hit.evidence_id, _to_clue(hit))
 
-            final_hits = _quality_rerank(tuple(accumulated.values()), limit)
+            reranked = _quality_rerank(tuple(accumulated.values()), candidate_limit)
+            collapsed = _collapse_passage_parents(reranked, limit)
+            final_hits = self._store.expand_parent_context(collapsed)
             distinct_sources = len({hit.source_uri for hit in final_hits})
             status = _status(final_hits, distinct_sources, plan)
             if status == "available":
@@ -191,62 +208,111 @@ class RagRetriever:
         domain: str | None,
         user_id: str | None,
         origins: frozenset[KnowledgeOrigin] | None,
+        use_graph: bool,
+        graph_mode: GraphSearchMode,
         candidate_limit: int,
     ) -> list[tuple[str, tuple[SearchHit, ...]]]:
         ranked_lists: list[tuple[str, tuple[SearchHit, ...]]] = []
         triple_kinds = frozenset({EvidenceKind.KG_TRIPLE})
-        triple_seeds: list[SearchHit] = []
+        graph_seeds: list[SearchHit] = []
         for index, current_query in enumerate(queries):
+            query_vector = self._store.embed_query(current_query)
             sparse = self._store.search_sparse(
                 current_query,
                 domain=domain,
+                kinds=_NON_GRAPH_KINDS,
                 user_id=user_id,
                 origins=origins,
                 limit=candidate_limit,
             )
             dense = self._store.search_dense(
                 current_query,
+                query_vector=query_vector,
                 domain=domain,
+                kinds=_NON_GRAPH_KINDS,
                 user_id=user_id,
                 origins=origins,
                 limit=candidate_limit,
-            )
-            triple_sparse = self._store.search_sparse(
-                current_query,
-                domain=domain,
-                kinds=triple_kinds,
-                user_id=user_id,
-                origins=origins,
-                limit=min(candidate_limit, 20),
-            )
-            triple_dense = self._store.search_dense(
-                current_query,
-                domain=domain,
-                kinds=triple_kinds,
-                user_id=user_id,
-                origins=origins,
-                limit=min(candidate_limit, 20),
             )
             ranked_lists.extend(
                 [
                     (f"sparse:{index}", sparse),
                     (f"dense:{index}", dense),
-                    (f"triple_sparse:{index}", triple_sparse),
-                    (f"triple_dense:{index}", triple_dense),
                 ]
             )
-            # Expand only the strongest linked statement per query in the MVP.
-            # This keeps graph work bounded and lets neighboring facts add evidence.
-            triple_seeds.extend(triple_dense[:1] or triple_sparse[:1])
-        graph = self._store.neighbors(
-            (hit.evidence_id for hit in triple_seeds),
-            user_id=user_id,
-            origins=origins,
-            limit=min(candidate_limit, 20),
-        )
-        if graph:
-            ranked_lists.append(("graph:local", graph))
+            if use_graph:
+                graph_seeds.extend(
+                    hit
+                    for hit in (dense or sparse)
+                    if hit.evidence_kind is EvidenceKind.PASSAGE
+                )
+                triple_sparse = self._store.search_sparse(
+                    current_query,
+                    domain=domain,
+                    kinds=triple_kinds,
+                    user_id=user_id,
+                    origins=origins,
+                    limit=min(candidate_limit, 20),
+                )
+                triple_dense = self._store.search_dense(
+                    current_query,
+                    query_vector=query_vector,
+                    domain=domain,
+                    kinds=triple_kinds,
+                    user_id=user_id,
+                    origins=origins,
+                    limit=min(candidate_limit, 20),
+                )
+                ranked_lists.extend(
+                    [
+                        (f"triple_sparse:{index}", triple_sparse),
+                        (f"triple_dense:{index}", triple_dense),
+                    ]
+                )
+                # HippoRAG 2 seeds graph search with both passage and fact retrieval.
+                graph_seeds.extend(_recognition_filter(triple_sparse, triple_dense, limit=5))
+        graph: tuple[SearchHit, ...] = ()
+        if use_graph:
+            if graph_mode is GraphSearchMode.HIERARCHICAL:
+                global_hits = self._store.search_graph_ppr(
+                    graph_seeds,
+                    domain=domain,
+                    user_id=user_id,
+                    origins=origins,
+                    graph_mode=GraphSearchMode.GLOBAL.value,
+                    limit=min(5, candidate_limit),
+                )
+                graph = self._store.search_graph_ppr(
+                    (*graph_seeds, *global_hits),
+                    domain=domain,
+                    user_id=user_id,
+                    origins=origins,
+                    graph_mode=GraphSearchMode.LOCAL.value,
+                    limit=min(candidate_limit, 20),
+                )
+            else:
+                graph = self._store.search_graph_ppr(
+                    graph_seeds,
+                    domain=domain,
+                    user_id=user_id,
+                    origins=origins,
+                    graph_mode=graph_mode.value,
+                    limit=min(candidate_limit, 20),
+                )
+        if use_graph and graph:
+            ranked_lists.append(("graph:ppr", graph))
         return ranked_lists
+
+
+def _recognition_filter(
+    sparse: tuple[SearchHit, ...],
+    dense: tuple[SearchHit, ...],
+    *,
+    limit: int,
+) -> tuple[SearchHit, ...]:
+    """Cheap recognition stage: fuse query-to-triple lists before optional LLM filtering."""
+    fused = _rrf_fuse([("triple_sparse", sparse), ("triple_dense", dense)], limit)
+    return tuple(hit for hit in fused if hit.evidence_kind is EvidenceKind.KG_TRIPLE)
 
 
 def _rrf_fuse(
@@ -300,6 +366,28 @@ def _quality_rerank(hits: tuple[SearchHit, ...], limit: int) -> tuple[SearchHit,
         rescored.append(replace(hit, score=final_score, metadata=metadata))
     rescored.sort(key=lambda hit: (-hit.score, hit.evidence_id or hit.chunk_id))
     return tuple(rescored[: max(1, min(limit, 20))])
+
+
+def _collapse_passage_parents(
+    hits: tuple[SearchHit, ...], limit: int
+) -> tuple[SearchHit, ...]:
+    """Keep the strongest child passage per parent while retaining graph/table evidence."""
+    selected: list[SearchHit] = []
+    seen_parents: set[str] = set()
+    for hit in hits:
+        is_child_passage = (
+            hit.evidence_kind is EvidenceKind.PASSAGE
+            and hit.metadata.get("chunk_level") == "child"
+            and hit.parent_id is not None
+        )
+        if is_child_passage:
+            if hit.parent_id in seen_parents:
+                continue
+            seen_parents.add(hit.parent_id)
+        selected.append(hit)
+        if len(selected) >= max(1, min(limit, 20)):
+            break
+    return tuple(selected)
 
 
 def _source_tier(hit: SearchHit) -> int:

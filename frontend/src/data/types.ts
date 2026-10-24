@@ -67,6 +67,7 @@ export interface DreamingInsight {
   summary: string
   evidenceCount: number
   status: '待查看' | '已确认' | '继续观察'
+  details?: Record<string, string>
 }
 
 export interface CareerHypothesis {
@@ -75,6 +76,7 @@ export interface CareerHypothesis {
   confidence: '低' | '中' | '高'
   status: '待确认' | '继续观察' | '已确认'
   evidence: string[]
+  section?: 'interests' | 'strengths' | 'environment' | 'risks'
 }
 
 export interface JourneyItem {
@@ -83,12 +85,23 @@ export interface JourneyItem {
   due: string
   state: '准备开始' | '进行中' | '等待结果' | '已完成'
   related: string
+  hypothesisId?: string
+  why?: string
+  reflection?: string | null
 }
 
 export interface MemoryItem {
   id: string
-  type: '事实' | '偏好' | '长期目标'
+  type: '长期目标' | '事实' | '偏好' | '情绪'
   content: string
   source: string
   createdAt: string
+  compassSection?: 'interests' | 'strengths' | 'environment' | 'risks'
+}
+
+export interface DashboardState {
+  hypotheses: CareerHypothesis[]
+  journey: JourneyItem[]
+  memories: MemoryItem[]
+  dreaming: DreamingInsight[]
 }

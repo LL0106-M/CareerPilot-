@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from careerpilot.ingestion.job_extraction import extract_job_record
 from careerpilot.ingestion.jobs import job_to_document, normalize_job_record
 
 
@@ -104,3 +105,21 @@ def test_job_document_contains_structured_table_row_and_provenance() -> None:
     assert row["row_id"] == job.identity
     assert row["values"]["requirements"] == "熟悉 Agent 与 RAG"
     assert "来源等级：S" in document.text
+
+
+def test_extracts_job_record_from_labeled_raw_text_without_model() -> None:
+    job = extract_job_record(
+        "企业名称：某央企\n"
+        "岗位名称：AI 产品经理\n"
+        "企业类型：central_soe\n"
+        "工作地点：北京、上海\n"
+        "投递截止时间：2026-11-30\n"
+        "任职要求：熟悉 Agent 和 RAG\n",
+        source_url="https://jobs.example.cn/1",
+        verified_at="2026-10-22",
+    )
+
+    assert job.company_name == "某央企"
+    assert job.role_family == "ai_product"
+    assert job.locations == ("北京", "上海")
+    assert job.deadline == "2026-11-30"

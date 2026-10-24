@@ -161,11 +161,17 @@ def _parse_source(item: dict[str, Any]) -> WebSearchSource | None:
     title = item.get("title")
     site_name = item.get("site_name", item.get("siteName"))
     index = item.get("index")
+    raw_snippet = item.get("snippet", item.get("content", item.get("text")))
     return WebSearchSource(
         url=url,
         title=title if isinstance(title, str) and title.strip() else url,
         site_name=site_name if isinstance(site_name, str) else None,
         index=index if isinstance(index, int) else None,
+        snippet=(
+            raw_snippet.strip()
+            if isinstance(raw_snippet, str) and raw_snippet.strip()
+            else None
+        ),
     )
 
 
