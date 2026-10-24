@@ -11,6 +11,7 @@ from careerpilot.harness.contracts import (
     ModelResponse,
     ModelStreamEvent,
 )
+from careerpilot.harness.context_window import ContextWindowManager
 from careerpilot.harness.events import HarnessEvent, HarnessEventType, RunPhase
 from careerpilot.harness.session import InMemorySessionStore
 from careerpilot.harness.tools import ToolPolicy, ToolRegistry
@@ -89,6 +90,7 @@ class CareerPilotHarness:
         session_store=None,
         *,
         max_steps: int = 4,
+        context_window_manager: ContextWindowManager | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be positive")
@@ -96,6 +98,11 @@ class CareerPilotHarness:
         self._tools = tools or ToolRegistry()
         self._sessions = session_store or InMemorySessionStore()
         self._max_steps = max_steps
+        self._context_window = context_window_manager or ContextWindowManager(
+            compaction_store=(
+                self._sessions if hasattr(self._sessions, "save_compaction") else None
+            )
+        )
 
     async def run(
         self,
@@ -147,7 +154,8 @@ class CareerPilotHarness:
         yield state.event(HarnessEventType.RUN_STARTED)
 
         try:
-            history = await self._sessions.load(session_id)
+            full_history = await self._sessions.load(session_id)
+            history = await self._context_window.compile(session_id, full_history)
             state.turn.append(HarnessMessage(role="user", content=user_message))
             registry = self._tools.overlay(tuple(runtime_tools))
             policy = ToolPolicy(allowed_tool_names)
