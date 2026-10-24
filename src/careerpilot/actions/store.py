@@ -448,32 +448,29 @@ class SqliteActionStore:
         ).fetchone()
         if row is None:
             return None
-        return ActionReceipt(
-            id=row["id"],
-            action_id=row["action_id"],
-            owner_id=row["owner_id"],
-            provider_id=row["provider_id"],
-            status=row["status"],
-            idempotency_key=row["idempotency_key"],
-            external_reference=row["external_reference"],
-            observations=tuple(json.loads(row["observations_json"])),
-            retryable=bool(row["retryable"]),
-            created_at=row["created_at"],
-        )
+        return self._row_to_receipt(row)
 
     def find_receipt_by_key(
         self, owner_id: str, provider_id: str, idempotency_key: str
     ) -> ActionReceipt | None:
-        row = self._connection.execute(
+        execution = self._connection.execute(
             """
-            SELECT * FROM action_receipts
+            SELECT action_id, receipt_id FROM action_executions
             WHERE owner_id = ? AND idempotency_key = ?
             """,
             (owner_id, idempotency_key),
         ).fetchone()
+        if execution is None:
+            return None
+        if execution["receipt_id"] is None:
+            return self.find_receipt(owner_id, execution["action_id"], idempotency_key)
+        row = self._connection.execute(
+            "SELECT * FROM action_receipts WHERE id = ? AND owner_id = ?",
+            (execution["receipt_id"], owner_id),
+        ).fetchone()
         if row is None:
             return None
-        return self.find_receipt(owner_id, row["action_id"], idempotency_key)
+        return self._row_to_receipt(row)
 
     def last_used_at(self, owner_id: str, provider_id: str) -> str | None:
         row = self._connection.execute(
@@ -500,4 +497,19 @@ class SqliteActionStore:
             resource_constraints=json.loads(row["resource_constraints_json"]),
             granted_at=row["granted_at"],
             revoked_at=row["revoked_at"],
+        )
+
+    @staticmethod
+    def _row_to_receipt(row: sqlite3.Row) -> ActionReceipt:
+        return ActionReceipt(
+            id=row["id"],
+            action_id=row["action_id"],
+            owner_id=row["owner_id"],
+            provider_id=row["provider_id"],
+            status=row["status"],
+            idempotency_key=row["idempotency_key"],
+            external_reference=row["external_reference"],
+            observations=tuple(json.loads(row["observations_json"])),
+            retryable=bool(row["retryable"]),
+            created_at=row["created_at"],
         )

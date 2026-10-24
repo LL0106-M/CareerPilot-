@@ -76,6 +76,77 @@ def test_store_migrates_provider_scoped_idempotency_keys(tmp_path) -> None:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE action_receipts (
+            id TEXT PRIMARY KEY,
+            action_id TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            external_reference TEXT,
+            observations_json TEXT NOT NULL,
+            retryable INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(owner_id, action_id, idempotency_key)
+        )
+        """
+    )
+    receipts = (
+        (
+            "receipt-wps",
+            "a-action-wps",
+            "owner-a",
+            "wps",
+            "completed",
+            "shared-key",
+            "wps-file",
+            "[]",
+            0,
+            "2026-10-23T11:00:00+00:00",
+        ),
+        (
+            "receipt-feishu",
+            "z-action-feishu",
+            "owner-a",
+            "feishu",
+            "completed",
+            "shared-key",
+            "feishu-doc",
+            "[]",
+            0,
+            "2026-10-23T10:00:00+00:00",
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO action_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", receipts
+    )
+    executions = (
+        (
+            "owner-a",
+            "feishu",
+            "shared-key",
+            "z-action-feishu",
+            "hash-feishu",
+            "completed",
+            "receipt-feishu",
+            "2026-10-23T10:00:00+00:00",
+        ),
+        (
+            "owner-a",
+            "wps",
+            "shared-key",
+            "a-action-wps",
+            "hash-wps",
+            "completed",
+            "receipt-wps",
+            "2026-10-23T11:00:00+00:00",
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO action_executions VALUES (?, ?, ?, ?, ?, ?, ?, ?)", executions
+    )
     connection.commit()
     connection.close()
 
@@ -89,5 +160,9 @@ def test_store_migrates_provider_scoped_idempotency_keys(tmp_path) -> None:
         ]
 
         assert primary_key == ["owner_id", "idempotency_key"]
+        receipt = store.find_receipt_by_key("owner-a", "wps", "shared-key")
+        assert receipt is not None
+        assert receipt.id == "receipt-feishu"
+        assert receipt.action_id == "z-action-feishu"
     finally:
         store.close()

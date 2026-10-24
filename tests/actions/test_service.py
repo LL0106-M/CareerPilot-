@@ -321,6 +321,35 @@ def test_multi_capability_grant_only_applies_relevant_constraints(tmp_path) -> N
         store.close()
 
 
+def test_feishu_calendar_accepts_real_calendar_identifier(tmp_path) -> None:
+    service, store, _ = build_service(tmp_path)
+    calendar_id = "career.team@group.calendar.feishu.cn"
+    try:
+        store.grant(
+            owner_id="owner-a",
+            provider_id="feishu",
+            capabilities=("calendar.create",),
+            purpose="career_scheduling",
+            resource_constraints={"calendar_id": [calendar_id]},
+        )
+
+        preview = service.preview(
+            "owner-a",
+            "feishu",
+            "calendar.create",
+            {
+                "summary": "Interview",
+                "start": "2026-10-25T10:00:00+08:00",
+                "end": "2026-10-25T11:00:00+08:00",
+                "calendar_id": calendar_id,
+            },
+        )
+
+        assert preview.payload["calendar_id"] == calendar_id
+    finally:
+        store.close()
+
+
 @pytest.mark.asyncio
 async def test_provider_failure_creates_terminal_failed_receipt(tmp_path) -> None:
     connector = FailingConnector()

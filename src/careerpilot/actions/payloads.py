@@ -20,7 +20,9 @@ class FeishuCalendarPayload(_StrictPayload):
     summary: str = Field(min_length=1, max_length=500)
     start: datetime
     end: datetime
-    calendar_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]+$")
+    calendar_id: str | None = Field(
+        default=None, max_length=512, pattern=r"^[A-Za-z0-9._@-]+$"
+    )
 
     @model_validator(mode="after")
     def end_must_follow_start(self) -> "FeishuCalendarPayload":

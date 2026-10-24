@@ -10,6 +10,7 @@ class FakeImap:
     def __init__(self) -> None:
         self.calls = []
         self.logged_out = False
+        self.sock = FakeSocket()
 
     def login(self, account, authorization_code):
         self.calls.append(("login", account, authorization_code))
@@ -46,13 +47,21 @@ class FakeImap:
         return "BYE", [b"logout"]
 
 
+class FakeSocket:
+    def __init__(self) -> None:
+        self.timeouts = []
+
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
+
 @pytest.mark.asyncio
 async def test_netease_search_is_read_only_bounded_and_metadata_only() -> None:
     session = FakeImap()
     factories = []
 
-    def factory(host, port):
-        factories.append((host, port))
+    def factory(host, port, *, timeout):
+        factories.append((host, port, timeout))
         return session
 
     connector = NeteaseMailConnector(
@@ -68,7 +77,8 @@ async def test_netease_search_is_read_only_bounded_and_metadata_only() -> None:
         {"since": "2026-10-01", "limit": 1},
     )
 
-    assert factories == [("imap.163.com", 993)]
+    assert factories == [("imap.163.com", 993, 10.0)]
+    assert session.sock.timeouts
     assert ("select", "INBOX", True) in session.calls
     assert any(call[0] == "search" and "SINCE" in call[2] for call in session.calls)
     fetch_calls = [call for call in session.calls if call[0] == "fetch"]
@@ -94,7 +104,7 @@ async def test_netease_rejects_unbounded_lookback() -> None:
         port=993,
         account="person@163.com",
         authorization_code="mail-secret",
-        imap_factory=lambda host, port: FakeImap(),
+        imap_factory=lambda host, port, *, timeout: FakeImap(),
     )
 
     with pytest.raises(ValueError, match="90 days"):
@@ -109,7 +119,7 @@ async def test_netease_probe_authenticates_read_only_and_logs_out() -> None:
         port=993,
         account="person@163.com",
         authorization_code="mail-secret",
-        imap_factory=lambda host, port: session,
+        imap_factory=lambda host, port, *, timeout: session,
     )
 
     assert await connector.probe() is True
