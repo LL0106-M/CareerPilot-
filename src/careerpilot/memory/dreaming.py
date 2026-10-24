@@ -4,6 +4,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from careerpilot.memory.base import MemoryContext
+from careerpilot.memory.daily_review import DailyReviewDraft
 
 
 class DreamingTrigger(StrEnum):
@@ -100,6 +101,28 @@ class HypothesisProposal:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryPatchProposal:
+    operation: str
+    target_type: str
+    content: str
+    supporting_evidence_ids: tuple[str, ...]
+    requires_confirmation: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class DreamingAnalysis:
+    hypotheses: tuple[HypothesisProposal, ...] = ()
+    daily_review: DailyReviewDraft | None = None
+    patches: tuple[MemoryPatchProposal, ...] = ()
+
+    def __getitem__(self, index: int) -> HypothesisProposal:
+        return self.hypotheses[index]
+
+    def __iter__(self):
+        return iter(self.hypotheses)
+
+
+@dataclass(frozen=True, slots=True)
 class CareerHypothesis:
     id: str
     user_id: str
@@ -119,7 +142,9 @@ class DreamingJob:
 
 
 class DreamingAnalyzer(Protocol):
-    async def analyze(self, snapshot: DreamingSnapshot) -> tuple[HypothesisProposal, ...]: ...
+    async def analyze(
+        self, snapshot: DreamingSnapshot
+    ) -> DreamingAnalysis | tuple[HypothesisProposal, ...]: ...
 
 
 class CognitiveStore(Protocol):
@@ -128,6 +153,8 @@ class CognitiveStore(Protocol):
     def claim_next(self) -> DreamingJob | None: ...
 
     def complete(self, job: DreamingJob, proposals: tuple[HypothesisProposal, ...]) -> None: ...
+
+    def complete_analysis(self, job: DreamingJob, analysis: DreamingAnalysis) -> None: ...
 
     def fail(self, job: DreamingJob, error: str) -> None: ...
 
@@ -144,8 +171,11 @@ class DreamingProcessor:
         if job is None:
             return False
         try:
-            proposals = await self._analyzer.analyze(job.snapshot)
-            self._store.complete(job, proposals)
+            result = await self._analyzer.analyze(job.snapshot)
+            if isinstance(result, DreamingAnalysis):
+                self._store.complete_analysis(job, result)
+            else:
+                self._store.complete(job, result)
         except Exception as exc:
             self._store.fail(job, type(exc).__name__)
             raise

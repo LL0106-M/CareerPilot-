@@ -4,7 +4,13 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from careerpilot.memory.dreaming import DreamingSnapshot, HypothesisProposal
+from careerpilot.memory.daily_review import DailyReviewDraft
+from careerpilot.memory.dreaming import (
+    DreamingAnalysis,
+    DreamingSnapshot,
+    HypothesisProposal,
+    MemoryPatchProposal,
+)
 
 
 class JsonDreamingAnalyzer:
@@ -13,7 +19,7 @@ class JsonDreamingAnalyzer:
     def __init__(self, model: BaseChatModel) -> None:
         self._model = model
 
-    async def analyze(self, snapshot: DreamingSnapshot) -> tuple[HypothesisProposal, ...]:
+    async def analyze(self, snapshot: DreamingSnapshot) -> DreamingAnalysis:
         evidence = "\n".join(
             f"- id={item.id}; source={item.source}; content={item.content}"
             for item in snapshot.evidence
@@ -22,13 +28,18 @@ class JsonDreamingAnalyzer:
             [
                 SystemMessage(
                     content=(
-                        "你是职业成长记忆整理器。只提出待验证职业假设，不把推断写成事实。"
-                        "每个假设必须引用给定 evidence id；证据不足时返回空 hypotheses。"
+                        "你是职业成长记忆整理器。输出待验证假设、用户可见每日回顾和"
+                        "可审查记忆补丁，不把推断写成事实。每项必须引用给定 evidence id。"
                         "只输出 JSON 对象，格式为 {\"hypotheses\": [{\"statement\": str, "
                         "\"confidence_band\": \"low|medium|high\", "
                         "\"supporting_evidence_ids\": [str], "
                         "\"contradicting_evidence_ids\": [str], "
-                        "\"open_questions\": [str]}]}。"
+                        "\"open_questions\": [str]}], \"daily_review\": null 或 "
+                        "{\"local_date\": \"YYYY-MM-DD\", \"wins\": [str], \"ideas\": [str], "
+                        "\"blockers\": [str], \"open_loops\": [str], \"tomorrow_step\": str|null, "
+                        "\"source_event_ids\": [str]}, \"patches\": [{\"operation\": str, "
+                        "\"target_type\": str, \"content\": str, "
+                        "\"supporting_evidence_ids\": [str], \"requires_confirmation\": bool}]}。"
                     )
                 ),
                 HumanMessage(
@@ -48,7 +59,15 @@ class JsonDreamingAnalyzer:
         raw_hypotheses = data.get("hypotheses")
         if not isinstance(raw_hypotheses, list):
             raise ValueError("Dreaming JSON must contain a hypotheses list")
-        return tuple(self._parse_proposal(item) for item in raw_hypotheses)
+        daily_review = self._parse_daily_review(data.get("daily_review"))
+        raw_patches = data.get("patches", [])
+        if not isinstance(raw_patches, list):
+            raise ValueError("Dreaming patches must be a list")
+        return DreamingAnalysis(
+            hypotheses=tuple(self._parse_proposal(item) for item in raw_hypotheses),
+            daily_review=daily_review,
+            patches=tuple(self._parse_patch(item) for item in raw_patches),
+        )
 
     @staticmethod
     def _parse_json(content: str) -> dict[str, Any]:
@@ -87,3 +106,54 @@ class JsonDreamingAnalyzer:
             open_questions=string_tuple("open_questions"),
         )
 
+    @staticmethod
+    def _parse_daily_review(value: object) -> DailyReviewDraft | None:
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise ValueError("Dreaming daily_review must be an object or null")
+
+        def strings(field: str) -> tuple[str, ...]:
+            raw = value.get(field, [])
+            if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+                raise ValueError(f"Dreaming daily_review field {field} must be a string list")
+            return tuple(raw)
+
+        local_date = value.get("local_date")
+        tomorrow_step = value.get("tomorrow_step")
+        if not isinstance(local_date, str) or not (
+            tomorrow_step is None or isinstance(tomorrow_step, str)
+        ):
+            raise ValueError("Dreaming daily_review scalar fields are invalid")
+        return DailyReviewDraft(
+            local_date=local_date,
+            wins=strings("wins"),
+            ideas=strings("ideas"),
+            blockers=strings("blockers"),
+            open_loops=strings("open_loops"),
+            tomorrow_step=tomorrow_step,
+            source_event_ids=strings("source_event_ids"),
+        )
+
+    @staticmethod
+    def _parse_patch(value: object) -> MemoryPatchProposal:
+        if not isinstance(value, dict):
+            raise ValueError("Each Dreaming patch must be an object")
+        operation = value.get("operation")
+        target_type = value.get("target_type")
+        content = value.get("content")
+        evidence = value.get("supporting_evidence_ids", [])
+        confirmation = value.get("requires_confirmation", True)
+        if not all(isinstance(item, str) for item in (operation, target_type, content)):
+            raise ValueError("Dreaming patch scalar fields must be strings")
+        if not isinstance(evidence, list) or not all(isinstance(item, str) for item in evidence):
+            raise ValueError("Dreaming patch evidence must be a string list")
+        if not isinstance(confirmation, bool):
+            raise ValueError("Dreaming patch requires_confirmation must be boolean")
+        return MemoryPatchProposal(
+            operation=operation,
+            target_type=target_type,
+            content=content,
+            supporting_evidence_ids=tuple(evidence),
+            requires_confirmation=confirmation,
+        )

@@ -1,18 +1,33 @@
 import hashlib
 import json
 import sqlite3
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 from careerpilot.memory.dreaming import (
     CareerHypothesis,
+    DreamingAnalysis,
     DreamingJob,
     DreamingSnapshot,
     DreamingTrigger,
     EvidenceRef,
     HypothesisProposal,
 )
+from careerpilot.memory.daily_review import DailyReview
+
+
+@dataclass(frozen=True, slots=True)
+class StoredMemoryPatch:
+    id: str
+    owner_id: str
+    operation: str
+    target_type: str
+    content: str
+    supporting_evidence_ids: tuple[str, ...]
+    requires_confirmation: bool
+    status: str
 
 
 class SqliteCognitiveStore:
@@ -53,6 +68,36 @@ class SqliteCognitiveStore:
                 open_questions_json TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, statement, status)
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_reviews (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                local_date TEXT NOT NULL,
+                wins_json TEXT NOT NULL,
+                ideas_json TEXT NOT NULL,
+                blockers_json TEXT NOT NULL,
+                open_loops_json TEXT NOT NULL,
+                tomorrow_step TEXT,
+                source_event_ids_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(owner_id, local_date)
+            );
+
+            CREATE TABLE IF NOT EXISTS memory_patch_candidates (
+                id TEXT PRIMARY KEY,
+                dreaming_job_id TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                supporting_evidence_json TEXT NOT NULL,
+                requires_confirmation INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
@@ -117,6 +162,10 @@ class SqliteCognitiveStore:
         )
 
     def complete(self, job: DreamingJob, proposals: tuple[HypothesisProposal, ...]) -> None:
+        self.complete_analysis(job, DreamingAnalysis(hypotheses=proposals))
+
+    def complete_analysis(self, job: DreamingJob, analysis: DreamingAnalysis) -> None:
+        proposals = analysis.hypotheses
         allowed_evidence = {item.id for item in job.snapshot.evidence}
         for proposal in proposals:
             if not proposal.statement.strip():
@@ -130,6 +179,15 @@ class SqliteCognitiveStore:
             )
             if not cited <= allowed_evidence:
                 raise ValueError("Dreaming hypothesis cites evidence outside its snapshot")
+
+        for patch in analysis.patches:
+            if not patch.content.strip() or not patch.supporting_evidence_ids:
+                raise ValueError("Dreaming patch requires content and supporting evidence")
+            if not set(patch.supporting_evidence_ids) <= allowed_evidence:
+                raise ValueError("Dreaming patch cites evidence outside its snapshot")
+        if analysis.daily_review is not None:
+            if not set(analysis.daily_review.source_event_ids) <= allowed_evidence:
+                raise ValueError("Dreaming daily review cites evidence outside its snapshot")
 
         with self._connection:
             for proposal in proposals:
@@ -151,6 +209,65 @@ class SqliteCognitiveStore:
                         json.dumps(proposal.open_questions, ensure_ascii=False),
                     ),
                 )
+            if analysis.daily_review is not None:
+                review = analysis.daily_review
+                existing = self._connection.execute(
+                    "SELECT id, version FROM daily_reviews WHERE owner_id=? AND local_date=?",
+                    (job.snapshot.user_id, review.local_date),
+                ).fetchone()
+                if existing is None:
+                    self._connection.execute(
+                        """INSERT INTO daily_reviews (
+                        id, owner_id, local_date, wins_json, ideas_json, blockers_json,
+                        open_loops_json, tomorrow_step, source_event_ids_json, status, version
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', 1)""",
+                        (
+                            str(uuid4()),
+                            job.snapshot.user_id,
+                            review.local_date,
+                            json.dumps(review.wins, ensure_ascii=False),
+                            json.dumps(review.ideas, ensure_ascii=False),
+                            json.dumps(review.blockers, ensure_ascii=False),
+                            json.dumps(review.open_loops, ensure_ascii=False),
+                            review.tomorrow_step,
+                            json.dumps(review.source_event_ids, ensure_ascii=False),
+                        ),
+                    )
+                else:
+                    self._connection.execute(
+                        """UPDATE daily_reviews SET wins_json=?, ideas_json=?, blockers_json=?,
+                        open_loops_json=?, tomorrow_step=?, source_event_ids_json=?,
+                        version=version+1, updated_at=CURRENT_TIMESTAMP
+                        WHERE owner_id=? AND local_date=?""",
+                        (
+                            json.dumps(review.wins, ensure_ascii=False),
+                            json.dumps(review.ideas, ensure_ascii=False),
+                            json.dumps(review.blockers, ensure_ascii=False),
+                            json.dumps(review.open_loops, ensure_ascii=False),
+                            review.tomorrow_step,
+                            json.dumps(review.source_event_ids, ensure_ascii=False),
+                            job.snapshot.user_id,
+                            review.local_date,
+                        ),
+                    )
+            for patch in analysis.patches:
+                self._connection.execute(
+                    """INSERT INTO memory_patch_candidates (
+                    id, dreaming_job_id, owner_id, operation, target_type, content,
+                    supporting_evidence_json, requires_confirmation, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        str(uuid4()),
+                        job.id,
+                        job.snapshot.user_id,
+                        patch.operation,
+                        patch.target_type,
+                        patch.content.strip(),
+                        json.dumps(patch.supporting_evidence_ids, ensure_ascii=False),
+                        int(patch.requires_confirmation),
+                        "pending" if patch.requires_confirmation else "validated",
+                    ),
+                )
             updated = self._connection.execute(
                 """
                 UPDATE dreaming_jobs
@@ -161,6 +278,49 @@ class SqliteCognitiveStore:
             )
             if updated.rowcount != 1:
                 raise RuntimeError("Dreaming job is not processing")
+
+    def get_daily_review(self, owner_id: str, local_date: str) -> DailyReview | None:
+        row = self._connection.execute(
+            "SELECT * FROM daily_reviews WHERE owner_id=? AND local_date=?",
+            (owner_id, local_date),
+        ).fetchone()
+        if row is None:
+            return None
+        return DailyReview(
+            id=row["id"],
+            owner_id=row["owner_id"],
+            local_date=row["local_date"],
+            wins=tuple(json.loads(row["wins_json"])),
+            ideas=tuple(json.loads(row["ideas_json"])),
+            blockers=tuple(json.loads(row["blockers_json"])),
+            open_loops=tuple(json.loads(row["open_loops_json"])),
+            tomorrow_step=row["tomorrow_step"],
+            source_event_ids=tuple(json.loads(row["source_event_ids_json"])),
+            status=row["status"],
+            version=row["version"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def list_memory_patches(self, owner_id: str) -> tuple[StoredMemoryPatch, ...]:
+        rows = self._connection.execute(
+            """SELECT * FROM memory_patch_candidates WHERE owner_id=?
+            ORDER BY created_at DESC, rowid DESC""",
+            (owner_id,),
+        ).fetchall()
+        return tuple(
+            StoredMemoryPatch(
+                id=row["id"],
+                owner_id=row["owner_id"],
+                operation=row["operation"],
+                target_type=row["target_type"],
+                content=row["content"],
+                supporting_evidence_ids=tuple(json.loads(row["supporting_evidence_json"])),
+                requires_confirmation=bool(row["requires_confirmation"]),
+                status=row["status"],
+            )
+            for row in rows
+        )
 
     def fail(self, job: DreamingJob, error: str) -> None:
         self._connection.execute(
