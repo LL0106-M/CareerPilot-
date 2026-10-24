@@ -144,6 +144,19 @@ class SqliteUnifiedMemoryStore:
                     REFERENCES memory_records(owner_id, id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS memory_relations (
+                source_memory_id TEXT NOT NULL,
+                target_memory_id TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                relation_type TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, source_memory_id, target_memory_id, relation_type),
+                FOREIGN KEY(owner_id, source_memory_id)
+                    REFERENCES memory_records(owner_id, id) ON DELETE CASCADE,
+                FOREIGN KEY(owner_id, target_memory_id)
+                    REFERENCES memory_records(owner_id, id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS memory_audit_events (
                 id TEXT PRIMARY KEY,
                 owner_id TEXT NOT NULL,
@@ -455,6 +468,44 @@ class SqliteUnifiedMemoryStore:
             usage_type,
             result_reference,
             created,
+        )
+
+    def add_relation(
+        self,
+        owner_id: str,
+        source_memory_id: str,
+        target_memory_id: str,
+        relation_type: str,
+    ) -> None:
+        self.get_memory(owner_id, source_memory_id, include_deleted=True)
+        self.get_memory(owner_id, target_memory_id, include_deleted=True)
+        with self._connection:
+            self._connection.execute(
+                """INSERT OR IGNORE INTO memory_relations
+                (source_memory_id, target_memory_id, owner_id, relation_type, created_at)
+                VALUES (?, ?, ?, ?, ?)""",
+                (
+                    source_memory_id,
+                    target_memory_id,
+                    owner_id,
+                    relation_type,
+                    _iso(_now()),
+                ),
+            )
+
+    def list_relations(
+        self, owner_id: str, source_memory_id: str
+    ) -> tuple[tuple[str, str, str], ...]:
+        self.get_memory(owner_id, source_memory_id, include_deleted=True)
+        rows = self._connection.execute(
+            """SELECT source_memory_id, target_memory_id, relation_type
+            FROM memory_relations WHERE owner_id=? AND source_memory_id=?
+            ORDER BY created_at, rowid""",
+            (owner_id, source_memory_id),
+        ).fetchall()
+        return tuple(
+            (row["source_memory_id"], row["target_memory_id"], row["relation_type"])
+            for row in rows
         )
 
     def list_revisions(self, owner_id: str, memory_id: str) -> tuple[MemoryRevision, ...]:
