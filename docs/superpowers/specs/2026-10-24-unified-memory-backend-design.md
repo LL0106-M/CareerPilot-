@@ -21,6 +21,12 @@ explainable.
 - Make memory retrieval deterministic, privacy-aware, and resilient without MemOS.
 - Preserve conversation Session storage as a separate short-term concern.
 - Fold Dreaming hypotheses into the same memory lifecycle without presenting them as facts.
+- Preserve small user ideas as first-class, owner-scoped records that can mature into actions
+  without being mistaken for facts, preferences, or granted action permissions.
+- Produce a user-visible daily Dreaming review from the same evidence window used for background
+  consolidation, while keeping that review separate from authoritative memory changes.
+- Keep long conversations coherent through bounded context compaction without deleting the exact
+  Session log or silently promoting a compaction summary into long-term memory.
 
 ## Non-goals
 
@@ -30,6 +36,7 @@ explainable.
 - Importing fake ProductStore seed data as real user memories.
 - Requiring MemOS for core CRUD, retrieval, or Agent operation.
 - Solving cross-device encrypted synchronization in the MVP.
+- Building the Idea Inbox, Daily Review, or context-health frontend in this phase.
 
 ## Selected approach
 
@@ -126,6 +133,27 @@ Updates preserve immutable history. `memory_records` is the current projection;
 timestamp without credentials or raw integration payloads. Create, update, lifecycle transition,
 usage, migration, and provider-degradation events are auditable.
 
+### IdeaItem
+
+An idea is not only a `MemoryRecord(type=idea)`. The memory record preserves the original meaning,
+provenance, sensitivity, authorization, and retrieval lifecycle. A linked `IdeaItem` stores the
+product workflow that may change as the thought develops:
+
+- `id`, `owner_id`, `memory_id` and `title`.
+- `stage`: `captured | incubating | actionable | acted | validated | archived`.
+- optional `related_goal_memory_id`, `next_step`, and `action_reference`.
+- `version`, `created_at`, `updated_at`, and optional `last_reviewed_at`.
+
+The raw wording stays in the linked MemoryRecord. IdeaItem never grants permission to call a tool.
+Turning an idea into a task, calendar event, Feishu/WPS document, research run, or message always
+uses the existing Preview/Confirm/Apply/Verify action boundary.
+
+An explicit user command to save an idea follows the current memory grant. When the Agent merely
+detects idea-like language, it creates a candidate only if the configured memory grant permits
+candidate capture, and returns a visible storage receipt. Without that grant it may return an
+ephemeral suggestion but must not persist the content. Integration-derived and sensitive ideas
+always remain candidates until confirmed.
+
 ## Storage
 
 Create `SqliteUnifiedMemoryStore` in the configured `CAREERPILOT_MEMORY_DB_PATH`. Tables are
@@ -134,6 +162,11 @@ owner-scoped and indexed by owner/status/type/update time. All read and write qu
 
 The store owns transactions, optimistic version checks, valid transitions, evidence, relations,
 and usage. It does not decide whether content deserves admission.
+
+`idea_items` lives in the same authoritative database and has a foreign key to
+`memory_records(owner_id, id)`. Creating an idea and its canonical memory, appending their audit
+events, and recording the storage authorization snapshot happen in one transaction. Owner scope
+is required on both sides of every join.
 
 Valid lifecycle transitions:
 
@@ -162,6 +195,19 @@ effect until the replacement is explicitly confirmed, at which point the transit
 - `confirm(...)`, `pause(...)`, `resume(...)`, `delete(...)`.
 - `search_context(owner_id, query, intent, limit) -> MemoryContextBundle`.
 - `record_usage(...)`.
+
+`IdeaService` is a narrow facade over the same store and transaction boundary. It provides:
+
+- `capture_explicit(...) -> IdeaItem`: stores a user-requested idea under an active authorized
+  memory record, or a candidate when sensitivity requires confirmation.
+- `propose(...) -> IdeaItem`: creates an Agent/Dreaming/integration candidate only when candidate
+  capture is authorized.
+- `list(...)`, `get(...)`, and `update_stage(..., expected_version)`.
+- `set_next_step(...)` and `link_action(...)`; linking records a reference but never executes it.
+- `list_for_daily_review(owner_id, local_day)`.
+
+Idea titles and next steps are projections. Editing them does not rewrite the user's original
+statement. Editing the original idea content goes through `MemoryService.update` and revisioning.
 
 `search_context` requires a `MemoryQueryPurpose` of `companion | planning | review |
 action_preview`. Candidate hypotheses are never returned by ordinary search. A separate
@@ -229,6 +275,57 @@ supporting and contradicting IDs become evidence/relations; open questions are r
 bounded `metadata_json` field. A migration ledger prevents duplicate imports. Dreaming candidates
 become active only after user confirmation.
 
+Dreaming has two outputs from one immutable evidence window:
+
+1. **DailyReview projection for the user.** It contains the day's minimum wins, new idea sparks,
+   blockers, open loops, and one optional low-cost next step. It is a rebuildable read model, not a
+   new memory category. The user may edit it; an edit appends a feedback event rather than
+   rewriting its source events.
+2. **MemoryPatch candidates for the system.** These deduplicate, connect, promote, demote, or
+   expire memories and ideas. High-impact changes, inferred patterns, sensitive content, and
+   contradictions require confirmation.
+
+For ideas, the worker may merge exact duplicates, connect related records, mark an untouched idea
+as incubating, or propose a next step. It may not silently mark an idea acted/validated, create an
+external action, or turn an observation into a stable user trait.
+
+The worker follows a shadow-output pattern inspired by Claude Dreams: it reads the current
+canonical snapshot and selected Session transcripts, writes a separate run output and deterministic
+diff, validates provenance and authorization, and only then atomically applies whitelisted patches.
+The input snapshot is never mutated during analysis, and every applied patch is reversible.
+
+Daily scheduling is based on the user's configured timezone. Event thresholds, career milestones,
+and manual review may trigger additional runs, but only one run per owner may be active. A failed
+run leaves the previous DailyReview and canonical memories unchanged.
+
+## Context lifecycle and compaction
+
+Context compaction is a foreground Harness responsibility, not a Dreaming responsibility and not
+a MemoryRecord type. The exact `SqliteSessionStore` transcript remains append-only and recoverable.
+The model request is assembled from:
+
+1. fixed system, policy, permission, and pending-action state;
+2. a structured continuation summary covering older completed turns;
+3. the most recent complete turns verbatim;
+4. current-turn content and unresolved tool-call pairs;
+5. purpose-scoped Memory/Idea retrieval and governed RAG evidence.
+
+`ContextWindowManager` first clears bulky re-fetchable historical tool results, then compacts only
+when an estimated-token soft limit is exceeded. Compaction never splits a tool call/result pair and
+never removes the current user message, pending confirmations, permission state, or recent turns.
+The continuation summary preserves current goal, confirmed decisions, constraints, completed work,
+failed approaches, open loops, referenced artifact IDs, and the next expected action. It is stored
+in `session_compactions` with `session_id`, covered sequence range, summary schema version, source
+hash, timestamps, and model metadata.
+
+Before replacing old turns in the active model context, a pre-compaction flush may submit bounded
+memory and Idea candidates through the normal admission and authorization pipeline. The summary
+itself never becomes long-term memory. If compaction fails or its source hash is stale, the Harness
+uses the last valid checkpoint plus a bounded recent window and does not invent a replacement.
+
+Very long autonomous tasks may later use a clean context reset plus a structured handoff artifact.
+That is an evolution path, not required for the first compaction MVP.
+
 ## ProductStore integration
 
 `ProductStore` continues to own Journey tasks during this phase. Its `memories`, `hypotheses`, and
@@ -250,6 +347,14 @@ All endpoints derive `owner_id` from the existing signed HttpOnly cookie.
 - `DELETE /v1/me/memories/{id}`: soft delete.
 - `GET /v1/me/memory-candidates`.
 - `GET /v1/me/memory-activity`: recent usage records with memory summaries.
+- `GET /v1/me/ideas`: filters stage, query, related goal, cursor, and bounded limit.
+- `POST /v1/me/ideas`: explicitly capture an idea; response includes storage authorization and
+  canonical memory status.
+- `GET /v1/me/ideas/{id}`.
+- `PATCH /v1/me/ideas/{id}`: updates projection fields with `expected_version`.
+- `POST /v1/me/ideas/{id}/stage`: performs a validated stage transition.
+- `POST /v1/me/ideas/{id}/action-link`: records an already governed action reference.
+- `GET /v1/me/daily-reviews` and `GET /v1/me/daily-reviews/{local_date}`.
 
 Create accepts only `type`, `content`, optional `sensitivity`, `importance`, and `expires_at`.
 The server fixes origin to `user_explicit`, source type to `manual`, and confidence to `high`.
@@ -311,10 +416,17 @@ apply an external action.
 - Agent tests: only active records enter prompts; paused/deleted/candidate records do not; usage is
   recorded; memory failure degrades safely.
 - Provider tests: MemOS failure cannot break local CRUD or chat; provider output remains candidate.
+- Idea tests: authorization-aware capture, owner isolation, projection/version consistency,
+  duplicate evidence, valid stage transitions, and no tool execution from an Idea mutation.
+- Dreaming tests: timezone-bounded evidence, dual outputs, source traceability, shadow diff,
+  rollback, and unchanged canonical state after failure.
+- Compaction tests: token trigger, recent-turn preservation, atomic tool pairs, protected state,
+  stale-source rejection, deterministic fallback, and no automatic long-term write of summaries.
 
 ## Delivery boundary
 
 This backend phase is complete when the stable APIs operate on canonical SQLite records, Agent
 context and Dreaming use the same service, ProductStore is no longer authoritative for memories,
-and the existing full backend and frontend suites remain green. The frontend redesign starts only
-after this contract is committed.
+Idea capture and daily Dreaming projections are queryable, long conversations use bounded
+compaction, and the existing full backend and frontend suites remain green. The Idea Inbox and
+Daily Review frontend start only after this contract is committed.
