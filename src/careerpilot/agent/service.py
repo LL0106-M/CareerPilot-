@@ -13,8 +13,8 @@ from careerpilot.memory.dreaming import (
     CognitiveStore,
     DreamingTriggerPolicy,
 )
-from careerpilot.memory.write_policy import MemoryWritePolicy
 from careerpilot.memory.service import MemoryService
+from careerpilot.memory.write_policy import MemoryWritePolicy
 from careerpilot.support.policy import SupportMode, SupportPolicy
 
 

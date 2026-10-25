@@ -4,7 +4,7 @@ import pytest
 
 from careerpilot.harness.context_window import ContextWindowManager
 from careerpilot.harness.contracts import HarnessMessage, ToolCall
-from careerpilot.harness.session import InMemorySessionStore, SqliteSessionStore
+from careerpilot.harness.session import SqliteSessionStore
 
 
 @dataclass

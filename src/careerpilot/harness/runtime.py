@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from careerpilot.harness.context_window import ContextWindowManager
 from careerpilot.harness.contracts import (
     HarnessMessage,
     ModelGateway,
@@ -11,7 +12,6 @@ from careerpilot.harness.contracts import (
     ModelResponse,
     ModelStreamEvent,
 )
-from careerpilot.harness.context_window import ContextWindowManager
 from careerpilot.harness.events import HarnessEvent, HarnessEventType, RunPhase
 from careerpilot.harness.session import InMemorySessionStore
 from careerpilot.harness.tools import ToolPolicy, ToolRegistry

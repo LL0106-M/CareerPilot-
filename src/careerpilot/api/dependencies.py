@@ -7,8 +7,8 @@ from careerpilot.agent.runtime import CareerPilotResponder
 from careerpilot.agent.service import AgentService
 from careerpilot.config import Settings
 from careerpilot.harness.session import SqliteSessionStore
-from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.base import DisabledMemoryStore, MemoryStore
+from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.memos import MemosCloudMemoryStore
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore

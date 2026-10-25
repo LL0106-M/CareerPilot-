@@ -23,7 +23,7 @@ API
      ├─ CareerContextCompiler
      │   ├─ IntentInterpreter / SupportPolicy
      │   ├─ IntentAwareRetrievalRouter
-     │   ├─ 按计划读取 MemOS / Cognitive State
+     │   ├─ 按计划读取统一 Memory / Cognitive State
      │   └─ PromptComposer
      ├─ CareerPilotHarness
      │   ├─ ModelGateway
@@ -31,9 +31,9 @@ API
      │   ├─ model → tool → model 循环
      │   └─ SQLite Session Log
      ├─ AgenticRagOrchestrator
-     └─ MemoryLifecycle
-         ├─ MemoryWritePolicy
-         └─ Dreaming / Consolidation Queue
+     ├─ Unified Memory（SQLite 权威存储；MemOS 可选增强）
+     ├─ Idea Lifecycle（捕获 → 澄清 → 实验 → 行动）
+     └─ Dreaming（每日回顾 + 待验证记忆补丁）
 ```
 
 Harness 控制模型在每一步**看见什么、能做什么、留下什么**。模型负责语义理解和工具选择；权限、最大步数、Session、记忆准入和检索边界由确定性代码执行。运行时以异步生成器输出稳定的 CareerPilot 事件协议，现有一次性问答接口则归并同一条事件流，不维护第二套执行循环。
@@ -91,7 +91,7 @@ src/careerpilot/
 ├── agent/          CareerPilot Agent 定义、Prompt 与 Turn 应用编排
 ├── api/            FastAPI 路由与 schema（/health, /v1/chat）
 ├── connectors/     飞书 CLI、WPS OpenAPI、网易邮箱只读 IMAP 适配器
-├── memory/         MemOS Cloud 长期记忆 + 本地 cognitive store + MemoryWritePolicy + dreaming
+├── memory/         统一记忆、Idea 生命周期、每日回顾、记忆准入与 Dreaming
 ├── rag/            SQLite 证据索引、混合召回、RRF 重排、AgenticRagOrchestrator
 ├── search/         阿里云 DashScope web search（turbo → max 两级升级）
 ├── support/        确定性的 SupportPolicy
@@ -110,9 +110,12 @@ src/careerpilot/
 | 四种支持模式 | `listen` / `organize` / `explore` / `act`，用户显式选择优先 |
 | 意图与一级路由 | P0 `TaskIntent`、基础槽位、`RetrievalPlan`；按需选择 Memory、Cognitive State、Private RAG、Career RAG、Jobs 与 Web |
 | 情绪优先 | 有负面情绪时先提供具体慰藉，不把"能行动"误判为"应该行动" |
-| 长期记忆 | 仅在路由判断个人历史会改善回答时前置查询 MemOS；写入仍在完整回复之后独立准入 |
-| 记忆写入策略 | 一次性的难受、自责和情绪标签不进入长期记忆（返回 `skipped`）；仅稳定偏好 / 长期约束 / 明确要求记住的内容被接受 |
-| 优雅降级 | MemOS 不可用时降级为当前会话回复，不伪造"记得" |
+| 统一长期记忆 | owner 隔离的 SQLite 是权威数据源；按情境、类型、状态、时间和置信度检索，MemOS 仅作可选辅助 |
+| 记忆准入 | 一次性的难受、自责和情绪标签不进入长期记忆；稳定偏好、长期约束与明确要求记住的内容才进入候选或有效记忆 |
+| Idea 生命周期 | 小想法独立保存，并可从 `captured` 推进到 `clarifying`、`experimenting`、`actionable`、`completed` 或 `archived`；转行动必须显式授权 |
+| 每日 Dreaming | 同时生成面向用户的 Daily Review（小胜利、阻碍、想法、下一步）和内部待验证 Memory Patch，不直接静默改写事实 |
+| 上下文压缩 | 对话超出预算时先刷写重要候选，再保留系统约束、最近消息、工具结果摘要和持久化压缩摘要；不会把全部历史无限塞回模型 |
+| 优雅降级 | MemOS 不可用时继续使用本地权威记忆，不伪造外部记忆读取成功 |
 | Agent Harness | CareerPilot 自有事件驱动运行时；拥有模型/工具循环、显式状态机、流式事件、最大步数、工具策略和持久 Session |
 | LLM | 通过阿里云百炼 OpenAI-compatible API 使用 Qwen，生产默认固定 `qwen3.7-plus-2026-05-26` |
 | Web Search | 本地 RAG 证据不足或用户明确询问实时信息时，调用 DashScope web search；默认 `turbo`，多源验证不足时升级 `max`，不叠加第二层搜索 Agent |
@@ -127,7 +130,7 @@ src/careerpilot/
 
 ### 不在本阶段
 
-- Dreaming Worker（跨会话记忆整合）
+- 定时 Dreaming 调度器与前端每日回顾编辑反馈（后端已支持生成和读取）
 - PostgreSQL 产品状态（当前 RAG + Memory 均为 SQLite 单文件）
 - QQ 邮箱、微信连接器与邮件发送
 - WPS 富文本正文编辑、跨 provider 工作流和主动调度
@@ -155,6 +158,7 @@ Copy-Item .env.example .env
 | 变量 | 说明 |
 |---|---|
 | `MEMOS_API_KEY` | MemOS Cloud 密钥 |
+| `CAREERPILOT_MEMORY_DB_PATH` | 权威统一记忆、Idea 与每日回顾 SQLite 文件；MemOS 未配置时仍可完整运行 |
 | `CAREERPILOT_MODEL_BASE_URL` | 百炼工作空间的 OpenAI 兼容地址 |
 | `CAREERPILOT_MODEL_API_KEY` | 百炼 API Key |
 | `CAREERPILOT_MODEL_NAME` | 生产固定 `qwen3.7-plus-2026-05-26` |

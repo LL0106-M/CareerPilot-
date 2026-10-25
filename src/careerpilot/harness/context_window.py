@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from careerpilot.harness.contracts import HarnessMessage
@@ -15,9 +15,9 @@ class ContextSummarizer(Protocol):
 
 
 class CompactionStore(Protocol):
-    async def load_compaction(self, session_id: str) -> "SessionCompaction | None": ...
+    async def load_compaction(self, session_id: str) -> SessionCompaction | None: ...
 
-    async def save_compaction(self, compaction: "SessionCompaction") -> None: ...
+    async def save_compaction(self, compaction: SessionCompaction) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)

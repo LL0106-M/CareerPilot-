@@ -1,6 +1,5 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
 from typing import Protocol
 
 import httpx
@@ -34,11 +33,11 @@ from careerpilot.api.schemas import (
     ChatRequest,
     ChatResponse,
     HypothesisDecisionRequest,
-    IntegrationGrantRequest,
     IdeaActionLinkRequest,
     IdeaCreateRequest,
     IdeaStageRequest,
     IdeaUpdateRequest,
+    IntegrationGrantRequest,
     JourneyUpdateRequest,
     MemoryCreateRequest,
     MemoryUpdateRequest,
@@ -50,10 +49,10 @@ from careerpilot.connectors.feishu_cli import FeishuCliConnector
 from careerpilot.connectors.netease_mail import NeteaseMailConnector
 from careerpilot.connectors.wps import WpsConnector
 from careerpilot.harness.session import SqliteSessionStore
+from careerpilot.memory.base import MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.daily_review import DailyReview
 from careerpilot.memory.ideas import IdeaItem, IdeaService, IdeaStorageDeniedError
-from careerpilot.memory.base import MemoryStore
 from careerpilot.memory.models import MemoryRecord, MemoryStatus, MemoryType
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.unified_store import (
@@ -81,6 +80,7 @@ def create_app(
     memory_service: MemoryService | None = None,
     idea_service: IdeaService | None = None,
     cognitive_store: SqliteCognitiveStore | None = None,
+    product_store: ProductStore | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     owned_memory_store: MemoryStore | None = None
@@ -172,6 +172,8 @@ def create_app(
 
     def resolve_product_store() -> ProductStore:
         nonlocal owned_product_store
+        if product_store is not None:
+            return product_store
         if owned_product_store is None:
             owned_product_store = ProductStore(resolved_settings.product_db_path)
         return owned_product_store
@@ -663,7 +665,23 @@ def create_app(
     async def get_dashboard(
         identity: Identity = Depends(resolve_identity),
     ) -> dict[str, object]:
-        return resolve_product_store().dashboard(identity.owner_id)
+        product = resolve_product_store().dashboard(identity.owner_id)
+        canonical = resolve_memory_service().list(identity.owner_id, limit=200)
+        product["memories"] = [
+            _memory_payload(item) for item in canonical if item.type is not MemoryType.HYPOTHESIS
+        ]
+        product["hypotheses"] = [
+            _memory_payload(item) for item in canonical if item.type is MemoryType.HYPOTHESIS
+        ]
+        product["ideas"] = [
+            _idea_payload(item, resolve_memory_service())
+            for item in resolve_idea_service().list(identity.owner_id)
+        ]
+        product["dreaming"] = [
+            _daily_review_payload(item)
+            for item in resolve_cognitive_store().list_daily_reviews(identity.owner_id)
+        ]
+        return product
 
     @app.post("/v1/me/hypotheses/{hypothesis_id}/decision")
     async def decide_hypothesis(

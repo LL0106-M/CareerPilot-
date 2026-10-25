@@ -4,8 +4,8 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from careerpilot.harness.contracts import HarnessMessage, SessionStore, ToolCall
 from careerpilot.harness.context_window import SessionCompaction
+from careerpilot.harness.contracts import HarnessMessage, SessionStore, ToolCall
 
 
 class InMemorySessionStore(SessionStore):

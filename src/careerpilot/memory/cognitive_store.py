@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from careerpilot.memory.daily_review import DailyReview
 from careerpilot.memory.dreaming import (
     CareerHypothesis,
     DreamingAnalysis,
@@ -15,7 +16,6 @@ from careerpilot.memory.dreaming import (
     EvidenceRef,
     HypothesisProposal,
 )
-from careerpilot.memory.daily_review import DailyReview
 
 
 @dataclass(frozen=True, slots=True)

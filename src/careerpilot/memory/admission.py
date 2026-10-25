@@ -14,7 +14,11 @@ class MemoryProposal:
 
 
 class MemoryExtractor(Protocol):
-    async def extract(self, user_message: str, assistant_message: str) -> tuple[MemoryProposal, ...]: ...
+    async def extract(
+        self,
+        user_message: str,
+        assistant_message: str,
+    ) -> tuple[MemoryProposal, ...]: ...
 
 
 class MemoryAdmissionPolicy(Protocol):

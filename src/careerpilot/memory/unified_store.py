@@ -293,7 +293,15 @@ class SqliteUnifiedMemoryStore:
         actor_kind: str = "user",
         **changes: object,
     ) -> MemoryRecord:
-        allowed = {"content", "type", "sensitivity", "confidence", "importance", "expires_at", "metadata"}
+        allowed = {
+            "content",
+            "type",
+            "sensitivity",
+            "confidence",
+            "importance",
+            "expires_at",
+            "metadata",
+        }
         if not changes or not set(changes) <= allowed:
             raise ValueError("Unsupported or empty memory update")
         current = self.get_memory(owner_id, memory_id, include_deleted=True)
@@ -315,7 +323,8 @@ class SqliteUnifiedMemoryStore:
             cursor = self._connection.execute(
                 """
                 UPDATE memory_records SET content=?, normalized_content=?, type=?, sensitivity=?,
-                    confidence=?, importance=?, expires_at=?, metadata_json=?, version=?, updated_at=?
+                    confidence=?, importance=?, expires_at=?, metadata_json=?,
+                    version=?, updated_at=?
                 WHERE owner_id=? AND id=? AND version=?
                 """,
                 (
@@ -339,7 +348,14 @@ class SqliteUnifiedMemoryStore:
             after = dict(data)
             after["version"] = after_version
             after["updated_at"] = updated
-            self._revision(owner_id, memory_id, expected_version, after_version, self._snapshot(current), after)
+            self._revision(
+                owner_id,
+                memory_id,
+                expected_version,
+                after_version,
+                self._snapshot(current),
+                after,
+            )
             self._audit(owner_id, memory_id, "update", actor_kind, after_version)
         return self.get_memory(owner_id, memory_id, include_deleted=True)
 
@@ -412,7 +428,8 @@ class SqliteUnifiedMemoryStore:
     def list_evidence(self, owner_id: str, memory_id: str) -> tuple[MemoryEvidence, ...]:
         self.get_memory(owner_id, memory_id, include_deleted=True)
         rows = self._connection.execute(
-            "SELECT * FROM memory_evidence WHERE owner_id=? AND memory_id=? ORDER BY created_at, rowid",
+            """SELECT * FROM memory_evidence
+            WHERE owner_id=? AND memory_id=? ORDER BY created_at, rowid""",
             (owner_id, memory_id),
         ).fetchall()
         return tuple(
