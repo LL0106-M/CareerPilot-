@@ -11,8 +11,12 @@ dependencies = [
   "pydantic-settings>=2.8,<3",
   "pymupdf4llm>=0.2,<1",
   "pypdf>=5,<7",
-  "sentence-transformers>=5,<6",
   "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+embeddings = [
+  "sentence-transformers>=5,<6",
 ]
 
 [dependency-groups]
