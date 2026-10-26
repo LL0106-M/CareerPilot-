@@ -120,3 +120,83 @@ def test_search_returns_only_eligible_active_memory_and_respects_sensitive_inten
     assert {item.id for item in explicit.records} == {ordinary.id, sensitive.id}
     assert sensitive.id not in {item.id for item in action.records}
     assert proposed.id not in {item.id for item in explicit.records}
+
+
+class SemanticEmbedder:
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        del text
+        return [1.0, 0.0]
+
+
+def test_search_combines_semantic_recall_with_memory_governance(tmp_path) -> None:
+    memories = MemoryService(
+        SqliteUnifiedMemoryStore(tmp_path / "memory.db"),
+        embedder=SemanticEmbedder(),
+    )
+    stored = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.PREFERENCE,
+        content="偏好安静且边界清晰的团队",
+    )
+
+    result = memories.search_context(
+        owner_id="u1",
+        query="什么样的工作氛围更适合我",
+        purpose=MemoryQueryPurpose.PLANNING,
+    )
+
+    assert [item.id for item in result.records] == [stored.id]
+    assert result.relevance[stored.id] > 0
+
+
+def test_broad_recall_does_not_implicitly_unlock_sensitive_memory(tmp_path) -> None:
+    memories = service(tmp_path)
+    ordinary = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.PREFERENCE,
+        content="我更看重稳定节奏",
+    )
+    sensitive = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.FACT,
+        content="我有一项病史",
+        sensitivity=MemorySensitivity.SENSITIVE,
+    )
+    memories.confirm("u1", sensitive.id, expected_version=sensitive.version)
+
+    result = memories.search_context(
+        owner_id="u1",
+        query="你记得我的情况吗",
+        purpose=MemoryQueryPurpose.PLANNING,
+        broad_recall=True,
+    )
+
+    assert ordinary.id in {item.id for item in result.records}
+    assert sensitive.id not in {item.id for item in result.records}
+
+
+def test_explicit_correction_supersedes_related_active_memory(tmp_path) -> None:
+    memories = service(tmp_path)
+    old = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.PREFERENCE,
+        content="我更喜欢稳定的大组织",
+    )
+
+    new = memories.remember_from_conversation(
+        owner_id="u1",
+        memory_type=MemoryType.PREFERENCE,
+        content="更正一下，我不再喜欢稳定的大组织",
+        sensitivity=MemorySensitivity.NORMAL,
+        importance=4,
+        source_reference="turn-2",
+        correction=True,
+    )
+
+    assert memories.get("u1", old.id).status is MemoryStatus.SUPERSEDED
+    assert memories.store.list_relations("u1", new.id) == (
+        (new.id, old.id, "supersedes"),
+    )

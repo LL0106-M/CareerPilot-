@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from careerpilot.rag.context import AgentContextPack, ContextAssembler
@@ -56,6 +57,15 @@ class AgenticRetrievalTrace:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceAssessment:
+    status: str
+    relevant_evidence_count: int
+    distinct_sources: int
+    minimum_sources: int
+    missing_reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class AgenticRetrievalResult:
     status: str
     hits: tuple[SearchHit, ...]
@@ -66,6 +76,7 @@ class AgenticRetrievalResult:
     trace: AgenticRetrievalTrace
     context_pack: AgentContextPack
     query_analysis: QueryAnalysis
+    assessment: EvidenceAssessment
 
 
 class AgenticRagOrchestrator:
@@ -106,21 +117,20 @@ class AgenticRagOrchestrator:
             for scope in external_route.scopes
         )
 
-        if external_route.analysis.retrieval_mode in {
-            RetrievalMode.WEB_ONLY,
-            RetrievalMode.WEB_FIRST,
-        }:
+        if external_route.analysis.retrieval_mode is RetrievalMode.WEB_ONLY:
             online_answer, online_sources, online_rounds = await _search_online(
                 self._web_search,
                 external_route.analysis.normalized_query,
                 minimum_sources=request.minimum_sources,
             )
             if online_sources or external_route.analysis.retrieval_mode is RetrievalMode.WEB_ONLY:
-                status = (
-                    "available"
-                    if len(online_sources) >= request.minimum_sources
-                    else "insufficient"
+                assessment = _assess_evidence(
+                    hits=(),
+                    online_sources=online_sources,
+                    minimum_sources=request.minimum_sources,
+                    requires_freshness=False,
                 )
+                status = assessment.status
                 return AgenticRetrievalResult(
                     status=status,
                     hits=(),
@@ -143,6 +153,7 @@ class AgenticRagOrchestrator:
                         online_answer=online_answer,
                     ),
                     query_analysis=external_route.analysis,
+                    assessment=assessment,
                 )
 
         for internal_route in internal_routes:
@@ -177,13 +188,14 @@ class AgenticRagOrchestrator:
             hits.values(), key=lambda item: (-item.score, item.evidence_id or item.chunk_id)
         )
         ranked_hits = tuple(ranked[: request.limit])
-        local_source_count = len({hit.source_uri for hit in ranked_hits})
-        local_status = _combined_status(
-            has_evidence=bool(ranked_hits),
-            source_count=local_source_count,
+        local_assessment = _assess_evidence(
+            hits=ranked_hits,
+            online_sources=(),
             minimum_sources=request.minimum_sources,
             requires_freshness=external_route.requires_freshness,
         )
+        local_source_count = local_assessment.distinct_sources
+        local_status = local_assessment.status
         if local_status == "available":
             return AgenticRetrievalResult(
                 status="available",
@@ -205,6 +217,7 @@ class AgenticRagOrchestrator:
                     hits=ranked_hits,
                 ),
                 query_analysis=external_route.analysis,
+                assessment=local_assessment,
             )
 
         online_sources: dict[str, WebSearchSource] = {}
@@ -222,13 +235,13 @@ class AgenticRagOrchestrator:
             online_sources.update({source.url: source for source in sources})
 
         final_sources = tuple(online_sources.values())
-        total_sources = local_source_count + len(final_sources)
-        status = _combined_status(
-            has_evidence=bool(ranked_hits or final_sources),
-            source_count=total_sources,
+        assessment = _assess_evidence(
+            hits=ranked_hits,
+            online_sources=final_sources,
             minimum_sources=request.minimum_sources,
             requires_freshness=False if final_sources else external_route.requires_freshness,
         )
+        status = assessment.status
         if final_sources:
             stop_reason = "online_evidence"
         elif self._web_search is None:
@@ -257,6 +270,7 @@ class AgenticRagOrchestrator:
                 online_answer=online_answer,
             ),
             query_analysis=external_route.analysis,
+            assessment=assessment,
         )
 
 
@@ -320,15 +334,64 @@ def _route_label(route: InternalQueryRoute) -> str:
     return f"{route.scope.value}:{','.join(channel.value for channel in route.channels)}"
 
 
-def _combined_status(
+def _assess_evidence(
     *,
-    has_evidence: bool,
-    source_count: int,
+    hits: tuple[SearchHit, ...],
+    online_sources: tuple[WebSearchSource, ...],
     minimum_sources: int,
     requires_freshness: bool,
-) -> str:
-    if not has_evidence:
-        return "insufficient"
-    if source_count < minimum_sources or requires_freshness:
-        return "partial"
-    return "available"
+) -> EvidenceAssessment:
+    relevant_hits = tuple(
+        hit for hit in hits if hit.source_uri and hit.score >= 0.20 and hit.content.strip()
+    )
+    citable_online = tuple(
+        source for source in online_sources if source.url and (source.snippet or source.title)
+    )
+    source_uris = {hit.source_uri for hit in relevant_hits}
+    source_uris.update(source.url for source in citable_online)
+    reasons: list[str] = []
+    relevant_count = len(relevant_hits) + len(citable_online)
+    if relevant_count == 0:
+        reasons.append("no_relevant_evidence")
+    if len(source_uris) < minimum_sources:
+        reasons.append("not_enough_distinct_sources")
+    if requires_freshness and not citable_online and not _has_fresh_local_evidence(relevant_hits):
+        reasons.append("freshness_not_verified")
+    if not relevant_count:
+        status = "insufficient"
+    elif reasons:
+        status = "partial"
+    else:
+        status = "available"
+    return EvidenceAssessment(
+        status=status,
+        relevant_evidence_count=relevant_count,
+        distinct_sources=len(source_uris),
+        minimum_sources=minimum_sources,
+        missing_reasons=tuple(reasons),
+    )
+
+
+def _has_fresh_local_evidence(hits: tuple[SearchHit, ...]) -> bool:
+    now = datetime.now(UTC)
+    for hit in hits:
+        raw = next(
+            (
+                hit.metadata.get(key)
+                for key in ("verified_at", "fetched_at", "updated_at")
+                if hit.metadata.get(key)
+            ),
+            None,
+        )
+        if not isinstance(raw, str):
+            continue
+        try:
+            observed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=UTC)
+        maximum_age = timedelta(hours=72 if hit.domain == "job_opportunity" else 24 * 30)
+        if now - observed.astimezone(UTC) <= maximum_age:
+            return True
+    return False

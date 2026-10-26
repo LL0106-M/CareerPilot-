@@ -14,6 +14,7 @@ class SupportDecision:
     mode: SupportMode
     distress_detected: bool
     action_tools_allowed: bool
+    safety_risk_detected: bool = False
 
 
 class SupportPolicy:
@@ -24,6 +25,15 @@ class SupportPolicy:
     """
 
     _distress_markers = ("焦虑", "难受", "崩溃", "害怕", "自责", "绝望", "压力", "被拒")
+    _safety_risk_markers = (
+        "不想活",
+        "想死",
+        "自杀",
+        "自残",
+        "伤害自己",
+        "结束生命",
+        "活不下去",
+    )
     _listen_markers = ("只想说说", "听我说", "不要建议", "不想听建议", "先别安排")
     _action_markers = (
         "帮我创建",
@@ -41,12 +51,20 @@ class SupportPolicy:
         message: str,
         requested_mode: SupportMode | None = None,
     ) -> SupportDecision:
+        safety_risk_detected = self._contains_any(message, self._safety_risk_markers)
         distress_detected = self._contains_any(message, self._distress_markers)
-        mode = requested_mode or self._infer_mode(message)
+        # Safety routing is a hard guardrail: a requested action mode must never expose
+        # external-action tools when the current message indicates imminent self-harm risk.
+        mode = (
+            SupportMode.LISTEN
+            if safety_risk_detected
+            else requested_mode or self._infer_mode(message)
+        )
         return SupportDecision(
             mode=mode,
-            distress_detected=distress_detected,
-            action_tools_allowed=mode is SupportMode.ACT,
+            distress_detected=distress_detected or safety_risk_detected,
+            action_tools_allowed=mode is SupportMode.ACT and not safety_risk_detected,
+            safety_risk_detected=safety_risk_detected,
         )
 
     def _infer_mode(self, message: str) -> SupportMode:
@@ -65,4 +83,3 @@ class SupportPolicy:
     @staticmethod
     def _contains_any(message: str, markers: tuple[str, ...]) -> bool:
         return any(marker in message for marker in markers)
-

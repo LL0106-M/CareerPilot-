@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from careerpilot.rag.context import ContextAssembler
 from careerpilot.rag.models import EvidenceKind, SearchHit
 from careerpilot.search.models import WebSearchSource
@@ -68,3 +70,24 @@ def test_online_source_becomes_citable_only_when_it_has_a_snippet() -> None:
     assert pack.evidence[0].source_uri == "https://b.example"
     assert pack.evidence[0].evidence_kind == "online_snippet"
     assert len(pack.online_sources) == 2
+
+
+def test_context_pack_enforces_total_character_budget() -> None:
+    first = _hit(EvidenceKind.PASSAGE, evidence_id="p1", metadata={"chunk_id": "c1"})
+    second = replace(
+        first,
+        chunk_id="child-2",
+        evidence_id="p2",
+        content="第二条证据" * 1000,
+        metadata={"chunk_id": "c2"},
+    )
+    first = replace(first, content="第一条证据" * 1000)
+
+    pack = ContextAssembler().assemble(
+        status="available",
+        hits=(first, second),
+        max_chars_per_evidence=10_000,
+        max_total_chars=1_200,
+    )
+
+    assert sum(len(item.content) for item in pack.evidence) <= 1_200

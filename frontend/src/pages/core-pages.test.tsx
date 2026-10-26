@@ -13,11 +13,11 @@ function renderAt(path: string) {
 }
 
 describe('core pages', () => {
-  it('renders Today with a Dreaming summary and today direction', () => {
-    renderAt('/today')
-    expect(screen.getByRole('heading', { name: '早上好，今天想从哪里继续？' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '今日航向' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '昨夜的 Dreaming' })).toBeInTheDocument()
+  it('renders Home with companion entry, quick thought and Dreaming', () => {
+    renderAt('/')
+    expect(screen.getByRole('heading', { name: /You don't choose a future/ })).toBeInTheDocument()
+    expect(screen.getByLabelText('记录一个小想法')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Dreaming' })).toBeInTheDocument()
   })
 
   it('keeps Dreaming as a dedicated page', () => {
@@ -26,10 +26,9 @@ describe('core pages', () => {
     expect(screen.getAllByText(/条证据/).length).toBeGreaterThan(0)
   })
 
-  it('renders the four explicit chat support modes', () => {
+  it('lets the agent decide the chat support mode', () => {
     renderAt('/chat')
-    for (const mode of ['倾听', '梳理', '探索', '行动']) {
-      expect(screen.getByRole('button', { name: mode })).toBeInTheDocument()
-    }
+    expect(screen.getByText('泊泊会自己判断如何回应')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '倾听' })).not.toBeInTheDocument()
   })
 })

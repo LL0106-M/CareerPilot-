@@ -22,7 +22,8 @@ export function App() {
   return (
     <Routes>
       <Route path="/intro" element={<IntroPage />} />
-      <Route path="/today" element={<WrapShell><TodayPage /></WrapShell>} />
+      <Route path="/" element={<WrapShell><TodayPage /></WrapShell>} />
+      <Route path="/today" element={<Navigate to="/" replace />} />
       <Route path="/chat" element={<WrapShell><ChatPage /></WrapShell>} />
       <Route path="/dreaming" element={<WrapShell><DreamingPage /></WrapShell>} />
       <Route path="/compass" element={<WrapShell><CompassPage /></WrapShell>} />
@@ -35,7 +36,7 @@ export function App() {
         <Route path="preparation" element={<PreparationPage />} />
         <Route path="personal" element={<PersonalPage />} />
       </Route>
-      <Route path="*" element={<Navigate to="/today" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }

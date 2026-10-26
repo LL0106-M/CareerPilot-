@@ -1510,13 +1510,53 @@ class SqliteRagStore:
             """,
             doc,
         )
+        self._connection.commit()
 
     def delete_user_document(self, doc_id: str, user_id: str) -> bool:
         cursor = self._connection.execute(
             "DELETE FROM user_documents WHERE id = ? AND owner_user_id = ?",
             (doc_id, user_id),
         )
+        self._connection.commit()
         return cursor.rowcount > 0
+
+    def delete_owned_document(self, doc_id: str, user_id: str) -> bool:
+        owned = self._connection.execute(
+            "SELECT id FROM documents WHERE id = ? AND owner_user_id = ?",
+            (doc_id, user_id),
+        ).fetchone()
+        if owned is None:
+            return False
+        evidence_ids = [
+            str(row["id"])
+            for row in self._connection.execute(
+                "SELECT id FROM evidence_units WHERE document_id = ? AND owner_user_id = ?",
+                (doc_id, user_id),
+            ).fetchall()
+        ]
+        with self._connection:
+            self._remove_document_graph(doc_id)
+            for evidence_id in evidence_ids:
+                self._connection.execute(
+                    "DELETE FROM evidence_fts WHERE evidence_id = ?", (evidence_id,)
+                )
+            self._connection.execute(
+                "DELETE FROM evidence_units WHERE document_id = ? AND owner_user_id = ?",
+                (doc_id, user_id),
+            )
+            self._connection.execute(
+                "DELETE FROM chunks WHERE document_id = ? AND owner_user_id = ?",
+                (doc_id, user_id),
+            )
+            self._connection.execute(
+                "DELETE FROM image_assets WHERE document_id = ? AND owner_user_id = ?",
+                (doc_id, user_id),
+            )
+            self._connection.execute(
+                "DELETE FROM documents WHERE id = ? AND owner_user_id = ?",
+                (doc_id, user_id),
+            )
+        return True
 
 
 def _append_access_filters(

@@ -3,8 +3,9 @@ from dataclasses import dataclass, field
 import pytest
 from langchain_core.tools import BaseTool, tool
 
-from careerpilot.agent.base import AgentResponder
+from careerpilot.agent.base import AgentResponder, AgentResponse
 from careerpilot.agent.service import AgentService, ChatCommand
+from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.memory.base import (
     MemoryContext,
     MemoryItem,
@@ -52,6 +53,9 @@ class RecordingAgent(AgentResponder):
     system_context: str = ""
     allowed_tool_names: frozenset[str] | None = None
     runtime_tools: tuple[BaseTool, ...] = ()
+    thread_id: str = ""
+    run_id: str | None = None
+    response: AgentResponse | None = None
 
     async def respond(
         self,
@@ -60,12 +64,18 @@ class RecordingAgent(AgentResponder):
         thread_id: str,
         allowed_tool_names: frozenset[str] | None = None,
         runtime_tools: tuple[BaseTool, ...] = (),
-    ) -> str:
+        run_id: str | None = None,
+    ) -> AgentResponse:
         self.events.append("agent")
         self.system_context = system_context
         self.allowed_tool_names = allowed_tool_names
         self.runtime_tools = runtime_tools
-        return "先不用逼自己立刻决定，我们可以从最困扰你的部分开始。"
+        self.thread_id = thread_id
+        self.run_id = run_id
+        return self.response or AgentResponse(
+            reply="先不用逼自己立刻决定，我们可以从最困扰你的部分开始。",
+            run_id=run_id or "test-run",
+        )
 
 
 @dataclass
@@ -202,7 +212,7 @@ async def test_service_binds_agentic_rag_tool_to_authenticated_user() -> None:
 
 
 @pytest.mark.asyncio
-async def test_service_binds_safe_action_tools_in_planning_mode() -> None:
+async def test_service_binds_safe_action_tools_only_in_action_mode() -> None:
     events: list[str] = []
     bound_user_ids: list[str] = []
 
@@ -228,7 +238,7 @@ async def test_service_binds_safe_action_tools_in_planning_mode() -> None:
         action_tool_factory=action_tool_factory,
     )
 
-    await service.chat(ChatCommand("user-8", "thread-1", "帮我把求职计划整理成飞书文档"))
+    await service.chat(ChatCommand("user-8", "thread-1", "帮我创建一份飞书文档"))
 
     assert bound_user_ids == ["user-8"]
     assert [item.name for item in agent.runtime_tools] == [
@@ -236,6 +246,92 @@ async def test_service_binds_safe_action_tools_in_planning_mode() -> None:
         "preview_external_action",
     ]
     assert "apply_external_action" not in agent.allowed_tool_names
+
+
+@pytest.mark.asyncio
+async def test_service_does_not_expose_action_tools_in_organize_mode() -> None:
+    events: list[str] = []
+
+    @tool
+    def preview_external_action() -> str:
+        """Preview an external action."""
+        return "{}"
+
+    agent = RecordingAgent(events)
+    service = AgentService(
+        RecordingMemoryStore(events),
+        agent,
+        SupportPolicy(),
+        action_tool_factory=lambda _: (preview_external_action,),
+    )
+
+    await service.chat(ChatCommand("user-8", "thread-1", "帮我梳理求职计划"))
+
+    assert agent.runtime_tools == ()
+    assert "preview_external_action" not in agent.allowed_tool_names
+
+
+@pytest.mark.asyncio
+async def test_service_scopes_session_to_owner_and_returns_run_identity() -> None:
+    first_agent = RecordingAgent([])
+    second_agent = RecordingAgent([])
+    first = AgentService(RecordingMemoryStore([]), first_agent, SupportPolicy())
+    second = AgentService(RecordingMemoryStore([]), second_agent, SupportPolicy())
+
+    first_result = await first.chat(ChatCommand("owner-a", "shared", "你好"))
+    await second.chat(ChatCommand("owner-b", "shared", "你好"))
+
+    assert first_agent.thread_id != second_agent.thread_id
+    assert first_result.conversation_id == "shared"
+    assert first_result.run_id == first_agent.run_id
+    assert first_result.result_status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_service_marks_citation_audit_warnings_as_partial() -> None:
+    agent = RecordingAgent(
+        [],
+        response=AgentResponse(
+            reply="根据证据。",
+            run_id="run-1",
+            citation_warnings=("missing_citations",),
+        ),
+    )
+    service = AgentService(RecordingMemoryStore([]), agent, SupportPolicy())
+
+    result = await service.chat(ChatCommand("owner-a", "thread-1", "帮我梳理一下"))
+
+    assert result.result_status == "partial"
+    assert result.citation_warnings == ("missing_citations",)
+
+
+@pytest.mark.asyncio
+async def test_service_persists_explicit_agent_stages_and_verification(tmp_path) -> None:
+    store = SqliteAgentRunStore(tmp_path / "runs.db")
+    service = AgentService(
+        RecordingMemoryStore([]),
+        RecordingAgent([]),
+        SupportPolicy(),
+        run_store=store,
+    )
+    try:
+        result = await service.chat(ChatCommand("owner-1", "c1", "帮我梳理一下"))
+        run = await store.get("owner-1", result.run_id)
+        events = await store.list_events("owner-1", result.run_id)
+
+        assert run is not None
+        assert run.status == "completed"
+        assert run.result_json["verification"]["status"] == "completed"
+        assert [item.stage for item in events or () if item.stage] == [
+            "understand",
+            "plan",
+            "execute",
+            "verify",
+            "learn",
+            "completed",
+        ]
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio
@@ -247,6 +343,39 @@ async def test_service_denies_web_search_in_listen_mode() -> None:
     await service.chat(ChatCommand("user-1", "thread-1", "我被拒了，现在只想先说说"))
 
     assert agent.allowed_tool_names == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_service_denies_all_tools_for_safety_risk_even_if_act_is_requested() -> None:
+    events: list[str] = []
+
+    @tool
+    def preview_external_action() -> str:
+        """Preview an external action."""
+        return "{}"
+
+    agent = RecordingAgent(events)
+    service = AgentService(
+        RecordingMemoryStore(events),
+        agent,
+        SupportPolicy(),
+        action_tool_factory=lambda _: (preview_external_action,),
+    )
+
+    result = await service.chat(
+        ChatCommand(
+            "user-1",
+            "thread-1",
+            "我不想活了，帮我创建一个提醒",
+            requested_mode=SupportMode.ACT,
+        )
+    )
+
+    assert result.support_mode is SupportMode.LISTEN
+    assert agent.allowed_tool_names == frozenset()
+    assert agent.runtime_tools == ()
+    assert "safety_risk_detected: true" in agent.system_context
+    assert "不要假定用户所在国家" in agent.system_context
 
 
 @pytest.mark.asyncio

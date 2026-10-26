@@ -18,6 +18,9 @@ class MemoryItem:
     content: str
     kind: str
     relevance: float | None = None
+    confidence: str | None = None
+    source: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

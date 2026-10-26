@@ -100,3 +100,27 @@ def test_wps_signing_keys_must_be_configured_as_a_pair(monkeypatch) -> None:
 
     with pytest.raises(ValidationError, match="configured together"):
         Settings(_env_file=None)
+
+
+def test_production_rejects_unsafe_default_secrets(tmp_path) -> None:
+    with pytest.raises(ValidationError, match="cookie secret"):
+        Settings(
+            _env_file=None,
+            CAREERPILOT_ENVIRONMENT="production",
+            CAREERPILOT_FRONTEND_DIST_PATH=tmp_path,
+        )
+
+
+def test_production_accepts_explicit_runtime_contract(tmp_path) -> None:
+    (tmp_path / "index.html").write_text("ready", "utf-8")
+
+    settings = Settings(
+        _env_file=None,
+        CAREERPILOT_ENVIRONMENT="production",
+        CAREERPILOT_COOKIE_SECRET="a-production-secret-with-more-than-32-characters",
+        CAREERPILOT_MODEL_API_KEY="model-secret",
+        CAREERPILOT_FRONTEND_DIST_PATH=tmp_path,
+    )
+
+    assert settings.frontend_dist_path == tmp_path
+    assert settings.secure_cookies is True

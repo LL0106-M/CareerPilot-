@@ -1,16 +1,38 @@
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
 
 from careerpilot.harness.contracts import (
+    HarnessMessage,
     ModelRequest,
     ModelResponse,
     ModelStreamEvent,
     ToolCall,
 )
 from careerpilot.harness.events import HarnessEventType, RunPhase
-from careerpilot.harness.runtime import CareerPilotHarness, MaxStepsExceeded
+from careerpilot.harness.run_store import SqliteAgentRunStore
+from careerpilot.harness.runtime import (
+    CareerPilotHarness,
+    MaxStepsExceeded,
+    RunCancellationRequested,
+)
 from careerpilot.harness.session import InMemorySessionStore
+from careerpilot.harness.tools import ToolRegistry
+
+
+@dataclass
+class SlowTool:
+    @property
+    def schema(self):
+        from careerpilot.harness.contracts import ToolSchema
+
+        return ToolSchema(name="slow_search", description="slow", parameters={})
+
+    async def execute(self, arguments):
+        del arguments
+        await asyncio.sleep(0.05)
+        return "late"
 
 
 @dataclass
@@ -169,6 +191,33 @@ async def test_harness_emits_tool_lifecycle_between_model_steps() -> None:
 
 
 @pytest.mark.asyncio
+async def test_harness_turns_tool_timeout_into_observation_and_continues() -> None:
+    gateway = RecordingGateway(
+        [
+            ModelResponse(tool_calls=(ToolCall("call-1", "slow_search", {}),)),
+            ModelResponse(text="搜索暂时超时，我先说明资料不足。"),
+        ]
+    )
+    harness = CareerPilotHarness(
+        gateway,
+        tools=ToolRegistry((SlowTool(),)),
+        tool_timeout_seconds=0.001,
+    )
+
+    result = await harness.run(
+        user_message="查一下最新岗位",
+        system_context="test",
+        session_id="s-timeout",
+        allowed_tool_names=frozenset({"slow_search"}),
+    )
+
+    assert result.reply == "搜索暂时超时，我先说明资料不足。"
+    tool_message = gateway.requests[1].messages[-1]
+    assert tool_message.role == "tool"
+    assert '"status": "timeout"' in tool_message.content
+
+
+@pytest.mark.asyncio
 async def test_harness_emits_failure_before_raising() -> None:
     gateway = RecordingGateway([ModelResponse()])
     harness = CareerPilotHarness(gateway)
@@ -185,3 +234,96 @@ async def test_harness_emits_failure_before_raising() -> None:
     assert events[-1].type is HarnessEventType.RUN_FAILED
     assert events[-1].phase is RunPhase.FAILED
     assert events[-1].data["error_type"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_harness_serializes_turns_for_same_session() -> None:
+    @dataclass
+    class SlowGateway:
+        active: int = 0
+        max_active: int = 0
+
+        async def generate(self, request: ModelRequest) -> ModelResponse:
+            del request
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.02)
+            self.active -= 1
+            return ModelResponse(text="ok")
+
+    gateway = SlowGateway()
+    harness = CareerPilotHarness(gateway)
+
+    await asyncio.gather(
+        harness.run(user_message="a", system_context="s", session_id="same"),
+        harness.run(user_message="b", system_context="s", session_id="same"),
+    )
+
+    assert gateway.max_active == 1
+
+
+@pytest.mark.asyncio
+async def test_harness_bounds_model_execution_time() -> None:
+    class SlowGateway:
+        async def generate(self, request: ModelRequest) -> ModelResponse:
+            del request
+            await asyncio.sleep(0.05)
+            return ModelResponse(text="late")
+
+    harness = CareerPilotHarness(SlowGateway(), model_timeout_seconds=0.001)
+
+    with pytest.raises(TimeoutError):
+        await harness.run(user_message="hello", system_context="s", session_id="s1")
+
+
+def test_citation_audit_rejects_unknown_ids_and_detects_missing_citations() -> None:
+    from careerpilot.harness.runtime import _audit_citations
+
+    tool_message = HarnessMessage(
+        role="tool",
+        content=(
+            '{"context_pack":{"evidence":['
+            '{"citation_id":"S1"},{"citation_id":"S2"}]}}'
+        ),
+    )
+
+    cited, warnings = _audit_citations("结论见 [S1] 和 [S9]。", (tool_message,))
+    assert cited == ("S1",)
+    assert warnings == ("invalid_citations:S9",)
+
+    cited, warnings = _audit_citations("没有引用。", (tool_message,))
+    assert cited == ()
+    assert warnings == ("missing_citations",)
+
+
+@pytest.mark.asyncio
+async def test_harness_honors_durable_cancellation_before_model_call(tmp_path) -> None:
+    store = SqliteAgentRunStore(tmp_path / "runs.db")
+    await store.create(
+        run_id="run-cancel",
+        owner_id="owner-1",
+        conversation_id="c1",
+        session_id="s1",
+        objective="cancel me",
+    )
+    await store.request_cancel("owner-1", "run-cancel")
+    gateway = RecordingGateway([ModelResponse(text="must not run")])
+    harness = CareerPilotHarness(gateway, run_store=store)
+
+    try:
+        with pytest.raises(RunCancellationRequested):
+            await harness.run(
+                user_message="hello",
+                system_context="s",
+                session_id="s1",
+                run_id="run-cancel",
+            )
+
+        assert gateway.requests == []
+        events = await store.list_events("owner-1", "run-cancel")
+        assert [item.event_type for item in events or ()][-2:] == [
+            "run.started",
+            "run.cancelled",
+        ]
+    finally:
+        store.close()

@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,39 @@ async def test_agentic_rag_stops_when_local_evidence_is_sufficient(tmp_path: Pat
     assert result.online_sources == ()
     assert web.calls == []
     assert result.trace.stop_reason == "enough"
+    assert result.assessment.status == "available"
+    assert result.assessment.relevant_evidence_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_fresh_local_evidence_can_satisfy_freshness_requirement(tmp_path: Path) -> None:
+    store = SqliteRagStore(tmp_path / "rag.db")
+    _index(
+        store,
+        SourceDocument(
+            id="prep-fresh",
+            title="最新面试准备",
+            source_uri="https://example.com/fresh-prep",
+            source_type="official_guide",
+            domain="curated_document",
+            text="Agent 产品面试当前重点考察 RAG 评测和工具安全边界。",
+            fetched_at=datetime.now(UTC).isoformat(),
+            knowledge_origin=KnowledgeOrigin.SYSTEM_CURATED,
+        ),
+    )
+    web = RecordingWebSearch([])
+    orchestrator = AgenticRagOrchestrator(store, web_search=web)
+
+    result = await orchestrator.retrieve(
+        AgenticRetrievalRequest(
+            query="Agent 产品面试当前重点",
+            scopes=(KnowledgeScope.PREPARATION,),
+            requires_freshness=True,
+        )
+    )
+
+    assert result.status == "available"
+    assert web.calls == []
 
 
 @pytest.mark.asyncio
@@ -100,6 +134,7 @@ async def test_agentic_rag_searches_online_when_local_evidence_is_insufficient(
     assert result.trace.local_rounds == 0
     assert result.trace.retrieval_mode.value == "web_only"
     assert result.hits == ()
+    assert result.assessment.distinct_sources == 1
 
 
 @pytest.mark.asyncio

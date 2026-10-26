@@ -6,8 +6,8 @@
   --brand-sky: #7899ae;
   --brand-amber: #d4a85f;
   --bg-page: #f7f6f2;
-  --bg-glass: rgba(255, 255, 255, 0.52);
-  --bg-glass-strong: rgba(255, 255, 255, 0.68);
+  --bg-glass: rgba(250, 247, 239, 0.5);
+  --bg-glass-strong: rgba(252, 249, 242, 0.7);
   --text-primary: #24332d;
   --text-secondary: #66756e;
   --text-tertiary: #8f9c96;
@@ -25,5 +25,5 @@
   --radius-xl: 28px;
   --radius-lg: 20px;
   --radius-md: 14px;
-  --shadow-glass: 0 16px 50px rgba(35, 55, 47, 0.12);
+  --shadow-glass: 0 22px 70px rgba(35, 55, 47, 0.12);
 }

@@ -67,6 +67,7 @@ export interface ApiJob {
   job_title?: string
   role_type?: string
   job_type?: string
+  role_family?: string
   location?: string
   posted_at?: string
   deadline?: string
@@ -87,6 +88,15 @@ export interface ApiDocument {
   uploaded_at: string
   status: string
   retrieval_enabled: boolean
+}
+
+export interface ActionPreview {
+  action_id: string
+  provider_id: string
+  capability: string
+  payload: Record<string, unknown>
+  preview_hash: string
+  requires_confirmation: boolean
 }
 
 export class ApiError extends Error {
@@ -178,10 +188,31 @@ export const api = {
   deleteDocument(id: string) {
     return request<{ status: string }>(`/v1/me/documents/${encodeURIComponent(id)}`, { method: 'DELETE' })
   },
+  uploadDocument(file: File, category: PersonalDocument['category']) {
+    const format = file.name.split('.').pop()?.toUpperCase() || ''
+    const params = new URLSearchParams({ title: file.name, category, file_format: format })
+    return request<ApiDocument>(`/v1/me/documents?${params.toString()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    })
+  },
   previewAction(providerId: string, capability: string, payload: Record<string, unknown>) {
-    return request<Record<string, unknown>>('/v1/me/actions/preview', {
+    return request<ActionPreview>('/v1/me/actions/preview', {
       method: 'POST',
       body: JSON.stringify({ provider_id: providerId, capability, payload }),
+    })
+  },
+  confirmAction(actionId: string, previewHash: string) {
+    return request<{ action_id: string; confirmation_token: string; preview_hash: string }>(`/v1/me/actions/${encodeURIComponent(actionId)}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ preview_hash: previewHash }),
+    })
+  },
+  applyAction(actionId: string, confirmationToken: string, previewHash: string, idempotencyKey: string) {
+    return request<{ status: string; external_reference?: string }>(`/v1/me/actions/${encodeURIComponent(actionId)}/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmation_token: confirmationToken, preview_hash: previewHash, idempotency_key: idempotencyKey }),
     })
   },
 }
@@ -192,7 +223,7 @@ export function mapApiJob(job: ApiJob): JobRecord {
     companyType: (job.company_type || '未知') as JobRecord['companyType'],
     company: job.company || job.company_name || '未命名企业',
     role: job.role || job.job_title || '未命名岗位',
-    roleType: (job.role_type || job.job_type || '其他') as JobRecord['roleType'],
+    roleType: (job.role_type || job.job_type || job.role_family || '其他') as JobRecord['roleType'],
     location: job.location || '未公开',
     postedAt: job.posted_at || '未公开',
     deadline: job.deadline || '未公开',

@@ -18,6 +18,8 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 
 tmp/
+.test-tmp/
+.superpowers/
 .workbuddy/
 .worktrees/
 
@@ -28,4 +30,10 @@ data/rag/*.db-wal
 data/memory/*.db
 data/memory/*.db-shm
 data/memory/*.db-wal
+data/product/*.db
+data/product/*.db-shm
+data/product/*.db-wal
+data/sessions/*.db
+data/sessions/*.db-shm
+data/sessions/*.db-wal
 data/models/

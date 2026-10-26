@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from careerpilot.harness.context_window import ContextWindowManager
+from careerpilot.harness.context_window import ContextWindowManager, _estimate_text_tokens
 from careerpilot.harness.contracts import HarnessMessage, ToolCall
 from careerpilot.harness.session import SqliteSessionStore
 
@@ -144,3 +144,8 @@ async def test_pre_compaction_flush_receives_source_messages_not_summary() -> No
     await manager.compile("s1", history)
 
     assert flushed == [("s1", history[:2])]
+
+
+def test_token_estimator_is_conservative_for_chinese() -> None:
+    assert _estimate_text_tokens("职业方向探索") == 6
+    assert _estimate_text_tokens("abcd") == 1

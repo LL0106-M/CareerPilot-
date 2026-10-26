@@ -1,112 +1,14 @@
+import { ArrowSquareOut, MagnifyingGlass, Sparkle } from '@phosphor-icons/react'
 import { useMemo, useState } from 'react'
-import { demoMaterials } from '../../../data/demoRepository'
-import { filterMaterials } from '../../../data/filtering'
-import type { MaterialFilters, PreparationPrimary, PreparationSecondary } from '../../../data/types'
+import { Link } from 'react-router-dom'
 
-const SECONDARY_MAP: Record<PreparationPrimary, PreparationSecondary[]> = {
-  面试: ['面经', '面试准备'],
-  笔试: ['考题', '准备资料'],
-}
+import { curatedLearning } from '../../../data/curatedLearning'
 
 export function PreparationPage() {
-  const [filters, setFilters] = useState<MaterialFilters>({
-    query: '',
-    primary: '面试',
-    secondary: '面经',
-    company: '全部',
-  })
-
-  const companies = useMemo(() => {
-    const set = new Set(demoMaterials.map((m) => m.company))
-    return ['全部', ...Array.from(set)]
-  }, [])
-
-  const rows = useMemo(() => filterMaterials(demoMaterials, filters), [filters])
-
-  function setPrimary(value: PreparationPrimary) {
-    setFilters((prev) => ({ ...prev, primary: value, secondary: SECONDARY_MAP[value][0] }))
-  }
-
-  function setSecondary(value: PreparationSecondary) {
-    setFilters((prev) => ({ ...prev, secondary: value }))
-  }
-
-  return (
-    <section className="glass-strong preparation-page">
-      <div className="prep-header">
-        <p className="eyebrow">知识库 · 备考资料</p>
-        <h1 className="page-title">备考资料</h1>
-      </div>
-
-      <div className="prep-category-row">
-        {(['面试', '笔试'] as const).map((primary) => (
-          <button
-            key={primary}
-            type="button"
-            className={`category-pill${filters.primary === primary ? ' active' : ''}`}
-            onClick={() => setPrimary(primary)}
-          >
-            {primary}
-          </button>
-        ))}
-      </div>
-
-      <div className="prep-category-row secondary">
-        {SECONDARY_MAP[filters.primary].map((secondary) => (
-          <button
-            key={secondary}
-            type="button"
-            className={`category-pill secondary${filters.secondary === secondary ? ' active' : ''}`}
-            onClick={() => setSecondary(secondary)}
-          >
-            {secondary}
-          </button>
-        ))}
-      </div>
-
-      <div className="prep-filters">
-        <input
-          className="filter-search"
-          placeholder="搜索资料关键词"
-          aria-label="搜索资料关键词"
-          value={filters.query}
-          onChange={(e) => setFilters((prev) => ({ ...prev, query: e.target.value }))}
-        />
-        <label className="filter-label">
-          <span>企业</span>
-          <select
-            aria-label="企业"
-            value={filters.company}
-            onChange={(e) => setFilters((prev) => ({ ...prev, company: e.target.value }))}
-          >
-            {companies.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          className="text-button"
-          onClick={() =>
-            setFilters((prev) => ({ ...prev, query: '', company: '全部' }))
-          }
-        >
-          清除筛选
-        </button>
-      </div>
-
-      <ul className="material-list">
-        {rows.map((m) => (
-          <li key={m.id} className="material-item glass-card">
-            <div className="material-title">{m.title}</div>
-            <div className="material-meta">
-              {m.company} · {m.source} · {m.updatedAt}
-            </div>
-            <p className="material-excerpt muted">{m.excerpt}</p>
-          </li>
-        ))}
-        {rows.length === 0 && <li className="empty-row">没有匹配的资料。</li>}
-      </ul>
-    </section>
-  )
+  const [query,setQuery] = useState('')
+  const [category,setCategory] = useState('全部')
+  const [selected,setSelected] = useState(curatedLearning[0].id)
+  const resources = useMemo(() => curatedLearning.filter((item) => (category === '全部' || item.category === category) && `${item.title} ${item.publisher} ${item.description}`.toLowerCase().includes(query.toLowerCase())),[query,category])
+  const featured = resources.find((item) => item.id === selected) || resources[0]
+  return <section className="library-dashboard learning-library"><aside className="library-rail glass-card"><div className="rail-title"><Sparkle />专题</div>{['全部','AI 基础','产品设计','工程实践','行业应用'].map((item) => <button type="button" className={category === item ? 'active simple' : 'simple'} key={item} onClick={() => setCategory(item)}>{item}</button>)}<Link className="chat-collect" to="/chat" state={{draft:'帮我联网搜索 AI 产品经理的优质学习资料，验证来源后直接存入知识库。'}}>让泊泊继续收集</Link></aside><div className="library-main"><div className="library-tools"><label><MagnifyingGlass /><input aria-label="搜索学习资料" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索课程、指南或案例" /></label></div>{featured && <article className={`library-feature learning-feature accent-${featured.accent}`}><div><span>{featured.category} · {featured.format}</span><p>{featured.publisher}</p><h2>{featured.title}</h2><p>{featured.description}</p><a href={featured.url} target="_blank" rel="noreferrer" className="primary-button">打开资料 <ArrowSquareOut /></a></div></article>}<div className="library-shelf"><header><div><p className="eyebrow">Curated for every major</p><h2>AI 共同能力</h2></div><span>由 CareerPilot 编辑整理</span></header><div className="shelf-row">{resources.map((item) => <button type="button" className={`resource-book accent-${item.accent}`} key={item.id} onClick={() => setSelected(item.id)}><span>{item.publisher}</span><strong>{item.title}</strong><small>{item.category}</small></button>)}</div></div></div></section>
 }

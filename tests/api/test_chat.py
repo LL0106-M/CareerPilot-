@@ -15,6 +15,11 @@ class StubChatService:
     async def chat(self, command: ChatCommand) -> ChatResult:
         self.received = command
         return ChatResult(
+            conversation_id=command.conversation_id,
+            run_id="run-1",
+            result_status="completed",
+            citation_ids=(),
+            citation_warnings=(),
             reply="这次被拒确实很难受，我们先不用急着证明什么。",
             support_mode=SupportMode.LISTEN,
             primary_intent=TaskIntent.EMOTIONAL_SUPPORT,
@@ -22,6 +27,7 @@ class StubChatService:
             memory_read_status="available",
             memory_write_status="accepted",
             dreaming_status="queued",
+            memory_ids=(),
         )
 
 
@@ -40,6 +46,11 @@ def test_chat_returns_agent_reply_and_transparent_memory_status() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
+        "conversation_id": "thread-1",
+        "run_id": "run-1",
+        "result_status": "completed",
+        "citation_ids": [],
+        "citation_warnings": [],
         "reply": "这次被拒确实很难受，我们先不用急着证明什么。",
         "support_mode": "listen",
         "primary_intent": "emotional_support",
@@ -47,6 +58,7 @@ def test_chat_returns_agent_reply_and_transparent_memory_status() -> None:
         "memory_read_status": "available",
         "memory_write_status": "accepted",
         "dreaming_status": "queued",
+        "memory_ids": [],
     }
     # owner_id is server-derived from cookie — cannot be overridden by client.
     assert service.received is not None

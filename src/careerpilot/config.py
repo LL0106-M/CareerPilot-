@@ -28,6 +28,16 @@ class Settings(BaseSettings):
         default="http://localhost:5173,http://127.0.0.1:5173",
         validation_alias="CAREERPILOT_CORS_ORIGINS",
     )
+    frontend_dist_path: Path | None = Field(
+        default=None,
+        validation_alias="CAREERPILOT_FRONTEND_DIST_PATH",
+    )
+    max_upload_bytes: int = Field(
+        default=15 * 1024 * 1024,
+        gt=0,
+        le=100 * 1024 * 1024,
+        validation_alias="CAREERPILOT_MAX_UPLOAD_BYTES",
+    )
     model_base_url: str = Field(
         default="http://127.0.0.1:8000/v1",
         validation_alias="CAREERPILOT_MODEL_BASE_URL",
@@ -177,6 +187,25 @@ class Settings(BaseSettings):
             raise ValueError("WPS access key and secret key must be configured together")
         return self
 
+    @model_validator(mode="after")
+    def validate_production_contract(self) -> "Settings":
+        if self.environment != "production":
+            return self
+        cookie_secret = self.cookie_secret.get_secret_value()
+        if (
+            cookie_secret == "careerpilot-development-cookie-secret-change-me"
+            or len(cookie_secret) < 32
+        ):
+            raise ValueError("production cookie secret must be unique and at least 32 characters")
+        model_secret = self.model_api_key.get_secret_value()
+        if model_secret in {"local-development", "replace-me", ""}:
+            raise ValueError("production model API key must be configured")
+        if self.frontend_dist_path is None:
+            raise ValueError("production frontend dist path must be configured")
+        if not (self.frontend_dist_path / "index.html").is_file():
+            raise ValueError("production frontend dist path must contain index.html")
+        return self
+
     @property
     def search_configured(self) -> bool:
         return self.dashscope_api_key is not None and self.dashscope_base_url is not None
@@ -188,6 +217,16 @@ class Settings(BaseSettings):
     @property
     def secure_cookies(self) -> bool:
         return self.environment == "production"
+
+    @property
+    def runtime_database_paths(self) -> tuple[Path, ...]:
+        return (
+            self.rag_db_path,
+            self.memory_db_path,
+            self.session_db_path,
+            self.product_db_path,
+            self.action_db_path,
+        )
 
 
 @lru_cache

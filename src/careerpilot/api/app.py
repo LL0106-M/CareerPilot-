@@ -1,9 +1,12 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Protocol
+from uuid import uuid4
 
 import httpx
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from careerpilot.actions.payloads import validate_grant_constraints
@@ -30,6 +33,7 @@ from careerpilot.api.schemas import (
     ActionApplyRequest,
     ActionConfirmRequest,
     ActionPreviewRequest,
+    AgentRunResponse,
     ChatRequest,
     ChatResponse,
     HypothesisDecisionRequest,
@@ -42,12 +46,17 @@ from careerpilot.api.schemas import (
     MemoryCreateRequest,
     MemoryUpdateRequest,
     RagQueryRequest,
+    RunEventResponse,
+    RunEventsResponse,
     VersionRequest,
 )
+from careerpilot.api.static import SPAStaticFiles
 from careerpilot.config import Settings, get_settings
 from careerpilot.connectors.feishu_cli import FeishuCliConnector
 from careerpilot.connectors.netease_mail import NeteaseMailConnector
 from careerpilot.connectors.wps import WpsConnector
+from careerpilot.harness.run_store import SqliteAgentRunStore
+from careerpilot.harness.runtime import RunCancellationRequested
 from careerpilot.harness.session import SqliteSessionStore
 from careerpilot.memory.base import MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
@@ -62,7 +71,10 @@ from careerpilot.memory.unified_store import (
 )
 from careerpilot.product_store import ProductStore
 from careerpilot.rag.agentic import AgenticRagOrchestrator, AgenticRetrievalRequest
+from careerpilot.rag.chunking import chunk_document
 from careerpilot.rag.embeddings import create_embedding_provider
+from careerpilot.rag.loaders import load_document
+from careerpilot.rag.models import KnowledgeOrigin
 from careerpilot.rag.routing import KnowledgeScope
 from careerpilot.rag.store import SqliteRagStore
 
@@ -81,6 +93,7 @@ def create_app(
     idea_service: IdeaService | None = None,
     cognitive_store: SqliteCognitiveStore | None = None,
     product_store: ProductStore | None = None,
+    run_store: SqliteAgentRunStore | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     owned_memory_store: MemoryStore | None = None
@@ -90,6 +103,7 @@ def create_app(
     owned_product_store: ProductStore | None = None
     owned_action_store: SqliteActionStore | None = None
     owned_unified_memory_store: SqliteUnifiedMemoryStore | None = None
+    owned_run_store: SqliteAgentRunStore | None = None
     owned_http_clients: list[httpx.AsyncClient] = []
     action_registry = build_mvp_capability_registry()
 
@@ -110,6 +124,8 @@ def create_app(
             owned_action_store.close()
         if owned_unified_memory_store is not None:
             owned_unified_memory_store.close()
+        if owned_run_store is not None:
+            owned_run_store.close()
         for client in owned_http_clients:
             await client.aclose()
 
@@ -137,6 +153,7 @@ def create_app(
     def resolve_chat_service() -> ChatService:
         nonlocal chat_service, owned_memory_store, owned_rag_store
         nonlocal owned_cognitive_store, owned_session_store, owned_unified_memory_store
+        nonlocal owned_run_store
         if chat_service is None:
             try:
                 (
@@ -146,6 +163,7 @@ def create_app(
                     owned_cognitive_store,
                     owned_session_store,
                     owned_unified_memory_store,
+                    owned_run_store,
                 ) = build_agent_service(
                     resolved_settings,
                     action_tool_factory=lambda owner_id: build_action_tools(
@@ -158,6 +176,14 @@ def create_app(
             except RuntimeError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc
         return chat_service
+
+    def resolve_run_store() -> SqliteAgentRunStore:
+        nonlocal run_store, owned_run_store
+        if run_store is not None:
+            return run_store
+        if owned_run_store is None:
+            owned_run_store = SqliteAgentRunStore(resolved_settings.session_db_path)
+        return owned_run_store
 
     def resolve_rag_store() -> SqliteRagStore:
         nonlocal owned_rag_store
@@ -244,7 +270,10 @@ def create_app(
             owned_unified_memory_store = SqliteUnifiedMemoryStore(
                 resolved_settings.memory_db_path
             )
-            memory_service = MemoryService(owned_unified_memory_store)
+            memory_service = MemoryService(
+                owned_unified_memory_store,
+                embedder=create_embedding_provider(resolved_settings),
+            )
         return memory_service
 
     def resolve_idea_service() -> IdeaService:
@@ -265,6 +294,19 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": resolved_settings.app_name}
 
+    @app.get("/ready")
+    async def ready() -> dict[str, str]:
+        try:
+            for database_path in resolved_settings.runtime_database_paths:
+                database_path.parent.mkdir(parents=True, exist_ok=True)
+            if resolved_settings.frontend_dist_path is not None and not (
+                resolved_settings.frontend_dist_path / "index.html"
+            ).is_file():
+                raise OSError("frontend bundle is missing")
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=f"service is not ready: {exc}") from exc
+        return {"status": "ready", "service": resolved_settings.app_name}
+
     @app.post("/v1/chat", response_model=ChatResponse)
     async def chat(
         request: ChatRequest,
@@ -275,15 +317,23 @@ def create_app(
         """
         service = resolve_chat_service()
         conversation_id = request.conversation_id or generate_conversation_id()
-        result = await service.chat(
-            ChatCommand(
-                user_id=identity.owner_id,
-                conversation_id=conversation_id,
-                message=request.message,
-                requested_mode=request.support_mode,
+        try:
+            result = await service.chat(
+                ChatCommand(
+                    user_id=identity.owner_id,
+                    conversation_id=conversation_id,
+                    message=request.message,
+                    requested_mode=request.support_mode,
+                )
             )
-        )
+        except RunCancellationRequested as exc:
+            raise HTTPException(status_code=409, detail="run cancelled") from exc
         return ChatResponse(
+            conversation_id=result.conversation_id,
+            run_id=result.run_id,
+            result_status=result.result_status,
+            citation_ids=result.citation_ids,
+            citation_warnings=result.citation_warnings,
             reply=result.reply,
             support_mode=result.support_mode,
             primary_intent=result.primary_intent,
@@ -291,7 +341,71 @@ def create_app(
             memory_read_status=result.memory_read_status,
             memory_write_status=result.memory_write_status,
             dreaming_status=result.dreaming_status,
+            memory_ids=result.memory_ids,
         )
+
+    @app.get("/v1/runs/{run_id}", response_model=AgentRunResponse)
+    async def get_agent_run(
+        run_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> AgentRunResponse:
+        record = await resolve_run_store().get(identity.owner_id, run_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return AgentRunResponse(
+            run_id=record.run_id,
+            conversation_id=record.conversation_id,
+            status=record.status,
+            stage=record.stage.value,
+            runtime_phase=record.runtime_phase,
+            step=record.step,
+            version=record.version,
+            cancellation_requested=record.cancellation_requested,
+            result=record.result_json,
+            error=record.error_json,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
+    @app.get("/v1/runs/{run_id}/events", response_model=RunEventsResponse)
+    async def get_agent_run_events(
+        run_id: str,
+        after: int = Query(default=0, ge=0),
+        limit: int = Query(default=200, ge=1, le=500),
+        identity: Identity = Depends(resolve_identity),
+    ) -> RunEventsResponse:
+        events = await resolve_run_store().list_events(
+            identity.owner_id, run_id, after=after, limit=limit
+        )
+        if events is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        return RunEventsResponse(
+            items=tuple(
+                RunEventResponse(
+                    sequence=item.sequence,
+                    event_type=item.event_type,
+                    stage=item.stage,
+                    runtime_phase=item.runtime_phase,
+                    step=item.step,
+                    data=item.data,
+                    created_at=item.created_at,
+                )
+                for item in events
+            )
+        )
+
+    @app.post("/v1/runs/{run_id}/cancel")
+    async def cancel_agent_run(
+        run_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, str]:
+        record = await resolve_run_store().get(identity.owner_id, run_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        if record.status != "running":
+            raise HTTPException(status_code=409, detail="run is already terminal")
+        await resolve_run_store().request_cancel(identity.owner_id, run_id)
+        return {"status": "cancellation_requested"}
 
     @app.post("/v1/rag/query")
     async def query_rag(
@@ -319,6 +433,13 @@ def create_app(
             "scopes": [scope.value for scope in result.trace.scopes],
             "needs_online_search": result.needs_online_search,
             "needs_ingestion": result.needs_ingestion,
+            "evidence_assessment": {
+                "status": result.assessment.status,
+                "relevant_evidence_count": result.assessment.relevant_evidence_count,
+                "distinct_sources": result.assessment.distinct_sources,
+                "minimum_sources": result.assessment.minimum_sources,
+                "missing_reasons": list(result.assessment.missing_reasons),
+            },
             "route": {
                 "external_reason": result.trace.external_route_reason,
                 "internal": list(result.trace.internal_routes),
@@ -411,6 +532,12 @@ def create_app(
         store = resolve_rag_store()
         if not store.delete_user_document(doc_id, identity.owner_id):
             raise HTTPException(status_code=404, detail="document not found")
+        store.delete_owned_document(doc_id, identity.owner_id)
+        upload_dir = resolved_settings.rag_db_path.parent / "uploads" / identity.owner_id
+        upload_paths = upload_dir.glob(f"{doc_id}.*") if upload_dir.exists() else ()
+        for upload_path in upload_paths:
+            if upload_path.is_file():
+                upload_path.unlink()
         return {"status": "ok"}
 
     # ----- Unified memory, ideas, and daily reviews ----------------------
@@ -546,6 +673,71 @@ def create_app(
                 for item in resolve_idea_service().list(identity.owner_id)
             ]
         }
+
+    @app.post("/v1/me/documents", status_code=201)
+    async def upload_my_document(
+        request: Request,
+        title: str = Query(min_length=1, max_length=240),
+        category: str = Query(pattern="^(简历|项目与作品集|其他资料)$"),
+        file_format: str = Query(pattern="^(PDF|DOCX|TXT|MD)$"),
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        content = await request.body()
+        if not content:
+            raise HTTPException(status_code=422, detail="file is empty")
+        if len(content) > resolved_settings.max_upload_bytes:
+            limit_mb = resolved_settings.max_upload_bytes / (1024 * 1024)
+            raise HTTPException(status_code=413, detail=f"file exceeds {limit_mb:g} MB")
+
+        document_id = f"doc-{uuid4().hex[:16]}"
+        extension = file_format.casefold()
+        upload_dir = resolved_settings.rag_db_path.parent / "uploads" / identity.owner_id
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_path = upload_dir / f"{document_id}.{extension}"
+        upload_path.write_bytes(content)
+
+        payload = {
+            "id": document_id,
+            "title": title,
+            "category": category,
+            "file_format": file_format,
+            "size_text": _format_file_size(len(content)),
+            "uploaded_at": datetime.now(UTC).isoformat(),
+            "status": "解析中",
+            "retrieval_enabled": False,
+            "owner_user_id": identity.owner_id,
+        }
+        store = resolve_rag_store()
+        try:
+            loaded = load_document(
+                upload_path,
+                domain="personal_material",
+                source_type="user_upload",
+                knowledge_origin=KnowledgeOrigin.USER_PROVIDED,
+                owner_user_id=identity.owner_id,
+                asset_dir=upload_dir / "assets",
+            )
+            document = replace(
+                loaded,
+                id=document_id,
+                title=title,
+                source_uri=upload_path.resolve().as_uri(),
+                metadata={
+                    **loaded.metadata,
+                    "category": category,
+                    "file_format": file_format,
+                },
+            )
+            if not document.text.strip():
+                raise ValueError("document contains no extractable text")
+            store.upsert(document, chunk_document(document))
+            payload["status"] = "可检索"
+            payload["retrieval_enabled"] = True
+        except Exception:
+            payload["status"] = "解析失败"
+            payload["retrieval_enabled"] = False
+        store.upsert_user_document(payload)
+        return {key: value for key, value in payload.items() if key != "owner_user_id"}
 
     @app.post("/v1/me/ideas", status_code=201)
     async def create_idea(
@@ -877,6 +1069,22 @@ def create_app(
             "retryable": receipt.retryable,
         }
 
+    if resolved_settings.frontend_dist_path is not None:
+        @app.api_route(
+            "/v1/{unmatched_path:path}",
+            methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            include_in_schema=False,
+        )
+        async def unmatched_api(unmatched_path: str) -> None:
+            del unmatched_path
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        app.mount(
+            "/",
+            SPAStaticFiles(resolved_settings.frontend_dist_path),
+            name="frontend",
+        )
+
     return app
 
 
@@ -924,6 +1132,14 @@ def _row_to_job(row) -> dict[str, object]:
         "description": row["job_description"],
         "requirements": row["requirements"],
     }
+
+
+def _format_file_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / 1024 / 1024:.1f} MB"
 
 
 def _memory_payload(record: MemoryRecord) -> dict[str, object]:

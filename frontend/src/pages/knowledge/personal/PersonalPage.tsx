@@ -1,151 +1,20 @@
-import { useState } from 'react'
-import { demoDocuments } from '../../../data/demoRepository'
+import { FileArrowUp, FileText, MagnifyingGlass, Trash } from '@phosphor-icons/react'
+import { useEffect, useMemo, useState } from 'react'
+
+import { api, mapApiDocument } from '../../../data/api'
 import type { PersonalDocument } from '../../../data/types'
 
-type DocCategory = PersonalDocument['category']
-
-const CATEGORIES: DocCategory[] = ['简历', '项目与作品集', '其他资料']
-
 export function PersonalPage() {
-  const [uploadOpen, setUploadOpen] = useState(false)
-  const [documents, setDocuments] = useState<PersonalDocument[]>(demoDocuments)
-  const [activeCategory, setActiveCategory] = useState<DocCategory | '全部'>('全部')
-
-  const visible =
-    activeCategory === '全部'
-      ? documents
-      : documents.filter((d) => d.category === activeCategory)
-
-  return (
-    <section className="glass-strong personal-page">
-      <div className="personal-header">
-        <div>
-          <p className="eyebrow">知识库 · 个人资料库</p>
-          <h1 className="page-title">个人资料库</h1>
-          <p className="muted">
-            你的文件只用于授权的检索，不会自动写入长期记忆。
-          </p>
-        </div>
-        <button
-          type="button"
-          className="primary-button"
-          onClick={() => setUploadOpen(true)}
-        >
-          上传个人资料
-        </button>
-      </div>
-
-      <div className="personal-categories">
-        {(['全部', ...CATEGORIES] as const).map((c) => (
-          <button
-            key={c}
-            type="button"
-            className={`category-pill${activeCategory === c ? ' active' : ''}`}
-            onClick={() => setActiveCategory(c)}
-          >
-            {c}
-          </button>
-        ))}
-      </div>
-
-      <table className="docs-table">
-        <thead>
-          <tr>
-            <th>文件名称</th>
-            <th>分类</th>
-            <th>格式</th>
-            <th>大小</th>
-            <th>上传时间</th>
-            <th>解析状态</th>
-            <th>检索</th>
-          </tr>
-        </thead>
-        <tbody>
-          {visible.map((doc) => (
-            <tr key={doc.id}>
-              <td>{doc.title}</td>
-              <td><span className="tag">{doc.category}</span></td>
-              <td>{doc.format}</td>
-              <td>{doc.size}</td>
-              <td>{doc.uploadedAt}</td>
-              <td><span className={`status status-${doc.status}`}>{doc.status}</span></td>
-              <td>
-                <span className={doc.retrievalEnabled ? 'status-enabled' : 'status-disabled'}>
-                  {doc.retrievalEnabled ? '已启用' : '已停用'}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      {uploadOpen && (
-        <UploadModal
-          onClose={() => setUploadOpen(false)}
-          onUpload={(doc) => {
-            setDocuments((prev) => [doc, ...prev])
-            setUploadOpen(false)
-          }}
-        />
-      )}
-    </section>
-  )
-}
-
-function UploadModal({
-  onClose,
-  onUpload,
-}: {
-  onClose: () => void
-  onUpload: (doc: PersonalDocument) => void
-}) {
-  const [category, setCategory] = useState<DocCategory>('简历')
-  const [title, setTitle] = useState('')
-
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <div className="glass-card modal-panel">
-        <h2 className="card-title">上传个人资料</h2>
-        <label className="modal-field">
-          <span>资料类型</span>
-          <select value={category} onChange={(e) => setCategory(e.target.value as DocCategory)}>
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </label>
-        <label className="modal-field">
-          <span>资料名称（选填）</span>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="留空则使用文件名"
-          />
-        </label>
-        <p className="muted modal-hint">MVP 支持 PDF、DOCX、TXT。</p>
-        <div className="modal-actions">
-          <button type="button" className="text-button" onClick={onClose}>取消</button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() =>
-              onUpload({
-                id: `doc-${Date.now()}`,
-                title: title || '新文件',
-                category,
-                format: 'PDF',
-                size: '—',
-                uploadedAt: '刚刚',
-                status: '解析中',
-                retrievalEnabled: false,
-              })
-            }
-          >
-            上传
-          </button>
-        </div>
-      </div>
-    </div>
-  )
+  const [documents,setDocuments] = useState<PersonalDocument[]>([])
+  const [query,setQuery] = useState('')
+  const [loading,setLoading] = useState(true)
+  const [error,setError] = useState('')
+  const [selected,setSelected] = useState('')
+  const [uploading,setUploading] = useState(false)
+  useEffect(() => { api.getDocuments().then(({items}) => setDocuments(items.map(mapApiDocument))).catch((reason) => setError(reason instanceof Error ? reason.message : '加载失败')).finally(() => setLoading(false)) },[])
+  const visible = useMemo(() => documents.filter((doc) => doc.title.toLowerCase().includes(query.toLowerCase())),[documents,query])
+  const featured = visible.find((doc) => doc.id === selected) || visible[0]
+  async function remove(id:string) { if (!window.confirm('确认从个人资料库移除这个文件？')) return; await api.deleteDocument(id); setDocuments((old) => old.filter((doc) => doc.id !== id)) }
+  async function upload(file:File) { setUploading(true); setError(''); try { const uploaded = mapApiDocument(await api.uploadDocument(file,'其他资料')); setDocuments((old) => [uploaded,...old]); setSelected(uploaded.id) } catch (reason) { setError(reason instanceof Error ? reason.message : '上传失败') } finally { setUploading(false) } }
+  return <section className="library-dashboard personal-library"><aside className="library-rail glass-card"><div className="rail-title"><FileText />最近上传</div>{documents.slice(0,5).map((doc) => <button type="button" key={doc.id} className={featured?.id === doc.id ? 'active' : ''} onClick={() => setSelected(doc.id)}><span>{doc.format.slice(0,1)}</span><div><strong>{doc.title}</strong><small>{doc.category}</small></div></button>)}</aside><div className="library-main"><div className="library-tools"><label><MagnifyingGlass /><input aria-label="搜索个人资料" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索简历、作品集或其他资料" /></label><label className="upload-trigger"><FileArrowUp />{uploading ? '上传中…' : '选择文件'}<input type="file" accept=".pdf,.docx,.txt,.md" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file) }} /></label></div>{loading && <div className="library-feature glass-card loading">正在读取你的资料……</div>}{error && <div className="library-feature glass-card error">{error}</div>}{!loading && !error && !featured && <div className="library-feature glass-card empty"><FileArrowUp size={42} /><h2>你的资料，只在你需要时出现</h2><p>这里不会摆放示例简历。上传后文件会先进入解析状态，再开放给对话检索。</p></div>}{featured && <article className="library-feature document-feature"><FileText size={64} weight="thin" /><div><span>{featured.category} · {featured.format}</span><h2>{featured.title}</h2><p>{featured.size} · {featured.uploadedAt} · {featured.status}</p><small>{featured.retrievalEnabled ? '已允许在对话检索中使用' : '尚未进入检索'}</small></div><button type="button" aria-label={`删除 ${featured.title}`} onClick={() => void remove(featured.id)}><Trash /></button></article>}<div className="library-shelf"><header><div><p className="eyebrow">Your materials</p><h2>全部资料</h2></div><span>{visible.length} 个文件</span></header><div className="document-grid">{visible.map((doc) => <button type="button" className="document-tile glass-card" key={doc.id} onClick={() => setSelected(doc.id)}><FileText size={28} /><strong>{doc.title}</strong><span>{doc.category} · {doc.status}</span></button>)}</div></div></div></section>
 }

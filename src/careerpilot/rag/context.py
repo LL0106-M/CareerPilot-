@@ -88,6 +88,7 @@ class ContextAssembler:
         online_answer: str = "",
         max_evidence: int = 8,
         max_chars_per_evidence: int = 5_000,
+        max_total_chars: int = 16_000,
     ) -> AgentContextPack:
         selected: list[SearchHit] = []
         by_context: dict[str, int] = {}
@@ -117,7 +118,10 @@ class ContextAssembler:
 
         evidence: list[ContextEvidence] = []
         citation_by_context: dict[str, str] = {}
+        remaining_chars = max(1_000, max_total_chars)
         for index, hit in enumerate(selected, 1):
+            if remaining_chars <= 0:
+                break
             citation_id = f"S{index}"
             context_key = str(
                 hit.metadata.get("context_chunk_id")
@@ -126,13 +130,15 @@ class ContextAssembler:
                 or hit.chunk_id
             )
             citation_by_context[context_key] = citation_id
+            content = hit.content[: min(max_chars_per_evidence, remaining_chars)]
+            remaining_chars -= len(content)
             evidence.append(
                 ContextEvidence(
                     citation_id=citation_id,
                     evidence_id=hit.evidence_id or hit.chunk_id,
                     title=hit.title,
                     heading=hit.heading,
-                    content=hit.content[:max_chars_per_evidence],
+                    content=content,
                     source_uri=hit.source_uri,
                     evidence_kind=(
                         hit.evidence_kind.value if hit.evidence_kind is not None else "unknown"
@@ -144,18 +150,20 @@ class ContextAssembler:
 
         remaining = max(0, max(1, min(max_evidence, 20)) - len(evidence))
         for source in online_sources:
-            if remaining <= 0:
+            if remaining <= 0 or remaining_chars <= 0:
                 break
             if not source.snippet:
                 continue
             citation_id = f"S{len(evidence) + 1}"
+            content = source.snippet[: min(max_chars_per_evidence, remaining_chars)]
+            remaining_chars -= len(content)
             evidence.append(
                 ContextEvidence(
                     citation_id=citation_id,
                     evidence_id=f"online:{source.url}",
                     title=source.title,
                     heading=source.site_name or "在线搜索结果",
-                    content=source.snippet[:max_chars_per_evidence],
+                    content=content,
                     source_uri=source.url,
                     evidence_kind="online_snippet",
                     channels=("online",),

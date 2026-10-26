@@ -6,6 +6,7 @@ from careerpilot.memory.dreaming import (
     DreamingSnapshot,
     DreamingTriggerPolicy,
 )
+from careerpilot.memory.service import MemoryService
 from careerpilot.memory.write_policy import MemoryWritePolicy
 
 
@@ -13,6 +14,7 @@ from careerpilot.memory.write_policy import MemoryWritePolicy
 class MemoryCommitResult:
     write_status: str
     consolidation_status: str
+    memory_ids: tuple[str, ...] = ()
 
 
 class MemoryLifecycle:
@@ -24,11 +26,13 @@ class MemoryLifecycle:
         write_policy: MemoryWritePolicy | None = None,
         cognitive_store: CognitiveStore | None = None,
         dreaming_trigger_policy: DreamingTriggerPolicy | None = None,
+        unified_memory_service: MemoryService | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._write_policy = write_policy or MemoryWritePolicy()
         self._cognitive_store = cognitive_store
         self._trigger_policy = dreaming_trigger_policy or DreamingTriggerPolicy()
+        self._unified_memory_service = unified_memory_service
 
     async def commit_turn(
         self,
@@ -38,18 +42,36 @@ class MemoryLifecycle:
         user_message: str,
         assistant_message: str,
         memories: MemoryContext,
+        turn_id: str | None = None,
     ) -> MemoryCommitResult:
         write_status = "skipped"
-        if self._write_policy.should_write(user_message):
-            write_status = "accepted"
+        memory_ids: list[str] = []
+        candidates = self._write_policy.extract(user_message)
+        if candidates:
             try:
-                await self._memory_store.add_turn(
-                    user_id,
-                    conversation_id,
-                    user_message,
-                    assistant_message,
-                )
-            except MemoryStoreError:
+                if self._unified_memory_service is not None:
+                    for candidate in candidates:
+                        record = self._unified_memory_service.remember_from_conversation(
+                            owner_id=user_id,
+                            memory_type=candidate.type,
+                            content=candidate.content,
+                            sensitivity=candidate.sensitivity,
+                            importance=candidate.importance,
+                            source_reference=turn_id or conversation_id,
+                            correction=candidate.correction,
+                        )
+                        memory_ids.append(record.id)
+                else:
+                    # Compatibility path for deployments that have not enabled the
+                    # authoritative local memory store yet.
+                    await self._memory_store.add_turn(
+                        user_id,
+                        conversation_id,
+                        user_message,
+                        assistant_message,
+                    )
+                write_status = "accepted"
+            except (MemoryStoreError, Exception):
                 write_status = "unavailable"
 
         consolidation_status = "skipped"
@@ -73,4 +95,4 @@ class MemoryLifecycle:
                 except Exception:
                     consolidation_status = "unavailable"
 
-        return MemoryCommitResult(write_status, consolidation_status)
+        return MemoryCommitResult(write_status, consolidation_status, tuple(memory_ids))

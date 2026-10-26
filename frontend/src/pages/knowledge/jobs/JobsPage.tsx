@@ -1,133 +1,31 @@
-import { useMemo, useState } from 'react'
-import { demoJobs } from '../../../data/demoRepository'
-import { filterJobs } from '../../../data/filtering'
-import type { JobFilters } from '../../../data/types'
+import { ArrowSquareOut, Buildings, Clock, MagnifyingGlass } from '@phosphor-icons/react'
+import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 
-const COMPANY_TYPES = ['全部', '央企', '地方国企', '民营企业', '外资企业', '政府部门', '事业单位', '未知']
-const ROLE_TYPES = ['全部', '产品', 'AI 产品', '运营', '技术', '数据', '职能', '管培生', '其他']
-const DEADLINE_STATUSES = ['全部', '招聘中', '即将截止', '已截止', '时间未知']
+import { api, mapApiJob } from '../../../data/api'
+import { filterJobs } from '../../../data/filtering'
+import type { JobFilters, JobRecord } from '../../../data/types'
+
+const TYPES = ['全部','央企','地方国企','民营企业','外资企业','政府部门','事业单位','未知']
+const DEADLINES = ['全部','招聘中','即将截止','已截止','时间未知']
 
 export function JobsPage() {
-  const [filters, setFilters] = useState<JobFilters>({
-    query: '',
-    companyType: '全部',
-    company: '全部',
-    roleType: '全部',
-    deadlineStatus: '全部',
-  })
+  const [jobs,setJobs] = useState<JobRecord[]>([])
+  const [selected,setSelected] = useState('')
+  const [loading,setLoading] = useState(true)
+  const [error,setError] = useState('')
+  const [filters,setFilters] = useState<JobFilters>({query:'',companyType:'全部',company:'全部',roleType:'全部',deadlineStatus:'全部'})
+  useEffect(() => { let alive = true; setLoading(true); api.getJobs().then(({items}) => { if (alive) setJobs(items.map(mapApiJob)) }).catch((reason) => { if (alive) setError(reason instanceof Error ? reason.message : '加载失败') }).finally(() => { if (alive) setLoading(false) }); return () => { alive = false } }, [])
+  const rows = useMemo(() => filterJobs(jobs,filters),[jobs,filters])
+  const featured = rows.find((job) => job.id === selected) || rows[0]
+  const update = <K extends keyof JobFilters>(key:K,value:JobFilters[K]) => setFilters((old) => ({...old,[key]:value}))
 
-  const rows = useMemo(() => filterJobs(demoJobs, filters), [filters])
-
-  function update<K extends keyof JobFilters>(key: K, value: JobFilters[K]) {
-    setFilters((prev) => ({ ...prev, [key]: value }))
-  }
-
-  function clearFilters() {
-    setFilters({ query: '', companyType: '全部', company: '全部', roleType: '全部', deadlineStatus: '全部' })
-  }
-
-  return (
-    <section className="glass-strong jobs-page">
-      <div className="jobs-header">
-        <div>
-          <p className="eyebrow">知识库 · 岗位信息</p>
-          <h1 className="page-title">岗位信息</h1>
-        </div>
-        <div className="jobs-header-actions">
-          <button type="button" className="secondary-button">联网搜索岗位</button>
-        </div>
-      </div>
-
-      <div className="jobs-filters">
-        <input
-          className="filter-search"
-          placeholder="搜索企业或岗位"
-          aria-label="搜索企业或岗位"
-          value={filters.query}
-          onChange={(e) => update('query', e.target.value)}
-        />
-        <label className="filter-label">
-          <span>企业类型</span>
-          <select
-            aria-label="企业类型"
-            value={filters.companyType}
-            onChange={(e) => update('companyType', e.target.value)}
-          >
-            {COMPANY_TYPES.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </label>
-        <label className="filter-label">
-          <span>企业</span>
-          <input
-            className="filter-search"
-            placeholder="输入企业名称"
-            aria-label="企业"
-            value={filters.company === '全部' ? '' : filters.company}
-            onChange={(e) => update('company', e.target.value ? e.target.value : '全部')}
-          />
-        </label>
-        <label className="filter-label">
-          <span>岗位类型</span>
-          <select
-            aria-label="岗位类型"
-            value={filters.roleType}
-            onChange={(e) => update('roleType', e.target.value)}
-          >
-            {ROLE_TYPES.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </label>
-        <label className="filter-label">
-          <span>是否截止</span>
-          <select
-            aria-label="是否截止"
-            value={filters.deadlineStatus}
-            onChange={(e) => update('deadlineStatus', e.target.value)}
-          >
-            {DEADLINE_STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </label>
-        <button type="button" className="text-button" onClick={clearFilters}>清除筛选</button>
-      </div>
-
-      <table className="jobs-table">
-        <thead>
-          <tr>
-            <th>企业类型</th>
-            <th>企业</th>
-            <th>岗位</th>
-            <th>岗位类型</th>
-            <th>地点</th>
-            <th>截止</th>
-            <th>状态</th>
-            <th>来源</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((job) => (
-            <tr key={job.id} className={job.deadlineStatus === '已截止' ? 'row-dim' : ''}>
-              <td><span className={`tag tag-${job.companyType}`}>{job.companyType}</span></td>
-              <td>{job.company}</td>
-              <td>{job.role}</td>
-              <td><span className="tag">{job.roleType}</span></td>
-              <td>{job.location}</td>
-              <td>{job.deadline}</td>
-              <td><span className={`status status-${job.deadlineStatus}`}>{job.deadlineStatus}</span></td>
-              <td>{job.source}</td>
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={8} className="empty-row">没有匹配的岗位。</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </section>
-  )
+  return <section className="library-dashboard jobs-library">
+    <aside className="library-rail glass-card"><div className="rail-title"><Clock />最近查看</div>{jobs.slice(0,5).map((job) => <button type="button" key={job.id} onClick={() => setSelected(job.id)} className={featured?.id === job.id ? 'active' : ''}><span>{job.company.slice(0,1)}</span><div><strong>{job.role}</strong><small>{job.company}</small></div></button>)}{jobs.length === 0 && !loading && <p>还没有保存的岗位。</p>}</aside>
+    <div className="library-main"><div className="library-tools"><label><MagnifyingGlass /><input aria-label="搜索企业或岗位" placeholder="搜索企业或岗位" value={filters.query} onChange={(e) => update('query',e.target.value)} /></label><select aria-label="企业类型" value={filters.companyType} onChange={(e) => update('companyType',e.target.value)}>{TYPES.map((item) => <option key={item}>{item}</option>)}</select><select aria-label="截止状态" value={filters.deadlineStatus} onChange={(e) => update('deadlineStatus',e.target.value)}>{DEADLINES.map((item) => <option key={item}>{item}</option>)}</select></div>
+      {loading && <div className="library-feature glass-card loading">正在从知识库读取岗位……</div>}{error && <div className="library-feature glass-card error">{error}</div>}{!loading && !error && !featured && <div className="library-feature glass-card empty"><Buildings size={40} /><h2>这里还没有岗位</h2><p>在对话里说“搜索 AI 产品岗位”，搜索结果会直接存进知识库。</p><Link to="/chat" state={{draft:'帮我搜索适合应届生的 AI 产品岗位，并把结果存入知识库。'}} className="primary-button">去对话搜索</Link></div>}
+      {featured && <article className="library-feature job-feature"><div className="feature-shade"><div className="feature-tags"><span>{featured.companyType}</span><span>{featured.roleType}</span><span>{featured.deadlineStatus}</span></div><p>{featured.company}</p><h2>{featured.role}</h2><div className="job-facts"><span>{featured.location}</span><span>截止 {featured.deadline}</span><span>{featured.source}</span></div><p className="feature-description">{featured.description || '打开来源网页查看完整岗位说明。'}</p><div className="feature-actions">{featured.sourceUrl && <a href={featured.sourceUrl} target="_blank" rel="noreferrer" className="primary-button">查看来源 <ArrowSquareOut /></a>}<Link to="/chat" state={{draft:`帮我分析 ${featured.company} 的 ${featured.role}，并结合我的资料给出准备建议。`}} className="secondary-button">和泊泊一起看</Link></div></div></article>}
+      {rows.length > 0 && <div className="library-shelf"><header><div><p className="eyebrow">Opportunities</p><h2>筛选结果</h2></div><span>{rows.length} 个岗位</span></header><div className="shelf-row">{rows.map((job) => <button className={`job-book ${featured?.id === job.id ? 'active' : ''}`} type="button" key={job.id} onClick={() => setSelected(job.id)}><span className="book-company">{job.company}</span><strong>{job.role}</strong><small>{job.location} · {job.deadline}</small><i>{job.companyType}</i></button>)}</div></div>}
+    </div>
+  </section>
 }

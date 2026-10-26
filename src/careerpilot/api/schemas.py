@@ -22,6 +22,11 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    conversation_id: str
+    run_id: str
+    result_status: Literal["completed", "partial", "blocked", "failed", "cancelled"]
+    citation_ids: tuple[str, ...] = ()
+    citation_warnings: tuple[str, ...] = ()
     reply: str
     support_mode: SupportMode
     primary_intent: TaskIntent
@@ -29,6 +34,36 @@ class ChatResponse(BaseModel):
     memory_read_status: str
     memory_write_status: str
     dreaming_status: str
+    memory_ids: tuple[str, ...] = ()
+
+
+class AgentRunResponse(BaseModel):
+    run_id: str
+    conversation_id: str
+    status: str
+    stage: str
+    runtime_phase: str | None = None
+    step: int
+    version: int
+    cancellation_requested: bool
+    result: dict[str, Any]
+    error: dict[str, Any]
+    created_at: str
+    updated_at: str
+
+
+class RunEventResponse(BaseModel):
+    sequence: int
+    event_type: str
+    stage: str | None = None
+    runtime_phase: str | None = None
+    step: int
+    data: dict[str, Any]
+    created_at: str
+
+
+class RunEventsResponse(BaseModel):
+    items: tuple[RunEventResponse, ...]
 
 
 class RagQueryRequest(BaseModel):

@@ -17,7 +17,14 @@ class RuleBasedIntentInterpreter:
         "不用之前的信息",
         "忘掉之前",
     )
-    _profile_markers = ("记住", "以后都", "长期", "我的偏好", "更正一下")
+    _profile_markers = (
+        "记住",
+        "以后都",
+        "我长期",
+        "更正一下",
+        "更新我的",
+        "修改我的偏好",
+    )
     _resume_markers = ("简历", "履历", "cv", "CV")
     _tailoring_markers = ("改写", "修改", "优化", "润色", "针对", "匹配")
     _review_markers = ("看看", "问题", "诊断", "哪里", "评估", "分析")

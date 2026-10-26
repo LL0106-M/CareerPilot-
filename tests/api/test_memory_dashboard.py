@@ -52,6 +52,7 @@ def test_dashboard_uses_canonical_memory_and_ignores_demo_memory_seed(tmp_path) 
         assert dashboard["hypotheses"][0]["content"] == "用户可能更适合小团队"
         assert dashboard["ideas"][0]["title"] == "面试复盘工具"
         assert all(item["id"] != "mem-001" for item in dashboard["memories"])
+        assert dashboard["journey"] == []
     finally:
         cognitive.close()
         products.close()

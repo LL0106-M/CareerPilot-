@@ -45,6 +45,24 @@ class CompiledContext:
 class CareerContextCompiler:
     """Intent-aware context assembly across MemOS and cognitive state."""
 
+    _broad_memory_markers = (
+        "记得",
+        "记忆",
+        "你知道我的",
+        "回忆",
+        "我的偏好",
+        "我的情况",
+        "结合我的",
+        "根据我的",
+    )
+    _sensitive_memory_markers = (
+        "病史",
+        "健康记录",
+        "敏感信息",
+        "身份证",
+        "诊断记录",
+    )
+
     def __init__(
         self,
         memory_store: MemoryStore,
@@ -76,30 +94,57 @@ class CareerContextCompiler:
             memory_read_status = "available"
             try:
                 if self._unified_memory_service is not None:
+                    memory_purpose = (
+                        MemoryQueryPurpose.COMPANION
+                        if decision.mode is SupportMode.LISTEN
+                        else MemoryQueryPurpose.PLANNING
+                    )
                     bundle = self._unified_memory_service.search_context(
                         owner_id=request.user_id,
                         query=request.message,
-                        purpose=(
-                            MemoryQueryPurpose.COMPANION
-                            if decision.mode is SupportMode.LISTEN
-                            else MemoryQueryPurpose.PLANNING
-                        ),
+                        purpose=memory_purpose,
                         explicit_personal_recall=any(
                             marker in request.message
-                            for marker in ("记得", "记忆", "你知道我的", "回忆")
+                            for marker in self._sensitive_memory_markers
+                        ),
+                        broad_recall=any(
+                            marker in request.message
+                            for marker in self._broad_memory_markers
                         ),
                     )
                     memories = MemoryContext(
                         facts=tuple(
-                            MemoryItem(item.id, item.content, item.type.value)
+                            MemoryItem(
+                                item.id,
+                                item.content,
+                                item.type.value,
+                                bundle.relevance.get(item.id),
+                                item.confidence.value,
+                                item.origin.value,
+                                item.updated_at.isoformat(),
+                            )
                             for item in bundle.records
                             if item.type is not MemoryType.PREFERENCE
                         ),
                         preferences=tuple(
-                            MemoryItem(item.id, item.content, item.type.value)
+                            MemoryItem(
+                                item.id,
+                                item.content,
+                                item.type.value,
+                                bundle.relevance.get(item.id),
+                                item.confidence.value,
+                                item.origin.value,
+                                item.updated_at.isoformat(),
+                            )
                             for item in bundle.records
                             if item.type is MemoryType.PREFERENCE
                         ),
+                    )
+                    self._unified_memory_service.record_context_usage(
+                        request.user_id,
+                        bundle.records,
+                        turn_id=request.conversation_id,
+                        purpose=memory_purpose,
                     )
                 else:
                     memories = await self._memory_store.search(

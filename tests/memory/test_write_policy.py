@@ -1,5 +1,6 @@
 import pytest
 
+from careerpilot.memory.models import MemorySensitivity, MemoryType
 from careerpilot.memory.write_policy import MemoryWritePolicy
 
 
@@ -26,3 +27,15 @@ def test_transient_distress_is_not_eligible_for_long_term_memory(message: str) -
 )
 def test_explicit_preferences_and_stable_constraints_are_memory_candidates(message: str) -> None:
     assert MemoryWritePolicy().should_write(message) is True
+
+
+def test_policy_extracts_typed_durable_statement_without_transient_prefix() -> None:
+    candidates = MemoryWritePolicy().extract(
+        "我今天有点乱。记住：以后我做选择时更看重稳定节奏。"
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].type is MemoryType.PREFERENCE
+    assert candidates[0].content == "以后我做选择时更看重稳定节奏"
+    assert candidates[0].sensitivity is MemorySensitivity.NORMAL
+    assert candidates[0].importance == 4

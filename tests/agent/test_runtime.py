@@ -30,7 +30,8 @@ async def test_responder_runs_through_careerpilot_harness() -> None:
         "thread-1",
     )
 
-    assert reply == "我听见这次拒绝让你很难受，我们先不用急着找原因。"
+    assert reply.reply == "我听见这次拒绝让你很难受，我们先不用急着找原因。"
+    assert reply.run_id
 
 
 @pytest.mark.asyncio
@@ -88,7 +89,7 @@ async def test_responder_executes_tool_and_returns_second_model_response() -> No
     )
 
     assert observed_queries == ["产品经理能力"]
-    assert reply == "可先验证用户研究和跨团队协作这两项能力。"
+    assert reply.reply == "可先验证用户研究和跨团队协作这两项能力。"
 
 
 @pytest.mark.asyncio

@@ -158,6 +158,13 @@ def build_agentic_rag_tool(
                 "scopes": [scope.value for scope in result.trace.scopes],
                 "needs_online_search": result.needs_online_search,
                 "needs_ingestion": result.needs_ingestion,
+                "evidence_assessment": {
+                    "status": result.assessment.status,
+                    "relevant_evidence_count": result.assessment.relevant_evidence_count,
+                    "distinct_sources": result.assessment.distinct_sources,
+                    "minimum_sources": result.assessment.minimum_sources,
+                    "missing_reasons": list(result.assessment.missing_reasons),
+                },
                 "retrieval": {
                     "local_rounds": result.trace.local_rounds,
                     "online_rounds": result.trace.online_rounds,

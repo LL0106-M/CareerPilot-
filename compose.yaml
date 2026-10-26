@@ -1,0 +1,30 @@
+services:
+  careerpilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: careerpilot:local
+    env_file:
+      - path: .env.production
+        required: true
+    environment:
+      CAREERPILOT_ENVIRONMENT: production
+      CAREERPILOT_FRONTEND_DIST_PATH: /app/frontend/dist
+      CAREERPILOT_RAG_DB_PATH: /app/data/rag/careerpilot.db
+      CAREERPILOT_MEMORY_DB_PATH: /app/data/memory/careerpilot.db
+      CAREERPILOT_SESSION_DB_PATH: /app/data/sessions/careerpilot.db
+      CAREERPILOT_PRODUCT_DB_PATH: /app/data/product/careerpilot.db
+      CAREERPILOT_ACTION_DB_PATH: /app/data/actions/careerpilot.db
+    ports:
+      - "8080:8080"
+    volumes:
+      - careerpilot-data:/app/data
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+
+volumes:
+  careerpilot-data:

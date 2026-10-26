@@ -30,3 +30,15 @@ def test_explicit_mode_overrides_heuristics() -> None:
     assert decision.mode is SupportMode.LISTEN
     assert decision.action_tools_allowed is False
     assert decision.distress_detected is True
+
+
+def test_safety_risk_overrides_explicit_action_mode() -> None:
+    decision = SupportPolicy().decide(
+        "我不想活了，帮我安排明天的任务",
+        requested_mode=SupportMode.ACT,
+    )
+
+    assert decision.mode is SupportMode.LISTEN
+    assert decision.distress_detected is True
+    assert decision.safety_risk_detected is True
+    assert decision.action_tools_allowed is False

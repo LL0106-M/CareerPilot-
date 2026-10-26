@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -116,7 +117,12 @@ class ContextWindowManager:
             await self._save(compaction)
             return (self._summary_message(summary), *recent)
         except Exception:
-            if previous is not None and previous.schema_version == self._schema_version:
+            if (
+                previous is not None
+                and previous.schema_version == self._schema_version
+                and previous.source_hash == source_hash
+                and previous.covered_message_count == len(older)
+            ):
                 return (self._summary_message(previous.summary), *recent)
             return recent
 
@@ -159,14 +165,15 @@ class ContextWindowManager:
 
     @staticmethod
     def _estimate_tokens(messages: tuple[HarnessMessage, ...]) -> int:
-        characters = 0
+        tokens = 0
         for message in messages:
-            characters += len(message.content)
-            characters += sum(
-                len(json.dumps(call.arguments, ensure_ascii=False)) + len(call.name)
+            tokens += _estimate_text_tokens(message.content)
+            tokens += sum(
+                _estimate_text_tokens(json.dumps(call.arguments, ensure_ascii=False))
+                + _estimate_text_tokens(call.name)
                 for call in message.tool_calls
             )
-        return max(1, characters // 4)
+        return max(1, tokens)
 
     @staticmethod
     def _source_hash(messages: tuple[HarnessMessage, ...]) -> str:
@@ -191,3 +198,15 @@ class ContextWindowManager:
         return HarnessMessage(
             role="assistant", content=f"[CONVERSATION_CONTINUATION_SUMMARY]\n{summary}"
         )
+
+
+def _estimate_text_tokens(text: str) -> int:
+    """Conservative fallback for mixed Chinese and Latin text.
+
+    CJK characters are close to one token each for common chat tokenizers; remaining
+    text uses the conventional four-characters-per-token approximation.
+    """
+
+    cjk = len(re.findall(r"[\u3400-\u9fff]", text))
+    non_cjk = max(0, len(text) - cjk)
+    return cjk + (non_cjk + 3) // 4

@@ -66,4 +66,19 @@ describe('CareerPilot API client', () => {
       message: 'service unavailable',
     })
   })
+
+  it('uploads supported personal files as binary content', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: 'doc-1', title: 'resume.pdf', category: '简历', file_format: 'PDF', size_text: '3 B',
+      uploaded_at: 'now', status: '解析中', retrieval_enabled: false,
+    }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const file = new File(['pdf'], 'resume.pdf', { type: 'application/pdf' })
+
+    await api.uploadDocument(file, '简历')
+
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/v1/me/documents?'), expect.objectContaining({
+      method: 'POST', body: file, credentials: 'include',
+    }))
+  })
 })

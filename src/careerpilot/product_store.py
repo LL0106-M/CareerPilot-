@@ -51,7 +51,6 @@ class ProductStore:
         self._connection.close()
 
     def dashboard(self, owner_id: str) -> dict[str, object]:
-        self._seed(owner_id)
         return {
             "hypotheses": self._rows("hypotheses", owner_id, "id"),
             "journey": self._rows("journey_tasks", owner_id, "rowid"),
@@ -60,7 +59,6 @@ class ProductStore:
         }
 
     def decide_hypothesis(self, owner_id: str, hypothesis_id: str, decision: str) -> bool:
-        self._seed(owner_id)
         status = {"confirm": "已确认", "uncertain": "继续观察"}[decision]
         cursor = self._connection.execute(
             "UPDATE hypotheses SET status = ? WHERE owner_id = ? AND id = ?",
@@ -72,7 +70,6 @@ class ProductStore:
     def create_verification_task(
         self, owner_id: str, hypothesis_id: str
     ) -> dict[str, object] | None:
-        self._seed(owner_id)
         hypothesis = self._connection.execute(
             "SELECT * FROM hypotheses WHERE owner_id = ? AND id = ?",
             (owner_id, hypothesis_id),
@@ -109,7 +106,6 @@ class ProductStore:
         return self._decode(existing)
 
     def update_task(self, owner_id: str, task_id: str, state: str, reflection: str | None) -> bool:
-        self._seed(owner_id)
         cursor = self._connection.execute(
             """UPDATE journey_tasks
             SET state = ?, reflection = COALESCE(?, reflection)
@@ -132,110 +128,3 @@ class ProductStore:
             if key.endswith("_json"):
                 result[key.removesuffix("_json")] = json.loads(str(result.pop(key)))
         return result
-
-    def _seed(self, owner_id: str) -> None:
-        exists = self._connection.execute(
-            "SELECT 1 FROM hypotheses WHERE owner_id = ? LIMIT 1", (owner_id,)
-        ).fetchone()
-        if exists:
-            return
-        hypotheses = [
-            (
-                "hyp-001",
-                "你可能更适合有明确边界，但仍能参与产品创造的工作环境。",
-                "中",
-                "待确认",
-                ["近期更关注稳定岗位", "仍持续投入 AI 产品项目", "明确不喜欢完全重复的工作"],
-                "environment",
-            ),
-            (
-                "hyp-002",
-                "你在真实项目中形成判断，比单纯阅读职业介绍更有效。",
-                "高",
-                "继续观察",
-                ["作品集项目后职业描述明显具体", "两次实践复盘产生了新的岗位问题"],
-                "strengths",
-            ),
-        ]
-        self._connection.executemany(
-            "INSERT INTO hypotheses VALUES (?,?,?,?,?,?,?)",
-            [
-                (
-                    owner_id,
-                    item[0],
-                    item[1],
-                    item[2],
-                    item[3],
-                    json.dumps(item[4], ensure_ascii=False),
-                    item[5],
-                )
-                for item in hypotheses
-            ],
-        )
-        tasks = [
-            (
-                "task-001",
-                "完成中国移动岗位要求拆解",
-                "今天",
-                "进行中",
-                "中国移动｜产品运营管理",
-                "hyp-001",
-                "验证稳定组织中的产品工作是否仍保留创造空间。",
-            ),
-            (
-                "task-002",
-                "准备一个 AI 项目失败复盘",
-                "明天",
-                "准备开始",
-                "腾讯｜AI 产品经理",
-                "hyp-002",
-                "验证真实项目复盘能否更好展示你的判断力。",
-            ),
-            (
-                "task-003",
-                "记录这周对工作节奏的观察",
-                "周日",
-                "准备开始",
-                "职业偏好验证",
-                "hyp-001",
-                "用真实体验判断你能持续接受的工作节奏。",
-            ),
-        ]
-        self._connection.executemany(
-            "INSERT INTO journey_tasks VALUES (?,?,?,?,?,?,?,?,NULL)",
-            [(owner_id, *item) for item in tasks],
-        )
-        memories = [
-            (
-                "mem-001",
-                "偏好",
-                "想去做和环境保护相关的工作",
-                "对话确认",
-                "10 月 12 日",
-                "interests",
-            ),
-            ("mem-002", "情绪", "担心自己不够优秀", "对话观察", "10 月 5 日", "risks"),
-            ("mem-003", "事实", "安静的环境能让我更专注", "用户确认", "9 月 28 日", "environment"),
-        ]
-        self._connection.executemany(
-            "INSERT INTO memories VALUES (?,?,?,?,?,?,?)",
-            [(owner_id, *item) for item in memories],
-        )
-        details = {
-            "认知更新": "稳定感与创造性可能不是二选一，你更在意的是边界清楚且能参与创造。",
-            "情绪观察": "当准备事项不断增加时，你更容易担心自己还不够好。",
-            "下一步建议": "选一个真实岗位，用 30 分钟核对工作节奏和创造空间。",
-        }
-        self._connection.execute(
-            "INSERT INTO dreaming_insights VALUES (?,?,?,?,?,?,?)",
-            (
-                owner_id,
-                "dream-001",
-                "今天 02:10",
-                "在自然与创意之间找到结合点",
-                "从你最近的记录来看，你对既有意义又适合自己的方向出现得更频繁了。",
-                "待查看",
-                json.dumps(details, ensure_ascii=False),
-            ),
-        )
-        self._connection.commit()

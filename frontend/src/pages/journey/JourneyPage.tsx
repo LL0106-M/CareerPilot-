@@ -1,111 +1,103 @@
-import { useState } from 'react'
-import { demoJourney } from '../../data/demoRepository'
+import { ArrowRight, CalendarBlank, CheckCircle, CloudArrowUp, Footprints, Path, Sparkle } from '@phosphor-icons/react'
+import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+
+import { api } from '../../data/api'
+import type { ActionPreview } from '../../data/api'
 import type { JourneyItem } from '../../data/types'
+import { useDashboard } from '../../hooks/useDashboard'
 
-type ViewMode = 'week' | 'calendar' | 'done'
-
-const STATE_LABEL: Record<JourneyItem['state'], string> = {
-  '准备开始': '准备开始',
-  '进行中': '进行中',
-  '等待结果': '等待结果',
-  '已完成': '已完成',
-}
+type ViewMode = 'path' | 'calendar' | 'footprints'
 
 export function JourneyPage() {
-  const [view, setView] = useState<ViewMode>('week')
+  const { data, error, loading, reload } = useDashboard()
+  const [view, setView] = useState<ViewMode>('path')
+  const [active, setActive] = useState(0)
+  const [status, setStatus] = useState('')
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [actionPreview, setActionPreview] = useState<ActionPreview>()
+  const [actionState, setActionState] = useState<'idle' | 'previewing' | 'confirming' | 'done' | 'error'>('idle')
+  const [actionError, setActionError] = useState('')
+  const groups = useMemo(() => groupJourneys(data?.journey || []), [data])
+  const current = groups[active]
 
-  const items =
-    view === 'done'
-      ? demoJourney.filter((j) => j.state === '已完成')
-      : demoJourney
+  async function advance(task: JourneyItem) {
+    const next: JourneyItem['state'] = task.state === '准备开始' ? '进行中' : task.state === '进行中' ? '已完成' : task.state
+    if (next === task.state) return
+    setStatus('saving')
+    try { await api.updateJourneyTask(task.id, next); await reload(); setStatus('saved') }
+    catch { setStatus('error') }
+  }
+
+  async function generatePreview() {
+    const task = current?.tasks.find((item) => item.state !== '已完成') || current?.tasks[0]
+    if (!task) return
+    setActionState('previewing'); setActionError('')
+    const start = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    start.setHours(19, 0, 0, 0)
+    const end = new Date(start.getTime() + 45 * 60 * 1000)
+    try {
+      const preview = await api.previewAction('feishu', 'calendar.create', {
+        summary: task.title,
+        start: start.toISOString(),
+        end: end.toISOString(),
+      })
+      setActionPreview(preview)
+      setActionState('idle')
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : '无法生成预览')
+      setActionState('error')
+    }
+  }
+
+  async function confirmAndApply() {
+    if (!actionPreview) return
+    setActionState('confirming'); setActionError('')
+    try {
+      const confirmation = await api.confirmAction(actionPreview.action_id, actionPreview.preview_hash)
+      await api.applyAction(actionPreview.action_id, confirmation.confirmation_token, confirmation.preview_hash, crypto.randomUUID())
+      setActionState('done')
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : '外部应用没有执行成功')
+      setActionState('error')
+    }
+  }
 
   return (
-    <div className="journey-layout">
-      <section className="glass-card journey-header">
-        <p className="eyebrow">航程</p>
-        <h1 className="page-title">把想法变成具体行动</h1>
-        <p className="muted">
-          这里列的不是待办清单，而是每一条背后都有"为什么要做"和"关联哪个岗位或猜想"。
-        </p>
-
-        <div className="journey-tabs">
-          {(['week', 'calendar', 'done'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              className={`journey-tab${view === m ? ' active' : ''}`}
-              onClick={() => setView(m)}
-            >
-              {m === 'week' ? '本周' : m === 'calendar' ? '日历' : '已完成'}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="journey-main">
-        {view === 'calendar' ? <CalendarView /> : <TaskList items={items} />}
-      </section>
+    <div className="journey-experience">
+      <header className="journey-hero"><div><p className="eyebrow">Journey</p><h1>不是更多待办，<br />而是一段正在发生的路。</h1></div><div className="journey-view-switch glass-strong">{([['path','航线',Path],['calendar','日历',CalendarBlank],['footprints','足迹',Footprints]] as const).map(([key,label,Icon]) => <button type="button" key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}><Icon />{label}</button>)}</div></header>
+      {loading && <div className="state-panel glass-card">正在展开你的航程……</div>}
+      {error && <div className="state-panel glass-card error">{error}<button type="button" onClick={() => void reload()}>重试</button></div>}
+      {!loading && !error && groups.length === 0 && <div className="state-panel glass-card"><Path size={38} /><h2>路还没有开始画</h2><p>从罗盘里选一条猜想，用一个真实行动去验证。</p><Link className="primary-button" to="/compass">去罗盘看看</Link></div>}
+      {groups.length > 0 && <>
+        <nav className="journey-selector" aria-label="选择航程">{groups.map((group,index) => <button type="button" className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={group.name}><span>{String(index + 1).padStart(2,'0')}</span>{group.name}</button>)}</nav>
+        {view === 'path' && current && <PathView group={current} onAdvance={advance} onPreview={() => setPreviewOpen(true)} />}
+        {view === 'calendar' && <CalendarView tasks={data?.journey || []} />}
+        {view === 'footprints' && <FootprintView tasks={data?.journey || []} />}
+        <p className="mutation-note center" aria-live="polite">{status === 'saving' ? '正在推进……' : status === 'saved' ? '航程已更新。' : status === 'error' ? '这次没有更新成功。' : ''}</p>
+      </>}
+      {previewOpen && <div className="modal-backdrop"><div className="modal-panel glass-strong" role="dialog" aria-modal="true" aria-label="确认调用外部应用"><CloudArrowUp size={28} /><h2>先预览，再交给其他应用</h2><p>CareerPilot 会先生成操作预览。你确认内容和目标应用后，才会真正执行。</p><div className="preview-row"><span>目标</span><strong>飞书日历</strong></div><div className="preview-row"><span>内容</span><strong>{current?.tasks[0]?.title}</strong></div>{actionPreview && <div className="action-confirmation"><p className="eyebrow">等待你的最终确认</p><small>预览已由后端生成；只有点击确认后才会写入外部应用。</small></div>}{actionState === 'done' && <p className="action-success">已交给飞书日历。</p>}{actionError && <p className="chat-error" role="alert">{actionError}</p>}<div className="modal-actions"><button className="text-button" type="button" onClick={() => { setPreviewOpen(false); setActionPreview(undefined); setActionState('idle'); setActionError('') }}>关闭</button>{!actionPreview && actionState !== 'done' && <button className="primary-button" type="button" onClick={() => void generatePreview()} disabled={actionState === 'previewing'}>{actionState === 'previewing' ? '正在生成…' : '生成预览'}</button>}{actionPreview && actionState !== 'done' && <button className="primary-button" type="button" onClick={() => void confirmAndApply()} disabled={actionState === 'confirming'}>{actionState === 'confirming' ? '正在执行…' : '确认并创建日程'}</button>}</div></div></div>}
     </div>
   )
 }
 
-function TaskList({ items }: { items: JourneyItem[] }) {
-  return (
-    <ul className="journey-task-list">
-      {items.map((item) => (
-        <li key={item.id} className="journey-task glass-card">
-          <div className="task-head">
-            <span className={`state state-${item.state}`}>{STATE_LABEL[item.state]}</span>
-            <span className="task-due">截止 {item.due}</span>
-          </div>
-          <div className="task-title">{item.title}</div>
-          <div className="task-related">关联：{item.related}</div>
-          <div className="task-why">
-            <div className="muted task-why-label">为什么要做</div>
-            验证自己对工作节奏的真实感受，帮助判断"稳定"和"创造"能不能兼得。
-          </div>
-          <div className="task-review">
-            <div className="muted task-why-label">完成后的复盘问题</div>
-            做完这件事之后，我对原来的想法有什么变化？
-          </div>
-          <div className="task-actions">
-            <button type="button" className="secondary-button">标记推进</button>
-            <button type="button" className="text-button">编辑</button>
-          </div>
-        </li>
-      ))}
-      {items.length === 0 && (
-        <li className="empty-row glass-card">
-          这里暂时没有任务。和泊泊聊聊你最近想做什么，它会帮你拆成航程。
-        </li>
-      )}
-    </ul>
-  )
+function groupJourneys(tasks: JourneyItem[]) {
+  const result = new Map<string, JourneyItem[]>()
+  tasks.forEach((task) => { const name = task.related || '未命名航程'; result.set(name, [...(result.get(name) || []), task]) })
+  return Array.from(result, ([name, grouped]) => ({ name, tasks: grouped }))
 }
 
-function CalendarView() {
-  const days = ['一', '二', '三', '四', '五', '六', '日']
-  const highlights: Record<number, string> = { 15: '进行中', 22: '即将截止', 28: '等待结果' }
-  return (
-    <section className="glass-card calendar-panel">
-      <h2 className="card-title">十月 2026</h2>
-      <div className="calendar-grid">
-        {days.map((d) => (
-          <div key={d} className="calendar-head muted">{d}</div>
-        ))}
-        {Array.from({ length: 35 }, (_, i) => {
-          const day = i - 1 // offset to make Mon=1
-          if (day <= 0 || day > 31) return <div key={i} className="calendar-cell empty" />
-          const label = highlights[day]
-          return (
-            <div key={i} className={`calendar-cell${label ? ' has-task' : ''}`}>
-              <div className="calendar-day">{day}</div>
-              {label && <div className={`calendar-dot state-${label}`}>{label}</div>}
-            </div>
-          )
-        })}
-      </div>
-      <p className="muted" style={{ marginTop: 16 }}>日历视图会和航程任务联动，点击某一天可以看到当天需要做的事。</p>
-    </section>
-  )
+function PathView({ group, onAdvance, onPreview }: { group: { name: string; tasks: JourneyItem[] }; onAdvance: (task: JourneyItem) => void; onPreview: () => void }) {
+  const focus = group.tasks.find((task) => task.state === '进行中') || group.tasks.find((task) => task.state === '准备开始') || group.tasks[0]
+  return <section className="journey-path"><aside className="journey-story glass-card"><p className="eyebrow">Why this journey</p><h2>{group.name}</h2><p>{focus.why || '用一次真实行动补充证据，而不是只靠想象判断方向。'}</p><div className="next-milestone"><Sparkle weight="fill" /><span>下一节点</span><strong>{focus.due}</strong></div></aside><article className="focus-action glass-strong"><span className={`state state-${focus.state}`}>{focus.state}</span><p className="eyebrow">One focus action</p><h2>{focus.title}</h2><p>现在只需要看这一件。其他动作仍在航线上，但不会同时占据你的注意力。</p><div className="focus-actions"><button type="button" className="primary-button" onClick={() => void onAdvance(focus)} disabled={focus.state === '已完成'}>{focus.state === '准备开始' ? '开始这一步' : focus.state === '进行中' ? '完成并留下足迹' : '已经完成'} <ArrowRight /></button><button type="button" className="secondary-button" onClick={onPreview}><CloudArrowUp /> 调用其他 App</button></div></article><div className="route-line" aria-hidden="true" />{group.tasks.map((task,index) => <div className={`route-stop stop-${index % 4}`} key={task.id}><span>{index + 1}</span><strong>{task.title}</strong><small>{task.state}</small></div>)}</section>
+}
+
+function CalendarView({ tasks }: { tasks: JourneyItem[] }) {
+  const dueMap = new Map(tasks.map((task,index) => [12 + index * 4, task]))
+  return <section className="calendar-board glass-card"><header><div><p className="eyebrow">Calendar</p><h2>十月 · 2026</h2></div><p>日历是航程的另一种看法，不是另一套任务。</p></header><div className="calendar-grid">{['一','二','三','四','五','六','日'].map((day) => <div className="calendar-head" key={day}>{day}</div>)}{Array.from({length:35},(_,index) => { const day = index - 2; const task = dueMap.get(day); return day > 0 && day <= 31 ? <div className={`calendar-cell${task ? ' has-task' : ''}`} key={index}><span>{day}</span>{task && <strong>{task.title}</strong>}</div> : <div className="calendar-cell empty" key={index} /> })}</div></section>
+}
+
+function FootprintView({ tasks }: { tasks: JourneyItem[] }) {
+  const done = tasks.filter((task) => task.state === '已完成')
+  return <section className="footprint-board">{done.length === 0 ? <div className="state-panel glass-card"><Footprints size={34} /><h2>第一枚足迹还在路上</h2><p>完成一个真实行动后，这里才会出现记录；不会用空卡片催促你。</p></div> : done.map((task) => <article className="footprint-card glass-card" key={task.id}><CheckCircle size={24} weight="fill" /><div><strong>{task.title}</strong><p>{task.reflection || '你推进了这一小步。之后可以在对话里回看，它改变了什么。'}</p></div></article>)}</section>
 }

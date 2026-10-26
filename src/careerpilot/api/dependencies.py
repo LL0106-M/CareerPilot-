@@ -6,6 +6,7 @@ from careerpilot.agent.model import create_qwen_model
 from careerpilot.agent.runtime import CareerPilotResponder
 from careerpilot.agent.service import AgentService
 from careerpilot.config import Settings
+from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.session import SqliteSessionStore
 from careerpilot.memory.base import DisabledMemoryStore, MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
@@ -29,6 +30,7 @@ def build_agent_service(
     SqliteCognitiveStore,
     SqliteSessionStore,
     SqliteUnifiedMemoryStore,
+    SqliteAgentRunStore,
 ]:
     memory_store: MemoryStore
     if settings.memos_api_key is None:
@@ -38,17 +40,23 @@ def build_agent_service(
             settings.memos_api_key.get_secret_value(),
             base_url=settings.memos_base_url,
         )
+    embedder = create_embedding_provider(settings)
     rag_store = SqliteRagStore(
         settings.rag_db_path,
-        embedder=create_embedding_provider(settings),
+        embedder=embedder,
     )
     cognitive_store = SqliteCognitiveStore(settings.memory_db_path)
     unified_store = SqliteUnifiedMemoryStore(settings.memory_db_path)
-    unified_memory_service = MemoryService(unified_store)
+    unified_memory_service = MemoryService(unified_store, embedder=embedder)
     session_store = SqliteSessionStore(settings.session_db_path)
+    run_store = SqliteAgentRunStore(settings.session_db_path)
     model = create_qwen_model(settings)
     provider = build_search_provider(settings)
-    agent = CareerPilotResponder(model, session_store=session_store)
+    agent = CareerPilotResponder(
+        model,
+        session_store=session_store,
+        run_store=run_store,
+    )
     return (
         AgentService(
             memory_store,
@@ -60,12 +68,14 @@ def build_agent_service(
             action_tool_factory=action_tool_factory,
             cognitive_store=cognitive_store,
             unified_memory_service=unified_memory_service,
+            run_store=run_store,
         ),
         memory_store,
         rag_store,
         cognitive_store,
         session_store,
         unified_store,
+        run_store,
     )
 
 

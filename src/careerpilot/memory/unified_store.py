@@ -167,6 +167,16 @@ class SqliteUnifiedMemoryStore:
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                owner_id TEXT NOT NULL,
+                memory_id TEXT NOT NULL,
+                vector_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, memory_id),
+                FOREIGN KEY(owner_id, memory_id)
+                    REFERENCES memory_records(owner_id, id) ON DELETE CASCADE
+            );
             """
         )
         self._connection.commit()
@@ -486,6 +496,35 @@ class SqliteUnifiedMemoryStore:
             result_reference,
             created,
         )
+
+    def upsert_embedding(
+        self, owner_id: str, memory_id: str, vector: list[float]
+    ) -> None:
+        self.get_memory(owner_id, memory_id, include_deleted=True)
+        with self._connection:
+            self._connection.execute(
+                """INSERT INTO memory_embeddings(owner_id, memory_id, vector_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(owner_id, memory_id) DO UPDATE SET
+                    vector_json=excluded.vector_json, updated_at=excluded.updated_at""",
+                (owner_id, memory_id, json.dumps(vector), _iso(_now())),
+            )
+
+    def get_embeddings(
+        self, owner_id: str, memory_ids: tuple[str, ...]
+    ) -> dict[str, tuple[float, ...]]:
+        if not memory_ids:
+            return {}
+        placeholders = ",".join("?" for _ in memory_ids)
+        rows = self._connection.execute(
+            f"""SELECT memory_id, vector_json FROM memory_embeddings
+            WHERE owner_id=? AND memory_id IN ({placeholders})""",
+            (owner_id, *memory_ids),
+        ).fetchall()
+        return {
+            row["memory_id"]: tuple(float(value) for value in json.loads(row["vector_json"]))
+            for row in rows
+        }
 
     def add_relation(
         self,

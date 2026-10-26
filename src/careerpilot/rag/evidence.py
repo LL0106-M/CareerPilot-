@@ -33,14 +33,14 @@ def build_evidence_units(
     extracted_triples: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[EvidenceUnit, ...]:
     child_chunks = tuple(chunk for chunk in chunks if chunk.chunk_level is ChunkLevel.CHILD)
-    units: list[EvidenceUnit] = [_passage_unit(chunk) for chunk in child_chunks]
+    units: list[EvidenceUnit] = [_passage_unit(document, chunk) for chunk in child_chunks]
     if allows_graph_index(document.domain, document.knowledge_origin):
         units.extend(_triple_units(document, child_chunks, extracted_triples))
     units.extend(_table_units(document))
     return tuple(units)
 
 
-def _passage_unit(chunk: DocumentChunk) -> EvidenceUnit:
+def _passage_unit(document: SourceDocument, chunk: DocumentChunk) -> EvidenceUnit:
     return EvidenceUnit(
         id=f"evidence-{chunk.id}",
         kind=EvidenceKind.PASSAGE,
@@ -52,6 +52,7 @@ def _passage_unit(chunk: DocumentChunk) -> EvidenceUnit:
         source_type=chunk.source_type,
         domain=chunk.domain,
         metadata={
+            **_provenance_metadata(document),
             **chunk.metadata,
             "chunk_id": chunk.id,
             "heading": chunk.heading,
@@ -330,7 +331,12 @@ def _evidence_id(value: str) -> str:
 
 def _provenance_metadata(document: SourceDocument) -> dict[str, Any]:
     keys = ("source_tier", "source_level", "status", "content_hash")
-    return {key: document.metadata[key] for key in keys if key in document.metadata}
+    provenance = {key: document.metadata[key] for key in keys if key in document.metadata}
+    if document.published_at:
+        provenance["published_at"] = document.published_at
+    if document.fetched_at:
+        provenance["fetched_at"] = document.fetched_at
+    return provenance
 
 
 def _display(value: Any) -> str:
