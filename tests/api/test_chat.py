@@ -6,6 +6,7 @@ from careerpilot.agent.service import ChatCommand, ChatResult
 from careerpilot.api.app import create_app
 from careerpilot.context.contracts import RetrievalSource, TaskIntent
 from careerpilot.support.policy import SupportMode
+from careerpilot.config import Settings
 
 
 @dataclass
@@ -132,3 +133,59 @@ def test_chat_ignores_client_supplied_user_id() -> None:
     # Either way, client-supplied user_id never reaches the stub.
     assert response.status_code == 422
     assert service.received is None
+
+
+def test_successful_chat_is_listed_and_can_be_reopened(tmp_path) -> None:
+    service = StubChatService()
+    settings = Settings(
+        CAREERPILOT_SESSION_DB_PATH=tmp_path / "sessions.db",
+        CAREERPILOT_MEMORY_DB_PATH=tmp_path / "memory.db",
+        CAREERPILOT_RAG_DB_PATH=tmp_path / "rag.db",
+        CAREERPILOT_PRODUCT_DB_PATH=tmp_path / "product.db",
+        CAREERPILOT_ACTION_DB_PATH=tmp_path / "actions.db",
+    )
+    client = TestClient(create_app(settings=settings, chat_service=service))
+
+    sent = client.post("/v1/chat", json={"message": "我想了解 AI 产品经理"})
+    conversation_id = sent.json()["conversation_id"]
+
+    listed = client.get("/v1/me/conversations")
+    reopened = client.get(f"/v1/me/conversations/{conversation_id}")
+
+    assert listed.status_code == 200
+    assert listed.json()["items"] == [
+        {
+            "id": conversation_id,
+            "title": "我想了解 AI 产品经理",
+            "updated_at": listed.json()["items"][0]["updated_at"],
+            "message_count": 2,
+        }
+    ]
+    assert reopened.status_code == 200
+    assert reopened.json() == {
+        "id": conversation_id,
+        "title": "我想了解 AI 产品经理",
+        "updated_at": listed.json()["items"][0]["updated_at"],
+        "messages": [
+            {"role": "user", "content": "我想了解 AI 产品经理"},
+            {"role": "agent", "content": "这次被拒确实很难受，我们先不用急着证明什么。"},
+        ],
+    }
+
+
+def test_conversation_history_is_owner_scoped(tmp_path) -> None:
+    settings = Settings(
+        CAREERPILOT_SESSION_DB_PATH=tmp_path / "sessions.db",
+        CAREERPILOT_MEMORY_DB_PATH=tmp_path / "memory.db",
+        CAREERPILOT_RAG_DB_PATH=tmp_path / "rag.db",
+        CAREERPILOT_PRODUCT_DB_PATH=tmp_path / "product.db",
+        CAREERPILOT_ACTION_DB_PATH=tmp_path / "actions.db",
+    )
+    first = TestClient(create_app(settings=settings, chat_service=StubChatService()))
+    second = TestClient(create_app(settings=settings, chat_service=StubChatService()))
+    conversation_id = first.post("/v1/chat", json={"message": "只属于第一个用户"}).json()[
+        "conversation_id"
+    ]
+
+    assert second.get("/v1/me/conversations").json() == {"items": []}
+    assert second.get(f"/v1/me/conversations/{conversation_id}").status_code == 404

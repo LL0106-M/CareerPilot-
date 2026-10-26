@@ -328,6 +328,12 @@ def create_app(
             )
         except RunCancellationRequested as exc:
             raise HTTPException(status_code=409, detail="run cancelled") from exc
+        resolve_product_store().record_conversation_turn(
+            identity.owner_id,
+            result.conversation_id,
+            request.message,
+            result.reply,
+        )
         return ChatResponse(
             conversation_id=result.conversation_id,
             run_id=result.run_id,
@@ -343,6 +349,24 @@ def create_app(
             dreaming_status=result.dreaming_status,
             memory_ids=result.memory_ids,
         )
+
+    @app.get("/v1/me/conversations")
+    async def list_my_conversations(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, list[dict[str, object]]]:
+        return {"items": resolve_product_store().list_conversations(identity.owner_id)}
+
+    @app.get("/v1/me/conversations/{conversation_id}")
+    async def get_my_conversation(
+        conversation_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        conversation = resolve_product_store().get_conversation(
+            identity.owner_id, conversation_id
+        )
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return conversation
 
     @app.get("/v1/runs/{run_id}", response_model=AgentRunResponse)
     async def get_agent_run(

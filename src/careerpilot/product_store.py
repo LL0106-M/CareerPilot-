@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -40,10 +41,24 @@ class ProductStore:
                 title TEXT NOT NULL, summary TEXT NOT NULL, status TEXT NOT NULL,
                 details_json TEXT NOT NULL, PRIMARY KEY(owner_id, id)
             );
+            CREATE TABLE IF NOT EXISTS conversations (
+                owner_id TEXT NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, id)
+            );
+            CREATE TABLE IF NOT EXISTS conversation_messages (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS hypotheses_owner_idx ON hypotheses(owner_id);
             CREATE INDEX IF NOT EXISTS journey_owner_idx ON journey_tasks(owner_id);
             CREATE INDEX IF NOT EXISTS memories_owner_idx ON memories(owner_id);
             CREATE INDEX IF NOT EXISTS dreaming_owner_idx ON dreaming_insights(owner_id);
+            CREATE INDEX IF NOT EXISTS conversations_owner_updated_idx
+                ON conversations(owner_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS conversation_messages_owner_idx
+                ON conversation_messages(owner_id, conversation_id, sequence);
             """
         )
 
@@ -56,6 +71,67 @@ class ProductStore:
             "journey": self._rows("journey_tasks", owner_id, "rowid"),
             "memories": self._rows("memories", owner_id, "rowid"),
             "dreaming": self._rows("dreaming_insights", owner_id, "rowid DESC"),
+        }
+
+    def record_conversation_turn(
+        self,
+        owner_id: str,
+        conversation_id: str,
+        user_message: str,
+        agent_message: str,
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        title = user_message.strip()[:80]
+        with self._connection:
+            self._connection.execute(
+                """INSERT INTO conversations
+                (owner_id, id, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(owner_id, id) DO UPDATE SET
+                    updated_at = excluded.updated_at""",
+                (owner_id, conversation_id, title, now, now),
+            )
+            self._connection.executemany(
+                """INSERT INTO conversation_messages
+                (owner_id, conversation_id, role, content, created_at)
+                VALUES (?, ?, ?, ?, ?)""",
+                (
+                    (owner_id, conversation_id, "user", user_message, now),
+                    (owner_id, conversation_id, "agent", agent_message, now),
+                ),
+            )
+
+    def list_conversations(self, owner_id: str) -> list[dict[str, object]]:
+        rows = self._connection.execute(
+            """SELECT c.id, c.title, c.updated_at, COUNT(m.sequence) AS message_count
+            FROM conversations AS c
+            LEFT JOIN conversation_messages AS m
+              ON m.owner_id = c.owner_id AND m.conversation_id = c.id
+            WHERE c.owner_id = ?
+            GROUP BY c.owner_id, c.id, c.title, c.updated_at
+            ORDER BY c.updated_at DESC, c.id""",
+            (owner_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_conversation(
+        self, owner_id: str, conversation_id: str
+    ) -> dict[str, object] | None:
+        conversation = self._connection.execute(
+            """SELECT id, title, updated_at FROM conversations
+            WHERE owner_id = ? AND id = ?""",
+            (owner_id, conversation_id),
+        ).fetchone()
+        if conversation is None:
+            return None
+        messages = self._connection.execute(
+            """SELECT role, content FROM conversation_messages
+            WHERE owner_id = ? AND conversation_id = ? ORDER BY sequence""",
+            (owner_id, conversation_id),
+        ).fetchall()
+        return {
+            **dict(conversation),
+            "messages": [dict(message) for message in messages],
         }
 
     def decide_hypothesis(self, owner_id: str, hypothesis_id: str, decision: str) -> bool:
