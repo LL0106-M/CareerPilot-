@@ -92,47 +92,6 @@ CareerPilot 目前处于 **MVP 阶段**，已经打通从表达、理解、职�
 
 > 在线版本用于产品体验与 MVP 验证。当前身份隔离仍基于匿名 Cookie，不等同于正式账号体系；请勿上传敏感个人材料或将其作为生产级多租户服务使用。
 
-## 本地运行
-
-### 环境要求
-
-- Python 3.12
-- [uv](https://docs.astral.sh/uv/)
-- Node.js 22+
-
-### 1. 启动后端
-
-```powershell
-uv sync --group dev
-Copy-Item .env.example .env
-uv run uvicorn careerpilot.api.app:app --reload --port 8080
-```
-
-模型、搜索和可选连接器的密钥通过本地 `.env` 提供。不要把真实密钥提交到仓库、README、Dockerfile 或前端环境变量中。
-
-### 2. 启动前端
-
-```powershell
-Set-Location frontend
-npm ci
-npm run dev
-```
-
-打开 `http://localhost:5173`。生产构建使用：
-
-```powershell
-npm run build
-```
-
-### 3. 运行验证
-
-```powershell
-uv run pytest
-uv run ruff check src tests
-Set-Location frontend
-npm test
-npm run typecheck
-```
 
 <details>
 <summary><strong>技术架构</strong></summary>
