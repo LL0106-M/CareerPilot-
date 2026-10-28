@@ -55,3 +55,45 @@ async def test_agentic_tool_rejects_personal_scope_without_bound_user(tmp_path: 
 
     assert result["status"] == "forbidden"
     assert result["error"] == "personal_scope_requires_authenticated_user"
+
+
+@pytest.mark.asyncio
+async def test_explicit_preparation_search_saves_url_backed_sources_for_the_library(
+    tmp_path: Path,
+) -> None:
+    provider = RecordingSearchProvider()
+    provider_result = WebSearchResponse(
+        answer="找到一份官方学习资料。",
+        sources=(
+            WebSearchSource(
+                "https://example.com/course",
+                "AI 产品课程",
+                site_name="Example University",
+                snippet="一份面向产品岗位的 AI 实践课程。",
+            ),
+            WebSearchSource("javascript:alert(1)", "不安全链接"),
+        ),
+        strategy=SearchStrategy.TURBO,
+    )
+
+    async def search(query: str, strategy: SearchStrategy) -> WebSearchResponse:
+        provider.calls.append((query, strategy))
+        return provider_result
+
+    provider.search = search  # type: ignore[method-assign]
+    store = SqliteRagStore(tmp_path / "rag.db")
+    tool = build_agentic_rag_tool(store, provider, user_id="u1")
+
+    await tool.ainvoke(
+        {
+            "query": "收集最新的 AI 产品学习资料",
+            "scopes": ["preparation"],
+            "requires_freshness": True,
+            "save_to_library": True,
+        }
+    )
+
+    saved = store.list_documents_for_domains(("preparation_material",))
+    assert len(saved) == 1
+    assert saved[0]["title"] == "AI 产品课程"
+    assert saved[0]["source_uri"] == "https://example.com/course"

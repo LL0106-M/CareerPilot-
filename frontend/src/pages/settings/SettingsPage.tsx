@@ -1,18 +1,20 @@
+import { useAuth } from '../../auth/AuthProvider'
+
 export function SettingsPage() {
+  const { account } = useAuth()
+
   return (
     <div className="settings-layout">
       <section className="glass-card settings-header">
         <p className="eyebrow">设置</p>
         <h1 className="page-title">泊泊的工作方式由你定</h1>
-        <p className="muted">
-          正式上线前这里还不会真的保存到后端，先留个结构让你知道将来能调什么。
-        </p>
+        <p className="muted">查看账户信息，也可以按自己的习惯调整泊泊的工作方式。</p>
       </section>
 
       <div className="settings-grid">
-        <SettingsCard title="你的身份" description="目前使用临时身份，正式版会接入登录鉴权">
-          <Row label="显示名称" value="职业探索者" />
-          <Row label="邮箱" value="未绑定" />
+        <SettingsCard title="你的账户" description="该账户用于隔离并保护你的个人数据">
+          <Row label="用户名" value={account?.username ?? '—'} />
+          <Row label="已验证邮箱" value={account?.email ?? '—'} />
         </SettingsCard>
 
         <SettingsCard title="泊泊的沟通方式" description="默认由泊泊判断当前适合倾听、梳理、探索还是行动">

@@ -102,6 +102,19 @@ class Settings(BaseSettings):
         default=Path("data/actions/careerpilot.db"),
         validation_alias="CAREERPILOT_ACTION_DB_PATH",
     )
+    auth_db_path: Path = Field(
+        default=Path("data/auth/careerpilot.db"),
+        validation_alias="CAREERPILOT_AUTH_DB_PATH",
+    )
+    smtp_host: str = Field(default="smtp.163.com", validation_alias="CAREERPILOT_SMTP_HOST")
+    smtp_port: int = Field(default=465, ge=1, le=65535, validation_alias="CAREERPILOT_SMTP_PORT")
+    smtp_account: str | None = Field(default=None, validation_alias="CAREERPILOT_SMTP_ACCOUNT")
+    smtp_authorization_code: SecretStr | None = Field(
+        default=None, validation_alias="CAREERPILOT_SMTP_AUTHORIZATION_CODE"
+    )
+    smtp_sender_name: str = Field(
+        default="CareerPilot 泊泊", validation_alias="CAREERPILOT_SMTP_SENDER_NAME"
+    )
     feishu_cli_executable: str = Field(
         default="lark-cli",
         validation_alias="CAREERPILOT_FEISHU_CLI_EXECUTABLE",
@@ -204,6 +217,8 @@ class Settings(BaseSettings):
             raise ValueError("production frontend dist path must be configured")
         if not (self.frontend_dist_path / "index.html").is_file():
             raise ValueError("production frontend dist path must contain index.html")
+        if self.smtp_account is None or self.smtp_authorization_code is None:
+            raise ValueError("production SMTP account and authorization code must be configured")
         return self
 
     @property
@@ -226,6 +241,7 @@ class Settings(BaseSettings):
             self.session_db_path,
             self.product_db_path,
             self.action_db_path,
+            self.auth_db_path,
         )
 
 

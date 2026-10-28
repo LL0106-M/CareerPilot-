@@ -1,15 +1,17 @@
 import hashlib
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from typing import Literal
 from uuid import uuid4
 
 from langchain_core.tools import BaseTool
 
-from careerpilot.agent.base import AgentResponder
+from careerpilot.agent.base import AgentResponder, AgentResponse
 from careerpilot.agent.orchestration import AgentPlan, AgentStage, AgentVerifier
 from careerpilot.agent.prompt import PromptComposer
 from careerpilot.context.contracts import RetrievalSource, TaskIntent
 from careerpilot.harness.context import CareerContextCompiler, ContextRequest
+from careerpilot.harness.events import HarnessEventType
 from careerpilot.harness.memory import MemoryLifecycle
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import RunCancellationRequested
@@ -49,6 +51,13 @@ class ChatResult:
     memory_ids: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ChatStreamEvent:
+    type: Literal["delta", "completed"]
+    text: str = ""
+    result: ChatResult | None = None
+
+
 class AgentService:
     def __init__(
         self,
@@ -86,6 +95,17 @@ class AgentService:
         )
 
     async def chat(self, command: ChatCommand) -> ChatResult:
+        result: ChatResult | None = None
+        async for event in self.stream_chat(command):
+            if event.result is not None:
+                result = event.result
+        if result is None:
+            raise RuntimeError("chat stream ended without a completed result")
+        return result
+
+    async def stream_chat(
+        self, command: ChatCommand
+    ) -> AsyncIterator[ChatStreamEvent]:
         run_id = command.run_id or str(uuid4())
         session_id = _scoped_session_id(command.user_id, command.conversation_id)
         if self._run_store is not None:
@@ -126,14 +146,47 @@ class AgentService:
                 allowed_tool_names.update(tool.name for tool in action_tools)
             await self._raise_if_cancelled(run_id)
             await self._transition(run_id, AgentStage.EXECUTE)
-            agent_response = await self._agent.respond(
-                command.message,
-                context.system_prompt,
-                session_id,
-                allowed_tool_names=frozenset(allowed_tool_names),
-                runtime_tools=tuple(runtime_tools),
-                run_id=run_id,
-            )
+            stream = getattr(self._agent, "stream", None)
+            if callable(stream):
+                agent_response: AgentResponse | None = None
+                async for harness_event in stream(
+                    command.message,
+                    context.system_prompt,
+                    session_id,
+                    allowed_tool_names=frozenset(allowed_tool_names),
+                    runtime_tools=tuple(runtime_tools),
+                    run_id=run_id,
+                ):
+                    if harness_event.type is HarnessEventType.TEXT_DELTA:
+                        text = str(harness_event.data.get("text", ""))
+                        if text:
+                            yield ChatStreamEvent(type="delta", text=text)
+                    elif harness_event.type is HarnessEventType.RUN_COMPLETED:
+                        agent_response = AgentResponse(
+                            reply=str(harness_event.data["reply"]),
+                            run_id=harness_event.run_id,
+                            citation_ids=tuple(harness_event.data.get("citation_ids", ())),
+                            citation_warnings=tuple(
+                                harness_event.data.get("citation_warnings", ())
+                            ),
+                        )
+                    elif harness_event.type is HarnessEventType.RUN_CANCELLED:
+                        raise RunCancellationRequested(
+                            "Agent run cancellation was requested"
+                        )
+                if agent_response is None:
+                    raise RuntimeError("agent stream ended without a completed result")
+            else:
+                agent_response = await self._agent.respond(
+                    command.message,
+                    context.system_prompt,
+                    session_id,
+                    allowed_tool_names=frozenset(allowed_tool_names),
+                    runtime_tools=tuple(runtime_tools),
+                    run_id=run_id,
+                )
+                if agent_response.reply:
+                    yield ChatStreamEvent(type="delta", text=agent_response.reply)
             verification = self._verifier.verify(agent_response, plan)
             await self._transition(
                 run_id,
@@ -177,7 +230,7 @@ class AgentService:
                         "verification": verification.as_dict(),
                     },
                 )
-            return result
+            yield ChatStreamEvent(type="completed", result=result)
         except RunCancellationRequested:
             await self._transition(run_id, AgentStage.CANCELLED)
             raise

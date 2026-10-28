@@ -1,4 +1,11 @@
 import type { JobRecord, JourneyItem, PersonalDocument } from './types'
+import { announceAuthExpired } from '../auth/auth-events'
+
+export interface Account {
+  id: string
+  username: string
+  email: string
+}
 
 export interface ChatRequest {
   message: string
@@ -19,6 +26,20 @@ export interface ChatResponse {
   memory_ids: string[]
   citation_ids: string[]
   citation_warnings: string[]
+}
+
+export interface ConversationSummary {
+  id: string
+  title: string
+  updated_at: string
+  message_count: number
+}
+
+export interface ConversationDetail {
+  id: string
+  title: string
+  updated_at: string
+  messages: Array<{ role: 'user' | 'agent'; content: string }>
 }
 
 export interface DashboardHypothesis {
@@ -90,6 +111,18 @@ export interface ApiDocument {
   retrieval_enabled: boolean
 }
 
+export interface PreparationResource {
+  id: string
+  title: string
+  publisher: string
+  category: string
+  format: string
+  url: string
+  description: string
+  updated_at: string
+  source_type: string
+}
+
 export interface ActionPreview {
   action_id: string
   provider_id: string
@@ -109,6 +142,19 @@ export class ApiError extends Error {
   }
 }
 
+async function responseError(response: Response, path: string): Promise<ApiError> {
+  let message = `请求失败（${response.status}）`
+  try {
+    const body = await response.json() as { detail?: unknown }
+    if (typeof body.detail === 'string') message = body.detail
+    else if (Array.isArray(body.detail)) message = '请检查填写内容后重试。'
+  } catch {
+    // Keep the status-based message when a proxy returns a non-JSON body.
+  }
+  if (response.status === 401 && path !== '/v1/auth/me' && path !== '/v1/auth/login') announceAuthExpired()
+  return new ApiError(response.status, message)
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
@@ -119,17 +165,69 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(0, '暂时无法连接 CareerPilot 服务，请稍后重试。')
   }
   if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = await response.json() as { detail?: string }
-      if (body.detail) message = body.detail
-    } catch {
-      // Keep the status-based message when a proxy returns a non-JSON body.
-    }
-    throw new ApiError(response.status, message)
+    throw await responseError(response, path)
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
+}
+
+async function streamChat(
+  body: ChatRequest,
+  onDelta: (text: string) => void,
+): Promise<ChatResponse> {
+  let response: Response
+  try {
+    response = await fetch('/v1/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      credentials: 'include',
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new ApiError(0, '暂时无法连接 CareerPilot 服务，请稍后重试。')
+  }
+  if (!response.ok) {
+    throw await responseError(response, '/v1/chat/stream')
+  }
+  if (!response.body) throw new ApiError(0, '服务没有返回可读取的回复。')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let completed: ChatResponse | undefined
+
+  const consumeFrame = (frame: string) => {
+    let eventName = 'message'
+    const dataLines: string[] = []
+    frame.split(/\r?\n/).forEach((line) => {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim()
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+    })
+    if (dataLines.length === 0) return
+    const payload = JSON.parse(dataLines.join('\n')) as Record<string, unknown>
+    if (eventName === 'delta' && typeof payload.text === 'string') onDelta(payload.text)
+    if (eventName === 'completed') completed = payload as unknown as ChatResponse
+    if (eventName === 'error') {
+      throw new ApiError(0, typeof payload.message === 'string' ? payload.message : '回复中断，请重试。')
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+    let boundary = buffer.search(/\r?\n\r?\n/)
+    while (boundary >= 0) {
+      const frame = buffer.slice(0, boundary)
+      const separator = buffer.slice(boundary).match(/^\r?\n\r?\n/)?.[0] || '\n\n'
+      buffer = buffer.slice(boundary + separator.length)
+      if (frame.trim()) consumeFrame(frame)
+      boundary = buffer.search(/\r?\n\r?\n/)
+    }
+    if (done) break
+  }
+  if (buffer.trim()) consumeFrame(buffer)
+  if (!completed) throw new ApiError(0, '回复在完成前中断，请重试。')
+  return completed
 }
 
 function toQuery(params: Record<string, string | undefined>) {
@@ -142,8 +240,39 @@ function toQuery(params: Record<string, string | undefined>) {
 }
 
 export const api = {
+  getCurrentAccount() {
+    return request<Account>('/v1/auth/me')
+  },
+  requestVerificationCode(email: string) {
+    return request<{ status: string; expires_at: string; retry_after_seconds: number }>('/v1/auth/verification-codes', {
+      method: 'POST', body: JSON.stringify({ email }),
+    })
+  },
+  register(input: { username: string; email: string; verificationCode: string; password: string }) {
+    return request<Account>('/v1/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ username: input.username, email: input.email, verification_code: input.verificationCode, password: input.password }),
+    })
+  },
+  login(identifier: string, password: string, rememberMe: boolean) {
+    return request<Account>('/v1/auth/login', {
+      method: 'POST', body: JSON.stringify({ identifier, password, remember_me: rememberMe }),
+    })
+  },
+  logout() {
+    return request<{ status: string }>('/v1/auth/logout', { method: 'POST' })
+  },
   chat(body: ChatRequest) {
     return request<ChatResponse>('/v1/chat', { method: 'POST', body: JSON.stringify(body) })
+  },
+  chatStream(body: ChatRequest, onDelta: (text: string) => void) {
+    return streamChat(body, onDelta)
+  },
+  getConversations() {
+    return request<{ items: ConversationSummary[] }>('/v1/me/conversations')
+  },
+  getConversation(id: string) {
+    return request<ConversationDetail>(`/v1/me/conversations/${encodeURIComponent(id)}`)
   },
   getDashboard() {
     return request<DashboardResponse>('/v1/me/dashboard')
@@ -169,6 +298,9 @@ export const api = {
   createVerificationTask(id: string) {
     return request<JourneyItem>(`/v1/me/hypotheses/${encodeURIComponent(id)}/verification-task`, { method: 'POST' })
   },
+  createIdeaVerificationTask(id: string) {
+    return request<JourneyItem>(`/v1/me/ideas/${encodeURIComponent(id)}/verification-task`, { method: 'POST' })
+  },
   updateJourneyTask(id: string, state: JourneyItem['state'], reflection?: string) {
     return request<{ status: string }>(`/v1/me/journey/${encodeURIComponent(id)}`, {
       method: 'PATCH',
@@ -180,7 +312,7 @@ export const api = {
     return request<{ items: ApiJob[] }>(`/v1/knowledge/jobs${query}`)
   },
   getPreparation() {
-    return request<{ items: Record<string, unknown>[] }>('/v1/knowledge/preparation')
+    return request<{ items: PreparationResource[] }>('/v1/knowledge/preparation')
   },
   getDocuments() {
     return request<{ items: ApiDocument[] }>('/v1/me/documents')

@@ -3,18 +3,20 @@ from fastapi.testclient import TestClient
 from careerpilot.api.app import create_app
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
+from tests.api.auth_helpers import build_auth_service, issue_session
 
 
 def build_client(tmp_path):
     store = SqliteUnifiedMemoryStore(tmp_path / "memory.db")
     service = MemoryService(store)
-    return TestClient(create_app(memory_service=service)), store
+    auth = build_auth_service(tmp_path / "auth.db")
+    return TestClient(create_app(memory_service=service, auth_service=auth)), store, auth
 
 
 def test_memory_api_derives_owner_and_enforces_lifecycle(tmp_path) -> None:
-    client, store = build_client(tmp_path)
-    owner_a = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
-    owner_b = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440001"}
+    client, store, auth = build_client(tmp_path)
+    owner_a = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
+    owner_b = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440001")
     try:
         created = client.post(
             "/v1/me/memories",
@@ -45,8 +47,8 @@ def test_memory_api_derives_owner_and_enforces_lifecycle(tmp_path) -> None:
 
 
 def test_memory_api_sensitive_create_is_candidate_and_confirmable(tmp_path) -> None:
-    client, store = build_client(tmp_path)
-    cookies = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
+    client, store, auth = build_client(tmp_path)
+    cookies = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
     try:
         created = client.post(
             "/v1/me/memories",

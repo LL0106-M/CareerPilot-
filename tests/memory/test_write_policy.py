@@ -39,3 +39,11 @@ def test_policy_extracts_typed_durable_statement_without_transient_prefix() -> N
     assert candidates[0].content == "以后我做选择时更看重稳定节奏"
     assert candidates[0].sensitivity is MemorySensitivity.NORMAL
     assert candidates[0].importance == 4
+
+
+def test_explicit_chat_idea_is_captured_as_an_idea_memory() -> None:
+    candidates = MemoryWritePolicy().extract("我的想法是做一个帮助应届生复盘面试的工具。")
+
+    assert len(candidates) == 1
+    assert candidates[0].type is MemoryType.IDEA
+    assert candidates[0].content == "我的想法是做一个帮助应届生复盘面试的工具"

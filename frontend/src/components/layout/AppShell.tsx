@@ -1,7 +1,8 @@
-import { GearSix } from '@phosphor-icons/react'
-import type { ReactNode } from 'react'
-import { NavLink } from 'react-router-dom'
+import { CaretDown, GearSix, SignOut } from '@phosphor-icons/react'
+import { useState, type ReactNode } from 'react'
+import { Link, NavLink } from 'react-router-dom'
 
+import { useAuth } from '../../auth/AuthProvider'
 import { AmbientScene } from '../ambient/AmbientScene'
 import { ScrollDirector } from '../motion/ScrollDirector'
 import './app-shell.css'
@@ -15,6 +16,9 @@ const navigation = [
 ]
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const { account, logout } = useAuth()
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+
   return (
     <div className="app-shell">
       <ScrollDirector />
@@ -37,11 +41,35 @@ export function AppShell({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        <div className="topbar-actions">
-          <NavLink className="profile-button" to="/settings" aria-label="打开设置">
+        <div className="topbar-actions account-menu-wrap">
+          <button
+            className="profile-button"
+            type="button"
+            aria-expanded={accountMenuOpen}
+            aria-haspopup="menu"
+            aria-label={`${account?.username ?? '用户'}的账户菜单`}
+            onClick={() => setAccountMenuOpen((open) => !open)}
+          >
             <img src="/assets/bobo-idle.png" alt="" />
-            <GearSix size={17} weight="duotone" aria-hidden="true" />
-          </NavLink>
+            <span>{account?.username}</span>
+            <CaretDown size={15} weight="bold" aria-hidden="true" />
+          </button>
+          {accountMenuOpen && account ? (
+            <div className="account-menu glass-strong" role="menu">
+              <div className="account-summary">
+                <strong>{account.username}</strong>
+                <span>{account.email}</span>
+              </div>
+              <Link to="/settings" role="menuitem" onClick={() => setAccountMenuOpen(false)}>
+                <GearSix size={18} weight="duotone" aria-hidden="true" />
+                设置
+              </Link>
+              <button type="button" role="menuitem" onClick={() => void logout()}>
+                <SignOut size={18} weight="duotone" aria-hidden="true" />
+                退出登录
+              </button>
+            </div>
+          ) : null}
         </div>
       </header>
 

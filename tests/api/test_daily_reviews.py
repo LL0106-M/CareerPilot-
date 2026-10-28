@@ -5,6 +5,7 @@ from careerpilot.memory.base import MemoryContext
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.daily_review import DailyReviewDraft
 from careerpilot.memory.dreaming import DreamingAnalysis, DreamingSnapshot, DreamingTrigger
+from tests.api.auth_helpers import build_auth_service, issue_session
 
 
 def test_daily_review_api_is_owner_scoped(tmp_path) -> None:
@@ -34,9 +35,10 @@ def test_daily_review_api_is_owner_scoped(tmp_path) -> None:
             )
         ),
     )
-    client = TestClient(create_app(cognitive_store=cognitive))
-    owner_a = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
-    owner_b = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440001"}
+    auth = build_auth_service(tmp_path / "auth.db")
+    client = TestClient(create_app(cognitive_store=cognitive, auth_service=auth))
+    owner_a = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
+    owner_b = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440001")
     try:
         assert client.get(
             "/v1/me/daily-reviews/2026-10-24", cookies=owner_a

@@ -34,6 +34,10 @@ class MemoryWritePolicy:
         "我有",
         "我做过",
         "我决定",
+        "我的想法是",
+        "我在考虑",
+        "我想尝试",
+        "我想做",
         "更正一下",
         "不再",
     )
@@ -50,6 +54,7 @@ class MemoryWritePolicy:
     _private_markers = ("薪资", "工资", "手机号", "电话", "家庭地址")
 
     _type_markers = (
+        (MemoryType.IDEA, ("我的想法是", "我在考虑", "我想尝试", "我想做")),
         (MemoryType.CONSTRAINT, ("不能接受", "不接受", "必须", "底线")),
         (MemoryType.GOAL, ("职业目标", "我的目标", "我正在探索", "想成为")),
         (MemoryType.DECISION, ("我决定", "已经决定")),

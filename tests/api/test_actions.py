@@ -6,6 +6,7 @@ from careerpilot.actions.registry import build_mvp_capability_registry
 from careerpilot.actions.service import ActionService, ConnectorOutcome
 from careerpilot.actions.store import SqliteActionStore
 from careerpilot.api.app import create_app
+from tests.api.auth_helpers import build_auth_service, issue_session
 
 
 class FakeConnector:
@@ -31,15 +32,18 @@ def build_client(tmp_path):
         store=store,
         connectors={"feishu": connector},
     )
-    client = TestClient(create_app(action_store=store, action_service=service))
-    return client, store, connector
+    auth = build_auth_service(tmp_path / "auth.db")
+    client = TestClient(
+        create_app(action_store=store, action_service=service, auth_service=auth)
+    )
+    return client, store, connector, auth
 
 
 def test_authorization_is_visible_revocable_and_owner_scoped(tmp_path) -> None:
-    client, store, _ = build_client(tmp_path)
+    client, store, _, auth = build_client(tmp_path)
     try:
-        owner_a = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
-        owner_b = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440001"}
+        owner_a = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
+        owner_b = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440001")
         granted = client.post(
             "/v1/me/integrations/feishu/grants",
             cookies=owner_a,
@@ -79,9 +83,9 @@ def test_authorization_is_visible_revocable_and_owner_scoped(tmp_path) -> None:
 
 
 def test_write_action_requires_preview_confirmation_and_is_idempotent(tmp_path) -> None:
-    client, store, connector = build_client(tmp_path)
+    client, store, connector, auth = build_client(tmp_path)
     try:
-        cookies = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
+        cookies = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
         client.post(
             "/v1/me/integrations/feishu/grants",
             cookies=cookies,
@@ -129,9 +133,9 @@ def test_write_action_requires_preview_confirmation_and_is_idempotent(tmp_path) 
 
 
 def test_action_routes_reject_unknown_fields_and_map_missing_grant(tmp_path) -> None:
-    client, store, _ = build_client(tmp_path)
+    client, store, _, auth = build_client(tmp_path)
     try:
-        cookies = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
+        cookies = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
         missing_grant = client.post(
             "/v1/me/actions/preview",
             cookies=cookies,
@@ -175,9 +179,9 @@ def test_action_routes_reject_unknown_fields_and_map_missing_grant(tmp_path) -> 
 
 
 def test_revoke_route_enforces_provider_scope(tmp_path) -> None:
-    client, store, _ = build_client(tmp_path)
+    client, store, _, auth = build_client(tmp_path)
     try:
-        cookies = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
+        cookies = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
         grant = store.grant(
             owner_id="550e8400-e29b-41d4-a716-446655440000",
             provider_id="wps",
@@ -198,11 +202,12 @@ def test_revoke_route_enforces_provider_scope(tmp_path) -> None:
 
 
 def test_grant_rejects_unknown_or_sensitive_resource_constraints(tmp_path) -> None:
-    client, store, _ = build_client(tmp_path)
+    client, store, _, auth = build_client(tmp_path)
     try:
+        cookies = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
         response = client.post(
             "/v1/me/integrations/feishu/grants",
-            cookies={"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"},
+            cookies=cookies,
             json={
                 "capabilities": ["document.create"],
                 "purpose": "career_artifact_creation",

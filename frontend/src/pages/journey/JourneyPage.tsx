@@ -93,11 +93,34 @@ function PathView({ group, onAdvance, onPreview }: { group: { name: string; task
 }
 
 function CalendarView({ tasks }: { tasks: JourneyItem[] }) {
-  const dueMap = new Map(tasks.map((task,index) => [12 + index * 4, task]))
-  return <section className="calendar-board glass-card"><header><div><p className="eyebrow">Calendar</p><h2>十月 · 2026</h2></div><p>日历是航程的另一种看法，不是另一套任务。</p></header><div className="calendar-grid">{['一','二','三','四','五','六','日'].map((day) => <div className="calendar-head" key={day}>{day}</div>)}{Array.from({length:35},(_,index) => { const day = index - 2; const task = dueMap.get(day); return day > 0 && day <= 31 ? <div className={`calendar-cell${task ? ' has-task' : ''}`} key={index}><span>{day}</span>{task && <strong>{task.title}</strong>}</div> : <div className="calendar-cell empty" key={index} /> })}</div></section>
+  const dated = tasks.map((task) => ({ task, date: parseJourneyDate(task.due) })).filter((item): item is { task: JourneyItem; date: Date } => item.date !== null)
+  const firstDate = dated[0]?.date || new Date()
+  const [month, setMonth] = useState(() => new Date(firstDate.getFullYear(), firstDate.getMonth(), 1))
+  const year = month.getFullYear()
+  const monthIndex = month.getMonth()
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate()
+  const leading = (new Date(year, monthIndex, 1).getDay() + 6) % 7
+  const cellCount = Math.ceil((leading + daysInMonth) / 7) * 7
+  const tasksByDay = new Map<number, JourneyItem[]>()
+  dated.forEach(({ task, date }) => {
+    if (date.getFullYear() !== year || date.getMonth() !== monthIndex) return
+    tasksByDay.set(date.getDate(), [...(tasksByDay.get(date.getDate()) || []), task])
+  })
+  const undated = tasks.filter((task) => parseJourneyDate(task.due) === null)
+  return <section className="calendar-board glass-card"><header><div><p className="eyebrow">Calendar · 所有航程</p><div className="calendar-month-nav"><button type="button" aria-label="上个月" onClick={() => setMonth(new Date(year, monthIndex - 1, 1))}>‹</button><h2>{year} 年 {monthIndex + 1} 月</h2><button type="button" aria-label="下个月" onClick={() => setMonth(new Date(year, monthIndex + 1, 1))}>›</button></div></div><p>只有明确日期的行动进入日历；其余仍留在路径里。</p></header><div className="calendar-grid">{['一','二','三','四','五','六','日'].map((day) => <div className="calendar-head" key={day}>{day}</div>)}{Array.from({length:cellCount},(_,index) => { const day = index - leading + 1; const dayTasks = tasksByDay.get(day) || []; return day > 0 && day <= daysInMonth ? <div className={`calendar-cell${dayTasks.length ? ' has-task' : ''}`} key={index}><span>{day}</span>{dayTasks.map((task) => <strong key={task.id}>{task.title}</strong>)}</div> : <div className="calendar-cell empty" key={index} /> })}</div>{undated.length > 0 && <aside className="calendar-unscheduled"><h3>未安排具体日期</h3><p>这些行动不会被随意塞进某一天。</p><div>{undated.map((task) => <span key={task.id}><strong>{task.title}</strong><small>{task.due}</small></span>)}</div></aside>}</section>
 }
 
 function FootprintView({ tasks }: { tasks: JourneyItem[] }) {
   const done = tasks.filter((task) => task.state === '已完成')
-  return <section className="footprint-board">{done.length === 0 ? <div className="state-panel glass-card"><Footprints size={34} /><h2>第一枚足迹还在路上</h2><p>完成一个真实行动后，这里才会出现记录；不会用空卡片催促你。</p></div> : done.map((task) => <article className="footprint-card glass-card" key={task.id}><CheckCircle size={24} weight="fill" /><div><strong>{task.title}</strong><p>{task.reflection || '你推进了这一小步。之后可以在对话里回看，它改变了什么。'}</p></div></article>)}</section>
+  return <section className="footprint-board"><header><p className="eyebrow">Footprints</p><h2>真实行动留下的足迹</h2><p>这里只记录已经发生的事，不用完成率替你定义进展。</p></header>{done.length === 0 ? <div className="state-panel glass-card"><Footprints size={34} /><h3>第一枚足迹还在路上</h3><p>完成一个真实行动后，这里才会出现记录；不会用空卡片催促你。</p></div> : done.map((task) => <article className="footprint-card glass-card" key={task.id}><CheckCircle size={24} weight="fill" /><div><strong>{task.title}</strong><p>{task.reflection || '你推进了这一小步。之后可以在对话里回看，它改变了什么。'}</p></div></article>)}</section>
+}
+
+function parseJourneyDate(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2]) - 1
+  const day = Number(match[3])
+  const date = new Date(year, month, day)
+  return date.getFullYear() === year && date.getMonth() === month && date.getDate() === day ? date : null
 }

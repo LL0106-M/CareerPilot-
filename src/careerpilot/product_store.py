@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 
@@ -61,6 +61,13 @@ class ProductStore:
                 ON conversation_messages(owner_id, conversation_id, sequence);
             """
         )
+        journey_columns = {
+            str(row["name"])
+            for row in self._connection.execute("PRAGMA table_info(journey_tasks)").fetchall()
+        }
+        if "idea_id" not in journey_columns:
+            self._connection.execute("ALTER TABLE journey_tasks ADD COLUMN idea_id TEXT")
+            self._connection.commit()
 
     def close(self) -> None:
         self._connection.close()
@@ -172,6 +179,55 @@ class ProductStore:
                     hypothesis["statement"],
                     hypothesis_id,
                     "通过现实行动补充证据，而不是只靠想象判断职业方向。",
+                ),
+            )
+            self._connection.commit()
+            existing = self._connection.execute(
+                "SELECT * FROM journey_tasks WHERE owner_id = ? AND id = ?",
+                (owner_id, task_id),
+            ).fetchone()
+        return self._decode(existing)
+
+    def create_memory_verification_task(
+        self,
+        owner_id: str,
+        memory_id: str,
+        statement: str,
+        *,
+        source: str,
+    ) -> dict[str, object]:
+        if source not in {"hypothesis", "idea"}:
+            raise ValueError("unsupported journey source")
+        source_column = "hypothesis_id" if source == "hypothesis" else "idea_id"
+        existing = self._connection.execute(
+            f"""SELECT * FROM journey_tasks
+            WHERE owner_id = ? AND {source_column} = ? AND state != '已完成'""",
+            (owner_id, memory_id),
+        ).fetchone()
+        if existing is None:
+            task_id = f"task-{uuid.uuid4().hex[:10]}"
+            due = (date.today() + timedelta(days=7)).isoformat()
+            hypothesis_id = memory_id if source == "hypothesis" else None
+            idea_id = memory_id if source == "idea" else None
+            title = (
+                "用一次真实经历验证这条职业猜想"
+                if source == "hypothesis"
+                else "为这个想法完成一个最小验证"
+            )
+            self._connection.execute(
+                """INSERT INTO journey_tasks
+                (owner_id,id,title,due,state,related,hypothesis_id,why,reflection,idea_id)
+                VALUES (?,?,?,?,?,?,?,?,NULL,?)""",
+                (
+                    owner_id,
+                    task_id,
+                    title,
+                    due,
+                    "准备开始",
+                    statement,
+                    hypothesis_id,
+                    "通过一个可控的小行动获得真实反馈，而不是只停留在想象里。",
+                    idea_id,
                 ),
             )
             self._connection.commit()

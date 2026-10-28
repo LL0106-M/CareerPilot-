@@ -9,6 +9,7 @@ export function CompassPage() {
   const { data, error, loading, reload } = useDashboard()
   const [index, setIndex] = useState(0)
   const [mutation, setMutation] = useState('')
+  const [ideaMutation, setIdeaMutation] = useState('')
   const hypotheses = data?.hypotheses || []
   const current = hypotheses[index]
   const ideas = data?.ideas || []
@@ -28,6 +29,12 @@ export function CompassPage() {
     catch { setMutation('error') }
   }
 
+  async function verifyIdea(id: string) {
+    setIdeaMutation(`saving:${id}`)
+    try { await api.createIdeaVerificationTask(id); setIdeaMutation(`saved:${id}`) }
+    catch { setIdeaMutation(`error:${id}`) }
+  }
+
   return (
     <div className="compass-experience">
       <section className="compass-focus glass-card">
@@ -41,7 +48,7 @@ export function CompassPage() {
         </div>
       </section>
 
-      <section className="idea-field" id="idea-field"><header><div><p className="eyebrow">Thought fragments</p><h2>有些想法，先让它们散落着。</h2></div><p>它们不需要马上变成方向。拖动视线、靠近其中一张，看看哪些念头开始互相呼应。</p></header><div className="idea-cloud">{ideas.length === 0 ? <div className="empty-ideas glass-card"><Lightbulb size={28} /><span>你记录的小想法会在这里慢慢聚拢。</span><Link to="/">回首页记下一条</Link></div> : ideas.map((idea, itemIndex) => <article className={`idea-note idea-note-${itemIndex % 5} glass-card`} key={idea.id}><Sparkle weight="fill" /><h3>{idea.title}</h3><p>{idea.raw_text || idea.content || '还在酝酿中'}</p><span>{idea.stage}</span></article>)}</div></section>
+      <section className="idea-field" id="idea-field"><header><div><p className="eyebrow">Thought fragments</p><h2>有些想法，先让它们散落着。</h2></div><p>它们不需要马上变成方向。靠近其中一张，决定是否用一个小行动看看它会走向哪里。</p></header><div className="idea-cloud">{ideas.length === 0 ? <div className="empty-ideas glass-card"><Lightbulb size={28} /><span>你记录的小想法会在这里慢慢聚拢。</span><Link to="/">回首页记下一条</Link></div> : ideas.map((idea, itemIndex) => <article className={`idea-note idea-note-${itemIndex % 5} glass-card`} key={idea.id}><Sparkle weight="fill" /><h3>{idea.title}</h3><p>{idea.raw_text || idea.content || '还在酝酿中'}</p><span>{idea.stage}</span><button type="button" className="idea-action" aria-label={`把“${idea.title}”加入航程`} onClick={() => void verifyIdea(idea.id)} disabled={ideaMutation === `saving:${idea.id}`}>{ideaMutation === `saving:${idea.id}` ? '正在加入…' : '用一个行动试试看'} <Path /></button>{ideaMutation === `saved:${idea.id}` && <small role="status">已把这个想法加入航程。</small>}{ideaMutation === `error:${idea.id}` && <small role="alert">这次没有加入成功，请重试。</small>}</article>)}</div></section>
     </div>
   )
 }

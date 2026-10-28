@@ -1,0 +1,24 @@
+.auth-page { position: relative; display: grid; min-height: 100vh; place-items: center; padding: 48px 20px; background: radial-gradient(circle at 20% 15%,rgba(104,168,142,.16),transparent 34%),radial-gradient(circle at 82% 82%,rgba(212,168,95,.13),transparent 32%),var(--bg-page); }
+.auth-card { width: min(420px,100%); padding: 38px; border-radius: 30px; }
+.auth-card-register { width: min(460px,100%); }
+.auth-logo { display: block; width: 154px; height: 38px; margin-bottom: 34px; object-fit: contain; object-position: left center; }
+.auth-heading h1 { margin: 0; font-family: Georgia,"Songti SC",serif; font-size: 36px; font-weight: 500; }
+.auth-heading>p:last-child { margin: 10px 0 28px; color: var(--text-secondary); line-height: 1.7; }
+.auth-card form { display: grid; gap: 17px; }
+.auth-card form>label:not(.remember-row) { display: grid; gap: 7px; color: var(--text-secondary); font-size: 13px; font-weight: 700; }
+.auth-card input { width: 100%; min-height: 48px; padding: 0 14px; border: 1px solid rgba(36,51,45,.13); border-radius: 14px; background: rgba(255,255,255,.7); outline: 0; }
+.password-field,.code-field { display: flex; gap: 8px; }
+.password-field { position: relative; }
+.password-field input { padding-right: 50px; }
+.password-field button { position: absolute; top: 4px; right: 4px; display: grid; width: 40px; height: 40px; place-items: center; border: 0; background: transparent; color: var(--text-tertiary); cursor: pointer; }
+.code-field button { flex: 0 0 112px; border: 0; border-radius: 14px; background: rgba(63,117,98,.11); color: var(--brand-pine); font-size: 12px; font-weight: 750; cursor: pointer; }
+.code-field button:disabled { cursor: default; opacity: .55; }
+.remember-row { display: flex; align-items: center; gap: 9px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.remember-row input { width: 17px; min-height: 17px; accent-color: var(--brand-pine); }
+.auth-submit { min-height: 49px; border: 0; border-radius: 15px; background: var(--brand-pine); color: white; font-weight: 760; cursor: pointer; box-shadow: 0 12px 28px rgba(63,117,98,.2); }
+.auth-submit:disabled { cursor: wait; opacity: .62; }
+.auth-error { margin: -3px 0 0; color: var(--danger-accent); font-size: 12px; line-height: 1.55; }
+.auth-success { margin: 0 0 16px; padding: 10px 12px; border: 1px solid rgba(42,111,76,.18); border-radius: 12px; background: rgba(226,242,231,.72); color: var(--brand-pine); font-size: 13px; line-height: 1.5; }
+.auth-switch { margin: 24px 0 0; color: var(--text-secondary); font-size: 13px; text-align: center; }
+.auth-switch a { color: var(--brand-pine); font-weight: 750; }
+.auth-boot { display: grid; min-height: 100vh; place-items: center; color: var(--text-secondary); background: var(--bg-page); }

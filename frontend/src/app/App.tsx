@@ -13,6 +13,10 @@ import { KnowledgeLayout } from '../pages/knowledge/KnowledgeLayout'
 import { JobsPage } from '../pages/knowledge/jobs/JobsPage'
 import { PreparationPage } from '../pages/knowledge/preparation/PreparationPage'
 import { PersonalPage } from '../pages/knowledge/personal/PersonalPage'
+import { AuthProvider } from '../auth/AuthProvider'
+import { GuestRoute, ProtectedRoute } from '../auth/ProtectedRoute'
+import { LoginPage } from '../pages/auth/LoginPage'
+import { RegisterPage } from '../pages/auth/RegisterPage'
 
 function WrapShell({ children }: { children: React.ReactNode }) {
   return <AppShell>{children}</AppShell>
@@ -20,23 +24,31 @@ function WrapShell({ children }: { children: React.ReactNode }) {
 
 export function App() {
   return (
-    <Routes>
-      <Route path="/intro" element={<IntroPage />} />
-      <Route path="/" element={<WrapShell><TodayPage /></WrapShell>} />
-      <Route path="/today" element={<Navigate to="/" replace />} />
-      <Route path="/chat" element={<WrapShell><ChatPage /></WrapShell>} />
-      <Route path="/dreaming" element={<WrapShell><DreamingPage /></WrapShell>} />
-      <Route path="/compass" element={<WrapShell><CompassPage /></WrapShell>} />
-      <Route path="/journey" element={<WrapShell><JourneyPage /></WrapShell>} />
-      <Route path="/memory" element={<WrapShell><MemoryPage /></WrapShell>} />
-      <Route path="/settings" element={<WrapShell><SettingsPage /></WrapShell>} />
-      <Route path="/knowledge" element={<WrapShell><KnowledgeLayout /></WrapShell>}>
-        <Route index element={<Navigate to="/knowledge/jobs" replace />} />
-        <Route path="jobs" element={<JobsPage />} />
-        <Route path="preparation" element={<PreparationPage />} />
-        <Route path="personal" element={<PersonalPage />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <AuthProvider>
+      <Routes>
+        <Route element={<GuestRoute />}>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+        </Route>
+        <Route element={<ProtectedRoute />}>
+          <Route path="/intro" element={<IntroPage />} />
+          <Route path="/" element={<WrapShell><TodayPage /></WrapShell>} />
+          <Route path="/today" element={<Navigate to="/" replace />} />
+          <Route path="/chat" element={<WrapShell><ChatPage /></WrapShell>} />
+          <Route path="/dreaming" element={<WrapShell><DreamingPage /></WrapShell>} />
+          <Route path="/compass" element={<WrapShell><CompassPage /></WrapShell>} />
+          <Route path="/journey" element={<WrapShell><JourneyPage /></WrapShell>} />
+          <Route path="/memory" element={<WrapShell><MemoryPage /></WrapShell>} />
+          <Route path="/settings" element={<WrapShell><SettingsPage /></WrapShell>} />
+          <Route path="/knowledge" element={<WrapShell><KnowledgeLayout /></WrapShell>}>
+            <Route index element={<Navigate to="/knowledge/jobs" replace />} />
+            <Route path="jobs" element={<JobsPage />} />
+            <Route path="preparation" element={<PreparationPage />} />
+            <Route path="personal" element={<PersonalPage />} />
+          </Route>
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AuthProvider>
   )
 }

@@ -5,7 +5,9 @@ from langchain_core.tools import BaseTool, tool
 
 from careerpilot.agent.base import AgentResponder, AgentResponse
 from careerpilot.agent.service import AgentService, ChatCommand
+from careerpilot.harness.events import HarnessEvent, HarnessEventType, RunPhase
 from careerpilot.harness.run_store import SqliteAgentRunStore
+from careerpilot.harness.runtime import RunCancellationRequested
 from careerpilot.memory.base import (
     MemoryContext,
     MemoryItem,
@@ -76,6 +78,102 @@ class RecordingAgent(AgentResponder):
             reply="先不用逼自己立刻决定，我们可以从最困扰你的部分开始。",
             run_id=run_id or "test-run",
         )
+
+
+@dataclass
+class StreamingAgent(RecordingAgent):
+    async def stream(
+        self,
+        user_message: str,
+        system_context: str,
+        thread_id: str,
+        allowed_tool_names: frozenset[str] | None = None,
+        runtime_tools: tuple[BaseTool, ...] = (),
+        run_id: str | None = None,
+    ):
+        self.events.append("stream")
+        yield HarnessEvent(
+            HarnessEventType.TEXT_DELTA,
+            run_id or "test-run",
+            thread_id,
+            1,
+            RunPhase.MODEL,
+            step=1,
+            data={"text": "先别急，"},
+        )
+        yield HarnessEvent(
+            HarnessEventType.TEXT_DELTA,
+            run_id or "test-run",
+            thread_id,
+            2,
+            RunPhase.MODEL,
+            step=1,
+            data={"text": "我们一起看。"},
+        )
+        yield HarnessEvent(
+            HarnessEventType.RUN_COMPLETED,
+            run_id or "test-run",
+            thread_id,
+            3,
+            RunPhase.COMPLETED,
+            step=1,
+            data={
+                "reply": "先别急，我们一起看。",
+                "citation_ids": [],
+                "citation_warnings": [],
+            },
+        )
+
+
+@dataclass
+class CancelledStreamingAgent(RecordingAgent):
+    async def stream(
+        self,
+        user_message: str,
+        system_context: str,
+        thread_id: str,
+        allowed_tool_names: frozenset[str] | None = None,
+        runtime_tools: tuple[BaseTool, ...] = (),
+        run_id: str | None = None,
+    ):
+        yield HarnessEvent(
+            HarnessEventType.RUN_CANCELLED,
+            run_id or "test-run",
+            thread_id,
+            1,
+            RunPhase.CANCELLED,
+        )
+
+
+@pytest.mark.asyncio
+async def test_service_streams_text_before_completed_result() -> None:
+    events: list[str] = []
+    service = AgentService(
+        RecordingMemoryStore(events), StreamingAgent(events), SupportPolicy()
+    )
+
+    streamed = [
+        event
+        async for event in service.stream_chat(
+            ChatCommand("user-1", "thread-1", "我今天有点乱")
+        )
+    ]
+
+    assert [event.type for event in streamed] == ["delta", "delta", "completed"]
+    assert [event.text for event in streamed[:2]] == ["先别急，", "我们一起看。"]
+    assert streamed[-1].result is not None
+    assert streamed[-1].result.reply == "先别急，我们一起看。"
+    assert events == ["stream"]
+
+
+@pytest.mark.asyncio
+async def test_service_preserves_run_cancellation_from_agent_stream() -> None:
+    service = AgentService(
+        RecordingMemoryStore([]), CancelledStreamingAgent([]), SupportPolicy()
+    )
+
+    with pytest.raises(RunCancellationRequested):
+        await service.chat(ChatCommand("user-1", "thread-1", "停止这次回复"))
 
 
 @dataclass

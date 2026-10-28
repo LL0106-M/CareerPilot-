@@ -8,6 +8,28 @@ from careerpilot.memory.models import MemoryConfidence, MemorySensitivity, Memor
 from careerpilot.support.policy import SupportMode
 
 
+class VerificationCodeRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    email: str = Field(
+        min_length=5, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+    )
+
+
+class RegisterRequest(VerificationCodeRequest):
+    username: str = Field(min_length=3, max_length=40)
+    verification_code: str = Field(pattern=r"^\d{6}$")
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    identifier: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+    remember_me: bool = False
+
+
 class ChatRequest(BaseModel):
     """Client request. ``user_id`` was removed in v0.2 because it must
     not be trusted from the client — the server derives ``owner_id``

@@ -7,6 +7,7 @@ from careerpilot.config import Settings
 from careerpilot.rag.chunking import chunk_document
 from careerpilot.rag.models import SourceDocument
 from careerpilot.rag.store import SqliteRagStore
+from tests.api.auth_helpers import build_auth_service, issue_session
 
 
 def test_standalone_rag_query_routes_and_returns_agent_context(tmp_path: Path) -> None:
@@ -20,10 +21,15 @@ def test_standalone_rag_query_routes_and_returns_agent_context(tmp_path: Path) -
         "需求分析需要先识别用户问题，再验证需求优先级。",
     )
     store.upsert(document, chunk_document(document))
-    app = create_app(Settings(_env_file=None), rag_store=store)
+    auth = build_auth_service(tmp_path / "auth.db")
+    app = create_app(Settings(_env_file=None), rag_store=store, auth_service=auth)
 
     with TestClient(app) as client:
-        response = client.post("/v1/rag/query", json={"query": "需求分析是什么"})
+        response = client.post(
+            "/v1/rag/query",
+            json={"query": "需求分析是什么"},
+            cookies=issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000"),
+        )
         health = client.get("/v1/rag/health")
 
     assert response.status_code == 200

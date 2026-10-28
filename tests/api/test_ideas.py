@@ -4,14 +4,18 @@ from careerpilot.api.app import create_app
 from careerpilot.memory.ideas import IdeaService
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
+from tests.api.auth_helpers import build_auth_service, issue_session
 
 
 def test_idea_api_returns_authorization_and_never_accepts_owner_from_body(tmp_path) -> None:
     store = SqliteUnifiedMemoryStore(tmp_path / "memory.db")
     memories = MemoryService(store)
     ideas = IdeaService(memories)
-    client = TestClient(create_app(memory_service=memories, idea_service=ideas))
-    cookies = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
+    auth = build_auth_service(tmp_path / "auth.db")
+    client = TestClient(
+        create_app(memory_service=memories, idea_service=ideas, auth_service=auth)
+    )
+    cookies = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
     try:
         rejected = client.post(
             "/v1/me/ideas",
@@ -47,8 +51,11 @@ def test_idea_api_denied_authorization_does_not_persist(tmp_path) -> None:
     store = SqliteUnifiedMemoryStore(tmp_path / "memory.db")
     memories = MemoryService(store)
     ideas = IdeaService(memories)
-    client = TestClient(create_app(memory_service=memories, idea_service=ideas))
-    cookies = {"careerpilot_owner": "550e8400-e29b-41d4-a716-446655440000"}
+    auth = build_auth_service(tmp_path / "auth.db")
+    client = TestClient(
+        create_app(memory_service=memories, idea_service=ideas, auth_service=auth)
+    )
+    cookies = issue_session(auth, owner_id="550e8400-e29b-41d4-a716-446655440000")
     try:
         response = client.post(
             "/v1/me/ideas",

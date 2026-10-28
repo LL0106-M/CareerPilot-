@@ -1127,6 +1127,23 @@ class SqliteRagStore:
         row = self._connection.execute("SELECT COUNT(*) AS count FROM documents").fetchone()
         return int(row["count"])
 
+    def list_documents_for_domains(
+        self, domains: tuple[str, ...], *, limit: int = 200
+    ) -> tuple[sqlite3.Row, ...]:
+        if not domains:
+            return ()
+        placeholders = ",".join("?" for _ in domains)
+        rows = self._connection.execute(
+            f"""SELECT * FROM documents
+            WHERE domain IN ({placeholders})
+              AND owner_user_id IS NULL
+              AND source_uri <> ''
+            ORDER BY COALESCE(fetched_at, published_at, '') DESC, title
+            LIMIT ?""",
+            (*domains, max(1, min(limit, 1000))),
+        ).fetchall()
+        return tuple(rows)
+
     def count_chunks(self) -> int:
         row = self._connection.execute("SELECT COUNT(*) AS count FROM chunks").fetchone()
         return int(row["count"])

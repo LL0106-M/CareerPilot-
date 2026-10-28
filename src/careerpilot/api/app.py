@@ -1,13 +1,17 @@
+import hashlib
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Protocol
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from careerpilot.actions.payloads import validate_grant_constraints
 from careerpilot.actions.registry import build_mvp_capability_registry
@@ -21,12 +25,11 @@ from careerpilot.actions.service import (
 )
 from careerpilot.actions.store import SqliteActionStore
 from careerpilot.actions.tool import build_action_tools
-from careerpilot.agent.service import ChatCommand, ChatResult
+from careerpilot.agent.service import ChatCommand, ChatResult, ChatStreamEvent
 from careerpilot.api.auth import (
-    COOKIE_NAME,
+    SESSION_COOKIE_NAME,
     Identity,
     generate_conversation_id,
-    read_or_create_identity,
 )
 from careerpilot.api.dependencies import build_agent_service, build_search_provider
 from careerpilot.api.schemas import (
@@ -43,14 +46,27 @@ from careerpilot.api.schemas import (
     IdeaUpdateRequest,
     IntegrationGrantRequest,
     JourneyUpdateRequest,
+    LoginRequest,
     MemoryCreateRequest,
     MemoryUpdateRequest,
     RagQueryRequest,
+    RegisterRequest,
     RunEventResponse,
     RunEventsResponse,
+    VerificationCodeRequest,
     VersionRequest,
 )
 from careerpilot.api.static import SPAStaticFiles
+from careerpilot.auth.mailer import SmtpVerificationMailer
+from careerpilot.auth.passwords import PasswordHasher
+from careerpilot.auth.service import AuthenticationError, AuthService, LoginRateLimitError
+from careerpilot.auth.store import DuplicateAccountError, SqliteAuthStore
+from careerpilot.auth.verification import (
+    InvalidVerificationCodeError,
+    VerificationDeliveryError,
+    VerificationRateLimitError,
+    VerificationService,
+)
 from careerpilot.config import Settings, get_settings
 from careerpilot.connectors.feishu_cli import FeishuCliConnector
 from careerpilot.connectors.netease_mail import NeteaseMailConnector
@@ -82,6 +98,27 @@ from careerpilot.rag.store import SqliteRagStore
 class ChatService(Protocol):
     async def chat(self, command: ChatCommand) -> ChatResult: ...
 
+    def stream_chat(self, command: ChatCommand) -> AsyncIterator[ChatStreamEvent]: ...
+
+
+def _request_origin_is_allowed(
+    request: Request, origin: str, configured_origins: list[str]
+) -> bool:
+    normalized = origin.rstrip("/")
+    if normalized in {item.rstrip("/") for item in configured_origins}:
+        return True
+    parsed = urlsplit(normalized)
+    forwarded_host = request.headers.get("x-forwarded-host")
+    effective_host = (forwarded_host or request.headers.get("host") or "").split(",", 1)[0].strip()
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    effective_proto = (forwarded_proto or request.url.scheme).split(",", 1)[0].strip()
+    return bool(
+        parsed.scheme
+        and parsed.netloc
+        and parsed.scheme.casefold() == effective_proto.casefold()
+        and parsed.netloc.casefold() == effective_host.casefold()
+    )
+
 
 def create_app(
     settings: Settings | None = None,
@@ -94,6 +131,7 @@ def create_app(
     cognitive_store: SqliteCognitiveStore | None = None,
     product_store: ProductStore | None = None,
     run_store: SqliteAgentRunStore | None = None,
+    auth_service: AuthService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     owned_memory_store: MemoryStore | None = None
@@ -106,6 +144,11 @@ def create_app(
     owned_run_store: SqliteAgentRunStore | None = None
     owned_http_clients: list[httpx.AsyncClient] = []
     action_registry = build_mvp_capability_registry()
+
+    class UnavailableMailer:
+        def send_registration_code(self, recipient: str, code: str) -> None:
+            del recipient, code
+            raise RuntimeError("SMTP is not configured")
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -138,17 +181,80 @@ def create_app(
         allow_headers=["Content-Type", "Accept"],
     )
 
+    @app.middleware("http")
+    async def reject_cross_site_cookie_mutations(request: Request, call_next):
+        if (
+            request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and request.cookies.get(SESSION_COOKIE_NAME)
+        ):
+            origin = request.headers.get("origin")
+            if origin is not None and not _request_origin_is_allowed(
+                request, origin, resolved_settings.allowed_origins
+            ):
+                return JSONResponse(
+                    status_code=403, content={"detail": "cross-site request denied"}
+                )
+        return await call_next(request)
+
+    def resolve_auth_service() -> AuthService:
+        nonlocal auth_service
+        if auth_service is None:
+            store = SqliteAuthStore(resolved_settings.auth_db_path)
+            if (
+                resolved_settings.smtp_account is not None
+                and resolved_settings.smtp_authorization_code is not None
+            ):
+                mailer = SmtpVerificationMailer(
+                    host=resolved_settings.smtp_host,
+                    port=resolved_settings.smtp_port,
+                    account=resolved_settings.smtp_account,
+                    authorization_code=resolved_settings.smtp_authorization_code.get_secret_value(),
+                    sender_name=resolved_settings.smtp_sender_name,
+                )
+            else:
+                mailer = UnavailableMailer()
+            verification = VerificationService(
+                store=store,
+                mailer=mailer,
+                secret=resolved_settings.cookie_secret.get_secret_value(),
+            )
+            auth_service = AuthService(
+                store=store,
+                password_hasher=PasswordHasher(),
+                verification=verification,
+            )
+        return auth_service
+
     def resolve_identity(
         response: Response,
-        careerpilot_owner: str | None = Cookie(default=None, alias=COOKIE_NAME),
+        session_cookie: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     ) -> Identity:
-        return read_or_create_identity(
-            response,
-            careerpilot_owner,
-            secret=resolved_settings.cookie_secret.get_secret_value(),
-            secure_cookie=resolved_settings.secure_cookies,
-            accept_unsigned=resolved_settings.environment != "production",
-        )
+        account = resolve_auth_service().authenticate(session_cookie)
+        if account is None:
+            response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+            raise HTTPException(
+                status_code=401,
+                detail="authentication required",
+                headers={
+                    "Set-Cookie": (
+                        f"{SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; "
+                        "HttpOnly; SameSite=lax"
+                    )
+                },
+            )
+        if session_cookie is not None and resolve_auth_service().is_remembered_session(
+            session_cookie
+        ):
+            response.set_cookie(
+                key=SESSION_COOKIE_NAME,
+                value=session_cookie,
+                max_age=5 * 24 * 60 * 60,
+                httponly=True,
+                secure=resolved_settings.secure_cookies,
+                samesite="lax",
+                path="/",
+            )
+        return Identity(owner_id=account.id, is_anonymous=False)
 
     def resolve_chat_service() -> ChatService:
         nonlocal chat_service, owned_memory_store, owned_rag_store
@@ -307,6 +413,88 @@ def create_app(
             raise HTTPException(status_code=503, detail=f"service is not ready: {exc}") from exc
         return {"status": "ready", "service": resolved_settings.app_name}
 
+    def account_payload(account) -> dict[str, str]:
+        return {"id": account.id, "username": account.username, "email": account.email}
+
+    @app.post("/v1/auth/verification-codes", status_code=202)
+    async def request_verification_code(
+        body: VerificationCodeRequest, request: Request
+    ) -> dict[str, object]:
+        source = request.client.host if request.client is not None else "unknown"
+        source_key = hashlib.sha256(source.encode()).hexdigest()
+        try:
+            dispatch = resolve_auth_service().request_registration_code(body.email, source_key)
+        except DuplicateAccountError as error:
+            raise HTTPException(status_code=409, detail={"field": error.field}) from error
+        except VerificationRateLimitError as error:
+            raise HTTPException(status_code=429, detail=str(error)) from error
+        except VerificationDeliveryError as error:
+            raise HTTPException(status_code=503, detail="验证码邮件暂时无法发送") from error
+        return {
+            "status": "sent",
+            "expires_at": dispatch.expires_at.isoformat(),
+            "retry_after_seconds": dispatch.retry_after_seconds,
+        }
+
+    @app.post("/v1/auth/register", status_code=201)
+    async def register(body: RegisterRequest) -> dict[str, str]:
+        try:
+            account = resolve_auth_service().register(
+                username=body.username,
+                email=body.email,
+                password=body.password,
+                code=body.verification_code,
+            )
+        except DuplicateAccountError as error:
+            raise HTTPException(status_code=409, detail={"field": error.field}) from error
+        except InvalidVerificationCodeError as error:
+            raise HTTPException(status_code=422, detail="验证码错误或已失效") from error
+        return account_payload(account)
+
+    @app.post("/v1/auth/login")
+    async def login(body: LoginRequest, request: Request, response: Response) -> dict[str, str]:
+        source = request.client.host if request.client is not None else "unknown"
+        source_key = hashlib.sha256(source.encode()).hexdigest()
+        try:
+            result = resolve_auth_service().login(
+                identifier=body.identifier,
+                password=body.password,
+                remember_me=body.remember_me,
+                source_key=source_key,
+            )
+        except LoginRateLimitError as error:
+            raise HTTPException(status_code=429, detail="登录尝试过多，请稍后再试") from error
+        except AuthenticationError as error:
+            raise HTTPException(status_code=401, detail="用户名、邮箱或密码不正确") from error
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=result.cookie_value,
+            max_age=5 * 24 * 60 * 60 if result.remember_me else None,
+            httponly=True,
+            secure=resolved_settings.secure_cookies,
+            samesite="lax",
+            path="/",
+        )
+        return account_payload(result.account)
+
+    @app.get("/v1/auth/me")
+    async def current_account(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, str]:
+        account = resolve_auth_service().store.get_account(identity.owner_id)
+        if account is None:
+            raise HTTPException(status_code=401, detail="authentication required")
+        return account_payload(account)
+
+    @app.post("/v1/auth/logout")
+    async def logout(
+        response: Response,
+        session_cookie: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    ) -> dict[str, str]:
+        resolve_auth_service().logout(session_cookie)
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+        return {"status": "ok"}
+
     @app.post("/v1/chat", response_model=ChatResponse)
     async def chat(
         request: ChatRequest,
@@ -334,20 +522,50 @@ def create_app(
             request.message,
             result.reply,
         )
-        return ChatResponse(
-            conversation_id=result.conversation_id,
-            run_id=result.run_id,
-            result_status=result.result_status,
-            citation_ids=result.citation_ids,
-            citation_warnings=result.citation_warnings,
-            reply=result.reply,
-            support_mode=result.support_mode,
-            primary_intent=result.primary_intent,
-            retrieval_sources=result.retrieval_sources,
-            memory_read_status=result.memory_read_status,
-            memory_write_status=result.memory_write_status,
-            dreaming_status=result.dreaming_status,
-            memory_ids=result.memory_ids,
+        return _chat_response(result)
+
+    @app.post("/v1/chat/stream")
+    async def stream_chat(
+        body: ChatRequest,
+        http_request: Request,
+        identity: Identity = Depends(resolve_identity),
+    ) -> StreamingResponse:
+        conversation_id = body.conversation_id or generate_conversation_id()
+        command = ChatCommand(
+            user_id=identity.owner_id,
+            conversation_id=conversation_id,
+            message=body.message,
+            requested_mode=body.support_mode,
+        )
+
+        async def events() -> AsyncIterator[str]:
+            try:
+                async for event in resolve_chat_service().stream_chat(command):
+                    if await http_request.is_disconnected():
+                        return
+                    if event.type == "delta":
+                        yield _sse_event("delta", {"text": event.text})
+                    elif event.result is not None:
+                        result = event.result
+                        resolve_product_store().record_conversation_turn(
+                            identity.owner_id,
+                            result.conversation_id,
+                            body.message,
+                            result.reply,
+                        )
+                        payload = _chat_response(result).model_dump(mode="json")
+                        yield _sse_event("completed", payload)
+            except RunCancellationRequested:
+                yield _sse_event("error", {"message": "run cancelled"})
+            except Exception:
+                yield _sse_event(
+                    "error", {"message": "这次没有送达，请稍后再试。"}
+                )
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     @app.get("/v1/me/conversations")
@@ -521,8 +739,31 @@ def create_app(
     async def list_preparation(
         limit: int = Query(default=200, ge=1, le=1000),
     ) -> dict[str, list[dict[str, object]]]:
-        del limit
-        return {"items": []}
+        rows = resolve_rag_store().list_documents_for_domains(
+            ("preparation_material", "curated_document", "domain_knowledge", "ai_frontier"),
+            limit=limit,
+        )
+        items: list[dict[str, object]] = []
+        for row in rows:
+            metadata = json.loads(str(row["metadata_json"] or "{}"))
+            items.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "publisher": (
+                        metadata.get("publisher")
+                        or metadata.get("site_name")
+                        or "来源网页"
+                    ),
+                    "category": metadata.get("category") or "其他",
+                    "format": metadata.get("format") or "网页",
+                    "url": row["source_uri"],
+                    "description": str(row["text"] or "")[:500],
+                    "updated_at": row["fetched_at"] or row["published_at"] or "",
+                    "source_type": row["source_type"],
+                }
+            )
+        return {"items": items}
 
     # ----- Personal documents (user-owned) --------------------------------
 
@@ -889,10 +1130,24 @@ def create_app(
         product["hypotheses"] = [
             _memory_payload(item) for item in canonical if item.type is MemoryType.HYPOTHESIS
         ]
-        product["ideas"] = [
+        governed_ideas = [
             _idea_payload(item, resolve_memory_service())
             for item in resolve_idea_service().list(identity.owner_id)
         ]
+        governed_memory_ids = {str(item["memory_id"]) for item in governed_ideas}
+        conversation_ideas = [
+            {
+                "id": item.id,
+                "memory_id": item.id,
+                "title": item.content,
+                "raw_text": item.content,
+                "stage": "captured",
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in canonical
+            if item.type is MemoryType.IDEA and item.id not in governed_memory_ids
+        ]
+        product["ideas"] = [*governed_ideas, *conversation_ideas]
         product["dreaming"] = [
             _daily_review_payload(item)
             for item in resolve_cognitive_store().list_daily_reviews(identity.owner_id)
@@ -905,10 +1160,16 @@ def create_app(
         body: HypothesisDecisionRequest,
         identity: Identity = Depends(resolve_identity),
     ) -> dict[str, str]:
-        if not resolve_product_store().decide_hypothesis(
-            identity.owner_id, hypothesis_id, body.decision
-        ):
+        try:
+            hypothesis = resolve_memory_service().get(identity.owner_id, hypothesis_id)
+        except MemoryNotFoundError:
+            hypothesis = None
+        if hypothesis is None or hypothesis.type is not MemoryType.HYPOTHESIS:
             raise HTTPException(status_code=404, detail="hypothesis not found")
+        if body.decision == "confirm" and hypothesis.status is MemoryStatus.CANDIDATE:
+            resolve_memory_service().confirm(
+                identity.owner_id, hypothesis_id, expected_version=hypothesis.version
+            )
         return {"status": "ok"}
 
     @app.post("/v1/me/hypotheses/{hypothesis_id}/verification-task")
@@ -916,12 +1177,36 @@ def create_app(
         hypothesis_id: str,
         identity: Identity = Depends(resolve_identity),
     ) -> dict[str, object]:
-        task = resolve_product_store().create_verification_task(
-            identity.owner_id, hypothesis_id
-        )
-        if task is None:
+        try:
+            hypothesis = resolve_memory_service().get(identity.owner_id, hypothesis_id)
+        except MemoryNotFoundError:
+            hypothesis = None
+        if hypothesis is None or hypothesis.type is not MemoryType.HYPOTHESIS:
             raise HTTPException(status_code=404, detail="hypothesis not found")
-        return task
+        return resolve_product_store().create_memory_verification_task(
+            identity.owner_id,
+            hypothesis.id,
+            hypothesis.content,
+            source="hypothesis",
+        )
+
+    @app.post("/v1/me/ideas/{idea_id}/verification-task")
+    async def create_idea_verification_task(
+        idea_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            idea = resolve_memory_service().get(identity.owner_id, idea_id)
+        except MemoryNotFoundError:
+            idea = None
+        if idea is None or idea.type is not MemoryType.IDEA:
+            raise HTTPException(status_code=404, detail="idea not found")
+        return resolve_product_store().create_memory_verification_task(
+            identity.owner_id,
+            idea.id,
+            idea.content,
+            source="idea",
+        )
 
     @app.patch("/v1/me/journey/{task_id}")
     async def update_journey_task(
@@ -1194,6 +1479,7 @@ def _idea_payload(item: IdeaItem, memories: MemoryService) -> dict[str, object]:
         "id": item.id,
         "memory_id": item.memory_id,
         "title": item.title,
+        "raw_text": memory.content,
         "stage": item.stage.value,
         "authorization": item.authorization.value,
         "memory_status": memory.status.value,
@@ -1222,6 +1508,29 @@ def _daily_review_payload(review: DailyReview) -> dict[str, object]:
         "created_at": review.created_at.isoformat(),
         "updated_at": review.updated_at.isoformat(),
     }
+
+
+def _chat_response(result: ChatResult) -> ChatResponse:
+    return ChatResponse(
+        conversation_id=result.conversation_id,
+        run_id=result.run_id,
+        result_status=result.result_status,
+        citation_ids=result.citation_ids,
+        citation_warnings=result.citation_warnings,
+        reply=result.reply,
+        support_mode=result.support_mode,
+        primary_intent=result.primary_intent,
+        retrieval_sources=result.retrieval_sources,
+        memory_read_status=result.memory_read_status,
+        memory_write_status=result.memory_write_status,
+        dreaming_status=result.dreaming_status,
+        memory_ids=result.memory_ids,
+    )
+
+
+def _sse_event(event: str, data: dict[str, object]) -> str:
+    payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    return f"event: {event}\ndata: {payload}\n\n"
 
 
 app = create_app()

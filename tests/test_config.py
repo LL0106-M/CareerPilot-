@@ -120,7 +120,22 @@ def test_production_accepts_explicit_runtime_contract(tmp_path) -> None:
         CAREERPILOT_COOKIE_SECRET="a-production-secret-with-more-than-32-characters",
         CAREERPILOT_MODEL_API_KEY="model-secret",
         CAREERPILOT_FRONTEND_DIST_PATH=tmp_path,
+        CAREERPILOT_SMTP_ACCOUNT="sender@163.com",
+        CAREERPILOT_SMTP_AUTHORIZATION_CODE="smtp-authorization-code",
     )
 
     assert settings.frontend_dist_path == tmp_path
     assert settings.secure_cookies is True
+
+
+def test_production_requires_email_verification_delivery(tmp_path) -> None:
+    (tmp_path / "index.html").write_text("ready", "utf-8")
+
+    with pytest.raises(ValidationError, match="SMTP account and authorization code"):
+        Settings(
+            _env_file=None,
+            CAREERPILOT_ENVIRONMENT="production",
+            CAREERPILOT_COOKIE_SECRET="a-production-secret-with-more-than-32-characters",
+            CAREERPILOT_MODEL_API_KEY="model-secret",
+            CAREERPILOT_FRONTEND_DIST_PATH=tmp_path,
+        )

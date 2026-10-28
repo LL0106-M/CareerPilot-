@@ -24,11 +24,25 @@ describe('knowledge pages', () => {
   })
 
   it('shows curated AI resources and switches collections', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ items: [] })))
     const user = userEvent.setup()
     render(<MemoryRouter><PreparationPage /></MemoryRouter>)
     expect(screen.getAllByText('Machine Learning Crash Course').length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: '产品设计' }))
     expect(screen.getAllByText('People + AI Guidebook').length).toBeGreaterThan(0)
+  })
+
+  it('shows newly collected preparation material from the backend', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ items: [{
+      id:'live-1', title:'2026 AI 产品实践课', publisher:'Example University', category:'产品设计',
+      format:'网页', url:'https://example.com/course', description:'刚刚在对话中收集的资料。',
+      updated_at:'2026-10-28T00:00:00+00:00', source_type:'web_search',
+    }] })))
+
+    render(<MemoryRouter><PreparationPage /></MemoryRouter>)
+
+    expect(await screen.findAllByText('2026 AI 产品实践课')).not.toHaveLength(0)
+    expect(screen.getByText('刚刚在对话中收集的资料。')).toBeInTheDocument()
   })
 
   it('does not fabricate personal documents when the backend is empty', async () => {

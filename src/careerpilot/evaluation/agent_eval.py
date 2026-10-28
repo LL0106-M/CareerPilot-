@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import statistics
 import time
@@ -261,16 +262,27 @@ async def run_dataset(
     base_url: str,
     use_judge: bool,
     progress_path: Path | None = None,
+    identifier: str | None = None,
+    password: str | None = None,
 ) -> dict[str, Any]:
+    if not identifier or not password:
+        raise ValueError("evaluation login identifier and password are required")
     judge = LLMQualityJudge() if use_judge else None
     results: list[EvalResult] = []
     for case in cases:
-        owner_id = str(uuid4())
         async with httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             timeout=120,
-            cookies={"careerpilot_owner": owner_id},
         ) as client:
+            login = await client.post(
+                "/v1/auth/login",
+                json={
+                    "identifier": identifier,
+                    "password": password,
+                    "remember_me": False,
+                },
+            )
+            login.raise_for_status()
             request = {
                 "conversation_id": f"eval-{case.id}-{uuid4().hex[:8]}",
                 "message": case.prompt,
@@ -362,6 +374,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--judge", action="store_true", help="Add zero-temperature LLM quality scoring"
     )
+    parser.add_argument(
+        "--identifier", default=os.getenv("CAREERPILOT_EVAL_IDENTIFIER")
+    )
+    parser.add_argument(
+        "--password", default=os.getenv("CAREERPILOT_EVAL_PASSWORD")
+    )
     return parser.parse_args()
 
 
@@ -376,6 +394,8 @@ def main() -> None:
             base_url=args.base_url,
             use_judge=args.judge,
             progress_path=args.output,
+            identifier=args.identifier,
+            password=args.password,
         )
     )
     _write_report(args.output, report)

@@ -22,6 +22,7 @@ tmp/
 .superpowers/
 .workbuddy/
 .worktrees/
+.runtime/
 
 # Generated knowledge indexes; version source documents instead.
 data/rag/*.db
@@ -36,4 +37,7 @@ data/product/*.db-wal
 data/sessions/*.db
 data/sessions/*.db-shm
 data/sessions/*.db-wal
+data/auth/*.db
+data/auth/*.db-shm
+data/auth/*.db-wal
 data/models/

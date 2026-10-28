@@ -8,6 +8,7 @@ dependencies = [
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
   "langchain-openai>=0.3,<2",
+  "pwdlib[argon2]>=0.3,<1",
   "pydantic-settings>=2.8,<3",
   "pymupdf4llm>=0.2,<1",
   "pypdf>=5,<7",
