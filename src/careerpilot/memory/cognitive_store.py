@@ -490,6 +490,21 @@ class SqliteCognitiveStore:
             created_at=row["created_at"], updated_at=row["updated_at"],
         )
 
+    def get_manual_result_by_id(
+        self, owner_id: str, result_id: str
+    ) -> DailyDreamingResult | None:
+        row = self._connection.execute(
+            "SELECT * FROM manual_dreaming_results WHERE owner_id=? AND id=?",
+            (owner_id, result_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return DailyDreamingResult(
+            id=row["id"], owner_id=row["owner_id"], local_date=row["local_date"],
+            result_json=row["result_json"], version=row["version"],
+            created_at=row["created_at"], updated_at=row["updated_at"],
+        )
+
     @staticmethod
     def _manual_job(row: sqlite3.Row) -> ManualDreamingJob:
         return ManualDreamingJob(
