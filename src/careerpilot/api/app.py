@@ -9,7 +9,16 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
-from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import (
+    BackgroundTasks,
+    Cookie,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.middleware.gzip import GZipMiddleware
@@ -26,8 +35,8 @@ from careerpilot.actions.service import (
 )
 from careerpilot.actions.store import SqliteActionStore
 from careerpilot.actions.tool import build_action_tools
-from careerpilot.agent.service import ChatCommand, ChatResult, ChatStreamEvent
 from careerpilot.agent.model import create_reasoning_model
+from careerpilot.agent.service import ChatCommand, ChatResult, ChatStreamEvent
 from careerpilot.api.auth import (
     SESSION_COOKIE_NAME,
     Identity,
@@ -79,8 +88,8 @@ from careerpilot.harness.session import SqliteSessionStore
 from careerpilot.memory.base import MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.daily_review import DailyReview
-from careerpilot.memory.ideas import IdeaItem, IdeaService, IdeaStorageDeniedError
 from careerpilot.memory.dreaming_llm import JsonDreamingAnalyzer
+from careerpilot.memory.ideas import IdeaItem, IdeaService, IdeaStorageDeniedError
 from careerpilot.memory.manual_dreaming import (
     ManualDreamingNoEvidence,
     ManualDreamingService,
@@ -193,9 +202,8 @@ def create_app(
 
     @app.middleware("http")
     async def reject_cross_site_cookie_mutations(request: Request, call_next):
-        if (
-            request.method in {"POST", "PUT", "PATCH", "DELETE"}
-            and request.cookies.get(SESSION_COOKIE_NAME)
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.cookies.get(
+            SESSION_COOKIE_NAME
         ):
             origin = request.headers.get("origin")
             if origin is not None and not _request_origin_is_allowed(
@@ -247,8 +255,7 @@ def create_app(
                 detail="authentication required",
                 headers={
                     "Set-Cookie": (
-                        f"{SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; "
-                        "HttpOnly; SameSite=lax"
+                        f"{SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=lax"
                     )
                 },
             )
@@ -383,9 +390,7 @@ def create_app(
     def resolve_memory_service() -> MemoryService:
         nonlocal memory_service, owned_unified_memory_store
         if memory_service is None:
-            owned_unified_memory_store = SqliteUnifiedMemoryStore(
-                resolved_settings.memory_db_path
-            )
+            owned_unified_memory_store = SqliteUnifiedMemoryStore(resolved_settings.memory_db_path)
             memory_service = MemoryService(
                 owned_unified_memory_store,
                 embedder=create_embedding_provider(resolved_settings),
@@ -432,9 +437,10 @@ def create_app(
         try:
             for database_path in resolved_settings.runtime_database_paths:
                 database_path.parent.mkdir(parents=True, exist_ok=True)
-            if resolved_settings.frontend_dist_path is not None and not (
-                resolved_settings.frontend_dist_path / "index.html"
-            ).is_file():
+            if (
+                resolved_settings.frontend_dist_path is not None
+                and not (resolved_settings.frontend_dist_path / "index.html").is_file()
+            ):
                 raise OSError("frontend bundle is missing")
         except OSError as exc:
             raise HTTPException(status_code=503, detail=f"service is not ready: {exc}") from exc
@@ -585,9 +591,7 @@ def create_app(
             except RunCancellationRequested:
                 yield _sse_event("error", {"message": "run cancelled"})
             except Exception:
-                yield _sse_event(
-                    "error", {"message": "这次没有送达，请稍后再试。"}
-                )
+                yield _sse_event("error", {"message": "这次没有送达，请稍后再试。"})
 
         return StreamingResponse(
             events(),
@@ -606,9 +610,7 @@ def create_app(
         conversation_id: str,
         identity: Identity = Depends(resolve_identity),
     ) -> dict[str, object]:
-        conversation = resolve_product_store().get_conversation(
-            identity.owner_id, conversation_id
-        )
+        conversation = resolve_product_store().get_conversation(identity.owner_id, conversation_id)
         if conversation is None:
             raise HTTPException(status_code=404, detail="conversation not found")
         return conversation
@@ -778,9 +780,7 @@ def create_app(
                     "id": row["id"],
                     "title": row["title"],
                     "publisher": (
-                        metadata.get("publisher")
-                        or metadata.get("site_name")
-                        or "来源网页"
+                        metadata.get("publisher") or metadata.get("site_name") or "来源网页"
                     ),
                     "category": metadata.get("category") or "其他",
                     "format": metadata.get("format") or "网页",
@@ -903,9 +903,7 @@ def create_app(
     ) -> dict[str, object]:
         try:
             method = getattr(resolve_memory_service(), operation)
-            record = method(
-                identity.owner_id, memory_id, expected_version=body.expected_version
-            )
+            record = method(identity.owner_id, memory_id, expected_version=body.expected_version)
         except MemoryNotFoundError as error:
             raise HTTPException(status_code=404, detail="memory not found") from error
         except (MemoryVersionConflictError, ValueError) as error:
@@ -1137,9 +1135,7 @@ def create_app(
         return {
             "items": [
                 _daily_review_payload(review)
-                for review in resolve_cognitive_store().list_daily_reviews(
-                    identity.owner_id, limit
-                )
+                for review in resolve_cognitive_store().list_daily_reviews(identity.owner_id, limit)
             ]
         }
 
@@ -1338,9 +1334,7 @@ def create_app(
         try:
             for capability in body.capabilities:
                 action_registry.get(provider_id, capability)
-            validate_grant_constraints(
-                provider_id, body.capabilities, body.resource_constraints
-            )
+            validate_grant_constraints(provider_id, body.capabilities, body.resource_constraints)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except ValueError as error:
@@ -1453,6 +1447,7 @@ def create_app(
         }
 
     if resolved_settings.frontend_dist_path is not None:
+
         @app.api_route(
             "/v1/{unmatched_path:path}",
             methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

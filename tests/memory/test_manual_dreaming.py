@@ -16,10 +16,16 @@ from careerpilot.memory.manual_dreaming import (
 class StaticAnalyzer:
     async def analyze(self, snapshot):
         return DreamingAnalysis(
-            hypotheses=(HypothesisProposal("更适合产品探索", "medium", (snapshot.evidence[0].id,)),),
+            hypotheses=(
+                HypothesisProposal("更适合产品探索", "medium", (snapshot.evidence[0].id,)),
+            ),
             daily_review=DailyReviewDraft(
-                local_date="2026-10-29", wins=("持续记录",), ideas=("验证产品方向",),
-                blockers=(), open_loops=("需要真实访谈",), tomorrow_step="约一位用户访谈",
+                local_date="2026-10-29",
+                wins=("持续记录",),
+                ideas=("验证产品方向",),
+                blockers=(),
+                open_loops=("需要真实访谈",),
+                tomorrow_step="约一位用户访谈",
                 source_event_ids=(snapshot.evidence[0].id,),
             ),
         )
@@ -50,11 +56,25 @@ class EmptyRag:
 
 def test_collector_keeps_only_evidence_from_the_last_seven_days() -> None:
     now = datetime(2026, 10, 29, tzinfo=UTC)
-    memories = RecordingMemories((
-        SimpleNamespace(id="recent", content="最近想法", type=SimpleNamespace(value="idea"), updated_at=now - timedelta(days=6)),
-        SimpleNamespace(id="old", content="旧想法", type=SimpleNamespace(value="idea"), updated_at=now - timedelta(days=8)),
-    ))
-    evidence = collect_recent_evidence("u1", date(2026, 10, 29), memories, EmptyProduct(), EmptyRag())
+    memories = RecordingMemories(
+        (
+            SimpleNamespace(
+                id="recent",
+                content="最近想法",
+                type=SimpleNamespace(value="idea"),
+                updated_at=now - timedelta(days=6),
+            ),
+            SimpleNamespace(
+                id="old",
+                content="旧想法",
+                type=SimpleNamespace(value="idea"),
+                updated_at=now - timedelta(days=8),
+            ),
+        )
+    )
+    evidence = collect_recent_evidence(
+        "u1", date(2026, 10, 29), memories, EmptyProduct(), EmptyRag()
+    )
     assert [item.id for item in evidence] == ["memory:recent"]
 
 
@@ -63,7 +83,9 @@ async def test_manual_service_generates_result_and_confirms_hypothesis(tmp_path)
     store = SqliteCognitiveStore(tmp_path / "memory.db")
     memories = RecordingMemories()
     service = ManualDreamingService(
-        store, StaticAnalyzer(), memories,
+        store,
+        StaticAnalyzer(),
+        memories,
         lambda owner_id, local_day: (EvidenceRef("e1", "我想验证产品方向", "idea"),),
     )
     job = service.start("u1", date(2026, 10, 29))
@@ -79,7 +101,9 @@ async def test_manual_service_generates_result_and_confirms_hypothesis(tmp_path)
 
 def test_manual_service_rejects_empty_evidence(tmp_path) -> None:
     service = ManualDreamingService(
-        SqliteCognitiveStore(tmp_path / "memory.db"), StaticAnalyzer(), RecordingMemories(),
+        SqliteCognitiveStore(tmp_path / "memory.db"),
+        StaticAnalyzer(),
+        RecordingMemories(),
         lambda owner_id, local_day: (),
     )
     with pytest.raises(ManualDreamingNoEvidence):
@@ -94,7 +118,9 @@ async def test_manual_service_records_analyzer_failure(tmp_path) -> None:
 
     store = SqliteCognitiveStore(tmp_path / "memory.db")
     service = ManualDreamingService(
-        store, BrokenAnalyzer(), RecordingMemories(),
+        store,
+        BrokenAnalyzer(),
+        RecordingMemories(),
         lambda owner_id, local_day: (EvidenceRef("e1", "证据", "idea"),),
     )
     job = service.start("u1", date(2026, 10, 29))

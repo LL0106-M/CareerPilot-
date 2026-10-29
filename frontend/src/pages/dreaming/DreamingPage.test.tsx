@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { api } from '../../data/api'
+import { api, type DreamingResult } from '../../data/api'
 import { DreamingPage } from './DreamingPage'
 
 vi.mock('../../data/api', () => ({
@@ -12,7 +12,7 @@ vi.mock('../../data/api', () => ({
   },
 }))
 
-const result = {
+const result: DreamingResult = {
   id: 'result-1', local_date: '2026-10-29', version: 1, updated_at: '2026-10-29T08:00:00Z',
   summary: '你持续在验证产品方向', wins: ['完成一次用户访谈'], ideas: ['做求职产品'],
   blockers: [], open_loops: ['还需验证付费意愿'], tomorrow_step: '再访谈一位用户',

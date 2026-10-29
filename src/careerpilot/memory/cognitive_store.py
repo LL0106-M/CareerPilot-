@@ -220,9 +220,7 @@ class SqliteCognitiveStore:
                 raise ValueError("Dreaming confidence band is invalid")
             if not proposal.supporting_evidence_ids:
                 raise ValueError("Dreaming hypothesis requires supporting evidence")
-            cited = set(proposal.supporting_evidence_ids) | set(
-                proposal.contradicting_evidence_ids
-            )
+            cited = set(proposal.supporting_evidence_ids) | set(proposal.contradicting_evidence_ids)
             if not cited <= allowed_evidence:
                 raise ValueError("Dreaming hypothesis cites evidence outside its snapshot")
 
@@ -474,9 +472,7 @@ class SqliteCognitiveStore:
                 (error[:200], owner_id, job_id),
             )
 
-    def get_manual_result(
-        self, owner_id: str, local_date: str
-    ) -> DailyDreamingResult | None:
+    def get_manual_result(self, owner_id: str, local_date: str) -> DailyDreamingResult | None:
         row = self._connection.execute(
             """SELECT * FROM manual_dreaming_results
             WHERE owner_id=? AND local_date=?""",
@@ -485,14 +481,16 @@ class SqliteCognitiveStore:
         if row is None:
             return None
         return DailyDreamingResult(
-            id=row["id"], owner_id=row["owner_id"], local_date=row["local_date"],
-            result_json=row["result_json"], version=row["version"],
-            created_at=row["created_at"], updated_at=row["updated_at"],
+            id=row["id"],
+            owner_id=row["owner_id"],
+            local_date=row["local_date"],
+            result_json=row["result_json"],
+            version=row["version"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
-    def get_manual_result_by_id(
-        self, owner_id: str, result_id: str
-    ) -> DailyDreamingResult | None:
+    def get_manual_result_by_id(self, owner_id: str, result_id: str) -> DailyDreamingResult | None:
         row = self._connection.execute(
             "SELECT * FROM manual_dreaming_results WHERE owner_id=? AND id=?",
             (owner_id, result_id),
@@ -500,17 +498,25 @@ class SqliteCognitiveStore:
         if row is None:
             return None
         return DailyDreamingResult(
-            id=row["id"], owner_id=row["owner_id"], local_date=row["local_date"],
-            result_json=row["result_json"], version=row["version"],
-            created_at=row["created_at"], updated_at=row["updated_at"],
+            id=row["id"],
+            owner_id=row["owner_id"],
+            local_date=row["local_date"],
+            result_json=row["result_json"],
+            version=row["version"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
         )
 
     @staticmethod
     def _manual_job(row: sqlite3.Row) -> ManualDreamingJob:
         return ManualDreamingJob(
-            id=row["id"], owner_id=row["owner_id"], local_date=row["local_date"],
-            status=row["status"], evidence_json=row["evidence_json"],
-            result_id=row["result_id"], last_error=row["last_error"],
+            id=row["id"],
+            owner_id=row["owner_id"],
+            local_date=row["local_date"],
+            status=row["status"],
+            evidence_json=row["evidence_json"],
+            result_id=row["result_id"],
+            last_error=row["last_error"],
         )
 
     def fail(self, job: DreamingJob, error: str) -> None:
@@ -526,9 +532,7 @@ class SqliteCognitiveStore:
         )
         self._connection.commit()
 
-    def list_hypotheses(
-        self, user_id: str, limit: int = 5
-    ) -> tuple[CareerHypothesis, ...]:
+    def list_hypotheses(self, user_id: str, limit: int = 5) -> tuple[CareerHypothesis, ...]:
         rows = self._connection.execute(
             """
             SELECT * FROM career_hypotheses
@@ -546,9 +550,7 @@ class SqliteCognitiveStore:
                 status=row["status"],
                 confidence_band=row["confidence_band"],
                 supporting_evidence_ids=tuple(json.loads(row["supporting_evidence_json"])),
-                contradicting_evidence_ids=tuple(
-                    json.loads(row["contradicting_evidence_json"])
-                ),
+                contradicting_evidence_ids=tuple(json.loads(row["contradicting_evidence_json"])),
                 open_questions=tuple(json.loads(row["open_questions_json"])),
             )
             for row in rows

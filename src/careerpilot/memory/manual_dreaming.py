@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Callable, Protocol
+from typing import Protocol
 
 from careerpilot.memory.cognitive_store import ManualDreamingJob, SqliteCognitiveStore
 from careerpilot.memory.dreaming import (
@@ -62,10 +63,13 @@ def collect_recent_evidence(owner_id, local_day, memories, product, rag) -> tupl
         for index, message in enumerate(detail.get("messages", [])):
             if message.get("role") != "user" or not str(message.get("content", "")).strip():
                 continue
-            evidence.append(EvidenceRef(
-                f"conversation:{conversation['id']}:{index}",
-                str(message["content"]), "conversation",
-            ))
+            evidence.append(
+                EvidenceRef(
+                    f"conversation:{conversation['id']}:{index}",
+                    str(message["content"]),
+                    "conversation",
+                )
+            )
     for row in rag.list_user_documents(owner_id):
         uploaded = _as_datetime(row["uploaded_at"])
         if uploaded is not None and uploaded >= cutoff:

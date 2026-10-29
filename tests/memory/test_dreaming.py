@@ -1,8 +1,7 @@
 import pytest
 
-from careerpilot.memory.cognitive_store import SqliteCognitiveStore
-
 from careerpilot.memory.base import MemoryContext
+from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.dreaming import (
     DreamingProcessor,
     DreamingSnapshot,
@@ -79,9 +78,7 @@ def test_manual_dreaming_reuses_active_job_and_overwrites_daily_result(tmp_path)
     same = store.start_manual_job("u1", "2026-10-29", '[{"id":"e1"}]')
     assert same.id == first.id
 
-    store.complete_manual_job(
-        "u1", first.id, '{"summary":"第一次","hypotheses":[]}'
-    )
+    store.complete_manual_job("u1", first.id, '{"summary":"第一次","hypotheses":[]}')
     initial = store.get_manual_result("u1", "2026-10-29")
     assert initial is not None
     assert initial.version == 1
@@ -89,13 +86,11 @@ def test_manual_dreaming_reuses_active_job_and_overwrites_daily_result(tmp_path)
     regenerated = store.start_manual_job("u1", "2026-10-29", '[{"id":"e2"}]')
     assert regenerated.id == first.id
     assert regenerated.status == "queued"
-    store.complete_manual_job(
-        "u1", regenerated.id, '{"summary":"更新后","hypotheses":[]}'
-    )
+    store.complete_manual_job("u1", regenerated.id, '{"summary":"更新后","hypotheses":[]}')
     updated = store.get_manual_result("u1", "2026-10-29")
     assert updated is not None
     assert updated.version == 2
-    assert '更新后' in updated.result_json
+    assert "更新后" in updated.result_json
 
 
 def test_failed_manual_regeneration_preserves_published_result_and_owner_scope(tmp_path) -> None:
