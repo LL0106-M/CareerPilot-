@@ -79,6 +79,35 @@ export interface DashboardResponse {
   memories: unknown[]
 }
 
+export interface DreamingHypothesis {
+  statement: string
+  confidence_band: 'low' | 'medium' | 'high'
+  supporting_evidence_ids: string[]
+  open_questions: string[]
+}
+
+export interface DreamingResult {
+  id: string
+  local_date: string
+  version: number
+  updated_at: string
+  summary: string
+  wins: string[]
+  ideas: string[]
+  blockers: string[]
+  open_loops: string[]
+  tomorrow_step: string | null
+  hypotheses: DreamingHypothesis[]
+}
+
+export interface DreamingJob {
+  job_id: string
+  status: 'queued' | 'processing' | 'completed' | 'failed'
+  local_date: string
+  error?: string | null
+  result?: DreamingResult | null
+}
+
 export interface ApiJob {
   id: string
   company_type?: string
@@ -288,6 +317,18 @@ export const api = {
         sensitivity: 'normal',
       }),
     })
+  },
+  startDreaming() {
+    return request<DreamingJob>('/v1/me/dreaming', { method: 'POST' })
+  },
+  getDreamingToday() {
+    return request<DreamingResult>('/v1/me/dreaming/today')
+  },
+  getDreamingJob(jobId: string) {
+    return request<DreamingJob>(`/v1/me/dreaming/jobs/${encodeURIComponent(jobId)}`)
+  },
+  confirmDreamingHypothesis(resultId: string, index: number) {
+    return request<{ memory_id: string; status: string }>(`/v1/me/dreaming/results/${encodeURIComponent(resultId)}/hypotheses/${index}/confirm`, { method: 'POST' })
   },
   decideHypothesis(id: string, decision: 'confirm' | 'uncertain') {
     return request<{ status: string }>(`/v1/me/hypotheses/${encodeURIComponent(id)}/decision`, {
