@@ -3,15 +3,16 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.middleware.gzip import GZipMiddleware
 
 from careerpilot.actions.payloads import validate_grant_constraints
 from careerpilot.actions.registry import build_mvp_capability_registry
@@ -26,6 +27,7 @@ from careerpilot.actions.service import (
 from careerpilot.actions.store import SqliteActionStore
 from careerpilot.actions.tool import build_action_tools
 from careerpilot.agent.service import ChatCommand, ChatResult, ChatStreamEvent
+from careerpilot.agent.model import create_reasoning_model
 from careerpilot.api.auth import (
     SESSION_COOKIE_NAME,
     Identity,
@@ -78,6 +80,12 @@ from careerpilot.memory.base import MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.daily_review import DailyReview
 from careerpilot.memory.ideas import IdeaItem, IdeaService, IdeaStorageDeniedError
+from careerpilot.memory.dreaming_llm import JsonDreamingAnalyzer
+from careerpilot.memory.manual_dreaming import (
+    ManualDreamingNoEvidence,
+    ManualDreamingService,
+    collect_recent_evidence,
+)
 from careerpilot.memory.models import MemoryRecord, MemoryStatus, MemoryType
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.unified_store import (
@@ -132,6 +140,7 @@ def create_app(
     product_store: ProductStore | None = None,
     run_store: SqliteAgentRunStore | None = None,
     auth_service: AuthService | None = None,
+    manual_dreaming_service: ManualDreamingService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     owned_memory_store: MemoryStore | None = None
@@ -173,6 +182,7 @@ def create_app(
             await client.aclose()
 
     app = FastAPI(title="CareerPilot Agent API", version="0.2.0", lifespan=lifespan)
+    app.add_middleware(GZipMiddleware, minimum_size=500)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.allowed_origins,
@@ -395,6 +405,23 @@ def create_app(
         if owned_cognitive_store is None:
             owned_cognitive_store = SqliteCognitiveStore(resolved_settings.memory_db_path)
         return owned_cognitive_store
+
+    def resolve_manual_dreaming_service() -> ManualDreamingService:
+        nonlocal manual_dreaming_service
+        if manual_dreaming_service is None:
+            manual_dreaming_service = ManualDreamingService(
+                resolve_cognitive_store(),
+                JsonDreamingAnalyzer(create_reasoning_model(resolved_settings)),
+                resolve_memory_service(),
+                lambda owner_id, local_day: collect_recent_evidence(
+                    owner_id,
+                    local_day,
+                    resolve_memory_service(),
+                    resolve_product_store(),
+                    resolve_rag_store(),
+                ),
+            )
+        return manual_dreaming_service
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -1115,6 +1142,53 @@ def create_app(
                 )
             ]
         }
+
+    @app.post("/v1/me/dreaming", status_code=202)
+    async def start_manual_dreaming(
+        background_tasks: BackgroundTasks,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        service = resolve_manual_dreaming_service()
+        try:
+            job = service.start(identity.owner_id, date.today())
+        except ManualDreamingNoEvidence as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if job.status == "queued":
+            background_tasks.add_task(service.run, identity.owner_id, job.id)
+        return {"job_id": job.id, "status": job.status, "local_date": job.local_date}
+
+    @app.get("/v1/me/dreaming/today")
+    async def get_manual_dreaming_today(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        result = resolve_manual_dreaming_service().today(identity.owner_id, date.today())
+        if result is None:
+            raise HTTPException(status_code=404, detail="Dreaming result not found")
+        return result
+
+    @app.get("/v1/me/dreaming/jobs/{job_id}")
+    async def get_manual_dreaming_job(
+        job_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        status = resolve_manual_dreaming_service().status(identity.owner_id, job_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Dreaming job not found")
+        return status
+
+    @app.post("/v1/me/dreaming/results/{result_id}/hypotheses/{index}/confirm")
+    async def confirm_manual_dreaming_hypothesis(
+        result_id: str,
+        index: int,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, str]:
+        try:
+            memory_id = resolve_manual_dreaming_service().confirm_hypothesis(
+                identity.owner_id, result_id, index
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        return {"memory_id": memory_id, "status": "confirmed"}
 
     # ----- Owner-scoped product state -------------------------------------
 
