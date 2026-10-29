@@ -30,6 +30,28 @@ class StoredMemoryPatch:
     status: str
 
 
+@dataclass(frozen=True, slots=True)
+class ManualDreamingJob:
+    id: str
+    owner_id: str
+    local_date: str
+    status: str
+    evidence_json: str
+    result_id: str | None
+    last_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DailyDreamingResult:
+    id: str
+    owner_id: str
+    local_date: str
+    result_json: str
+    version: int
+    created_at: str
+    updated_at: str
+
+
 class SqliteCognitiveStore:
     """Deterministic state for Dreaming jobs and non-factual career hypotheses."""
 
@@ -98,6 +120,30 @@ class SqliteCognitiveStore:
                 requires_confirmation INTEGER NOT NULL,
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS manual_dreaming_results (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                local_date TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(owner_id, local_date)
+            );
+
+            CREATE TABLE IF NOT EXISTS manual_dreaming_jobs (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                local_date TEXT NOT NULL,
+                status TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                result_id TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(owner_id, local_date)
             );
             """
         )
@@ -332,6 +378,124 @@ class SqliteCognitiveStore:
                 status=row["status"],
             )
             for row in rows
+        )
+
+    def start_manual_job(
+        self, owner_id: str, local_date: str, evidence_json: str
+    ) -> ManualDreamingJob:
+        with self._connection:
+            row = self._connection.execute(
+                "SELECT * FROM manual_dreaming_jobs WHERE owner_id=? AND local_date=?",
+                (owner_id, local_date),
+            ).fetchone()
+            if row is None:
+                job_id = str(uuid4())
+                self._connection.execute(
+                    """INSERT INTO manual_dreaming_jobs
+                    (id, owner_id, local_date, status, evidence_json)
+                    VALUES (?, ?, ?, 'queued', ?)""",
+                    (job_id, owner_id, local_date, evidence_json),
+                )
+            elif row["status"] not in {"queued", "processing"}:
+                job_id = row["id"]
+                self._connection.execute(
+                    """UPDATE manual_dreaming_jobs
+                    SET status='queued', evidence_json=?, last_error=NULL,
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE id=? AND owner_id=?""",
+                    (evidence_json, job_id, owner_id),
+                )
+            else:
+                job_id = row["id"]
+        job = self.get_manual_job(owner_id, job_id)
+        if job is None:
+            raise RuntimeError("Manual Dreaming job was not created")
+        return job
+
+    def get_manual_job(self, owner_id: str, job_id: str) -> ManualDreamingJob | None:
+        row = self._connection.execute(
+            "SELECT * FROM manual_dreaming_jobs WHERE owner_id=? AND id=?",
+            (owner_id, job_id),
+        ).fetchone()
+        return self._manual_job(row) if row is not None else None
+
+    def mark_manual_job_processing(self, owner_id: str, job_id: str) -> None:
+        with self._connection:
+            self._connection.execute(
+                """UPDATE manual_dreaming_jobs SET status='processing',
+                updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=? AND status='queued'""",
+                (owner_id, job_id),
+            )
+
+    def complete_manual_job(
+        self, owner_id: str, job_id: str, result_json: str
+    ) -> DailyDreamingResult:
+        job = self.get_manual_job(owner_id, job_id)
+        if job is None:
+            raise ValueError("Manual Dreaming job not found")
+        with self._connection:
+            existing = self._connection.execute(
+                """SELECT * FROM manual_dreaming_results
+                WHERE owner_id=? AND local_date=?""",
+                (owner_id, job.local_date),
+            ).fetchone()
+            if existing is None:
+                result_id = str(uuid4())
+                self._connection.execute(
+                    """INSERT INTO manual_dreaming_results
+                    (id, owner_id, local_date, result_json, version)
+                    VALUES (?, ?, ?, ?, 1)""",
+                    (result_id, owner_id, job.local_date, result_json),
+                )
+            else:
+                result_id = existing["id"]
+                self._connection.execute(
+                    """UPDATE manual_dreaming_results SET result_json=?,
+                    version=version+1, updated_at=CURRENT_TIMESTAMP
+                    WHERE id=? AND owner_id=?""",
+                    (result_json, result_id, owner_id),
+                )
+            self._connection.execute(
+                """UPDATE manual_dreaming_jobs SET status='completed', result_id=?,
+                last_error=NULL, updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND owner_id=?""",
+                (result_id, job_id, owner_id),
+            )
+        result = self.get_manual_result(owner_id, job.local_date)
+        if result is None:
+            raise RuntimeError("Manual Dreaming result was not saved")
+        return result
+
+    def fail_manual_job(self, owner_id: str, job_id: str, error: str) -> None:
+        with self._connection:
+            self._connection.execute(
+                """UPDATE manual_dreaming_jobs SET status='failed', last_error=?,
+                updated_at=CURRENT_TIMESTAMP WHERE owner_id=? AND id=?""",
+                (error[:200], owner_id, job_id),
+            )
+
+    def get_manual_result(
+        self, owner_id: str, local_date: str
+    ) -> DailyDreamingResult | None:
+        row = self._connection.execute(
+            """SELECT * FROM manual_dreaming_results
+            WHERE owner_id=? AND local_date=?""",
+            (owner_id, local_date),
+        ).fetchone()
+        if row is None:
+            return None
+        return DailyDreamingResult(
+            id=row["id"], owner_id=row["owner_id"], local_date=row["local_date"],
+            result_json=row["result_json"], version=row["version"],
+            created_at=row["created_at"], updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _manual_job(row: sqlite3.Row) -> ManualDreamingJob:
+        return ManualDreamingJob(
+            id=row["id"], owner_id=row["owner_id"], local_date=row["local_date"],
+            status=row["status"], evidence_json=row["evidence_json"],
+            result_id=row["result_id"], last_error=row["last_error"],
         )
 
     def fail(self, job: DreamingJob, error: str) -> None:
