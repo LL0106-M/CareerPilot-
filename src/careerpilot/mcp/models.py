@@ -98,7 +98,7 @@ class McpToolResult:
     status: Literal["completed", "failed", "forbidden"]
     server_name: str
     tool_name: str
-    structured_content: dict[str, Any] | None = None
+    structured_content: Any | None = None
     text_content: tuple[str, ...] = ()
     error: str | None = None
     truncated: bool = False
