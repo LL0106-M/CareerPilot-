@@ -32,6 +32,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="CAREERPILOT_FRONTEND_DIST_PATH",
     )
+    mcp_config_path: Path | None = Field(
+        default=None,
+        validation_alias="CAREERPILOT_MCP_CONFIG_PATH",
+    )
     max_upload_bytes: int = Field(
         default=15 * 1024 * 1024,
         gt=0,
