@@ -1,5 +1,5 @@
 import hashlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
@@ -15,6 +15,7 @@ from careerpilot.harness.events import HarnessEventType
 from careerpilot.harness.memory import MemoryLifecycle
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import RunCancellationRequested
+from careerpilot.mcp.platform import McpDiscoveryError
 from careerpilot.memory.base import MemoryStore
 from careerpilot.memory.dreaming import (
     CognitiveStore,
@@ -23,6 +24,8 @@ from careerpilot.memory.dreaming import (
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.write_policy import MemoryWritePolicy
 from careerpilot.support.policy import SupportMode, SupportPolicy
+
+McpToolFactory = Callable[[str, str], Awaitable[tuple[BaseTool, ...]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,12 +76,14 @@ class AgentService:
         unified_memory_service: MemoryService | None = None,
         run_store: SqliteAgentRunStore | None = None,
         verifier: AgentVerifier | None = None,
+        mcp_tool_factory: McpToolFactory | None = None,
     ) -> None:
         self._agent = agent
         self._rag_tool_factory = rag_tool_factory
         self._action_tool_factory = action_tool_factory
         self._run_store = run_store
         self._verifier = verifier or AgentVerifier()
+        self._mcp_tool_factory = mcp_tool_factory
         self._context_compiler = CareerContextCompiler(
             memory_store,
             support_policy,
@@ -144,6 +149,19 @@ class AgentService:
                 action_tools = self._action_tool_factory(command.user_id)
                 runtime_tools.extend(action_tools)
                 allowed_tool_names.update(tool.name for tool in action_tools)
+            if (
+                context.decision.mode is not SupportMode.LISTEN
+                and not context.decision.safety_risk_detected
+                and self._mcp_tool_factory is not None
+            ):
+                try:
+                    mcp_tools = await self._mcp_tool_factory(
+                        command.user_id, command.message
+                    )
+                except McpDiscoveryError:
+                    mcp_tools = ()
+                runtime_tools.extend(mcp_tools)
+                allowed_tool_names.update(tool.name for tool in mcp_tools)
             await self._raise_if_cancelled(run_id)
             await self._transition(run_id, AgentStage.EXECUTE)
             stream = getattr(self._agent, "stream", None)

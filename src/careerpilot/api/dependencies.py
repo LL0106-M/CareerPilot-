@@ -4,10 +4,12 @@ from langchain_core.tools import BaseTool
 
 from careerpilot.agent.model import create_qwen_model
 from careerpilot.agent.runtime import CareerPilotResponder
-from careerpilot.agent.service import AgentService
+from careerpilot.agent.service import AgentService, McpToolFactory
 from careerpilot.config import Settings
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.session import SqliteSessionStore
+from careerpilot.mcp.config import load_mcp_servers
+from careerpilot.mcp.platform import McpToolPlatform
 from careerpilot.memory.base import DisabledMemoryStore, MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.memos import MemosCloudMemoryStore
@@ -52,6 +54,7 @@ def build_agent_service(
     run_store = SqliteAgentRunStore(settings.session_db_path)
     model = create_qwen_model(settings)
     provider = build_search_provider(settings)
+    mcp_tool_factory = build_mcp_tool_factory(settings)
     agent = CareerPilotResponder(
         model,
         session_store=session_store,
@@ -69,6 +72,7 @@ def build_agent_service(
             cognitive_store=cognitive_store,
             unified_memory_service=unified_memory_service,
             run_store=run_store,
+            mcp_tool_factory=mcp_tool_factory,
         ),
         memory_store,
         rag_store,
@@ -81,6 +85,13 @@ def build_agent_service(
 
 def build_agent_tools(settings: Settings, rag_store: SqliteRagStore) -> list:
     return [build_agentic_rag_tool(rag_store, build_search_provider(settings))]
+
+
+def build_mcp_tool_factory(settings: Settings) -> McpToolFactory | None:
+    servers = load_mcp_servers(settings.mcp_config_path)
+    if not servers:
+        return None
+    return McpToolPlatform(servers).runtime_tools
 
 
 def build_search_provider(settings: Settings) -> AliyunWebSearchProvider | None:
