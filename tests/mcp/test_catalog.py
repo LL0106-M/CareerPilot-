@@ -70,3 +70,14 @@ def test_catalog_keeps_servers_namespaced() -> None:
         "mcp__jobs__search",
         "mcp__preparation__search",
     ]
+
+
+def test_catalog_matches_overlapping_chinese_phrases() -> None:
+    descriptors = (
+        _tool("search_jobs", "搜索当前产品经理岗位"),
+        _tool("read_resume", "读取本地简历"),
+    )
+
+    selected = McpToolCatalog().select("帮我搜索最新产品岗位", descriptors)
+
+    assert [item.tool_name for item in selected] == ["search_jobs"]

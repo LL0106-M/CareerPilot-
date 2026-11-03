@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any, Protocol
 
 from mcp import Client, StdioServerParameters
@@ -171,6 +172,7 @@ def _bound_result(result: McpToolResult, limit: int) -> McpToolResult:
                 text_content=(serialized[:limit],),
                 truncated=True,
             )
+        return replace(result, text_content=())
     joined = "\n".join(result.text_content)
     if len(joined) > limit:
         return McpToolResult(

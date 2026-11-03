@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from mcp.server import MCPServer
-from mcp.types import TextContent, ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from careerpilot.mcp.client import OfficialMcpClient
 from careerpilot.mcp.models import McpServerConfig
@@ -123,6 +123,28 @@ async def test_client_bounds_oversized_structured_result() -> None:
     assert result.truncated is True
     assert result.structured_content is None
     assert len(result.text_content[0]) <= 256
+
+
+@pytest.mark.asyncio
+async def test_client_prefers_structured_content_over_duplicate_text() -> None:
+    server = MCPServer("Mixed result")
+
+    @server.tool(
+        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+    )
+    def read_mixed_record() -> CallToolResult:
+        return CallToolResult(
+            content=[TextContent(type="text", text="x" * 180)],
+            structuredContent={"content": "y" * 180},
+        )
+
+    client = OfficialMcpClient(_config(max_result_chars=256), target=server)
+
+    result = await client.call_tool("read_mixed_record", {})
+
+    assert result.structured_content == {"content": "y" * 180}
+    assert result.text_content == ()
+    assert result.truncated is False
 
 
 @pytest.mark.asyncio

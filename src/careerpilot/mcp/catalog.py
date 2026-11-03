@@ -9,7 +9,15 @@ _TOKEN_PATTERN = re.compile(r"[a-z0-9]+|[\u3400-\u9fff]+", re.IGNORECASE)
 
 
 def _tokens(value: str) -> frozenset[str]:
-    return frozenset(match.casefold() for match in _TOKEN_PATTERN.findall(value))
+    tokens: set[str] = set()
+    for match in _TOKEN_PATTERN.findall(value):
+        token = match.casefold()
+        tokens.add(token)
+        if all("\u3400" <= character <= "\u9fff" for character in token):
+            tokens.update(
+                token[index : index + 2] for index in range(len(token) - 1)
+            )
+    return frozenset(tokens)
 
 
 class McpToolCatalog:
