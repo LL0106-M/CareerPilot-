@@ -75,6 +75,21 @@ def test_dashscope_search_is_configured_only_with_key_and_base_url(monkeypatch) 
     )
 
 
+def test_empty_optional_cloud_credentials_disable_paid_services(monkeypatch) -> None:
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "")
+    monkeypatch.setenv("CAREERPILOT_DASHSCOPE_BASE_URL", "")
+    monkeypatch.setenv("MEMOS_API_KEY", "")
+    monkeypatch.setenv("CAREERPILOT_EMBEDDING_API_KEY", "")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.dashscope_api_key is None
+    assert settings.dashscope_base_url is None
+    assert settings.memos_api_key is None
+    assert settings.embedding_api_key is None
+    assert settings.search_configured is False
+
+
 def test_search_strategy_rejects_nested_agent_mode(monkeypatch) -> None:
     monkeypatch.setenv("CAREERPILOT_SEARCH_DEFAULT_STRATEGY", "agent")
 

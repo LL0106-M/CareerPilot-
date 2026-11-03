@@ -189,6 +189,16 @@ class Settings(BaseSettings):
         validation_alias="CAREERPILOT_SEARCH_TIMEOUT_SECONDS",
     )
 
+    @field_validator(
+        "dashscope_api_key",
+        "memos_api_key",
+        "embedding_api_key",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_cloud_secret(cls, value: object) -> object:
+        return None if value == "" else value
+
     @field_validator("dashscope_base_url")
     @classmethod
     def normalize_dashscope_base_url(cls, value: str | None) -> str | None:

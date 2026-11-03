@@ -43,6 +43,12 @@ services:
       CAREERPILOT_MODEL_BASE_URL: http://local-llm:8080/v1
       CAREERPILOT_MODEL_API_KEY: local-open-source
       CAREERPILOT_MODEL_NAME: Qwen3-4B-GGUF
+      DASHSCOPE_API_KEY: ""
+      CAREERPILOT_DASHSCOPE_BASE_URL: ""
+      MEMOS_API_KEY: ""
+      CAREERPILOT_EMBEDDING_MODEL: ""
+      CAREERPILOT_EMBEDDING_BASE_URL: ""
+      CAREERPILOT_EMBEDDING_API_KEY: ""
       CAREERPILOT_RAG_DB_PATH: /app/data/rag/careerpilot.db
       CAREERPILOT_MEMORY_DB_PATH: /app/data/memory/careerpilot.db
       CAREERPILOT_SESSION_DB_PATH: /app/data/sessions/careerpilot.db
