@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         validation_alias="CAREERPILOT_MAX_UPLOAD_BYTES",
     )
     model_base_url: str = Field(
-        default="http://127.0.0.1:8000/v1",
+        default="http://127.0.0.1:8081/v1",
         validation_alias="CAREERPILOT_MODEL_BASE_URL",
     )
     model_api_key: SecretStr = Field(
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
         validation_alias="CAREERPILOT_MODEL_API_KEY",
     )
     model_name: str = Field(
-        default="qwen3.7-plus-2026-05-26",
+        default="Qwen3-4B-GGUF",
         validation_alias="CAREERPILOT_MODEL_NAME",
     )
     exploration_temperature: float = Field(

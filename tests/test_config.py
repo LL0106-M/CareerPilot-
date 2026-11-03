@@ -47,10 +47,12 @@ def test_dense_embeddings_are_optional_and_openai_compatible(monkeypatch) -> Non
     assert settings.embedding_base_url == "http://127.0.0.1:8001/v1"
 
 
-def test_production_defaults_pin_qwen_37_plus_snapshot() -> None:
+def test_defaults_use_local_open_source_model_without_paid_search() -> None:
     settings = Settings(_env_file=None)
 
-    assert settings.model_name == "qwen3.7-plus-2026-05-26"
+    assert settings.model_base_url == "http://127.0.0.1:8081/v1"
+    assert settings.model_name == "Qwen3-4B-GGUF"
+    assert settings.search_configured is False
     assert settings.search_model == "qwen3.7-plus-2026-05-26"
     assert settings.search_default_strategy == "turbo"
     assert settings.search_escalation_strategy == "max"
