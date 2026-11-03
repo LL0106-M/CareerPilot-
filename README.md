@@ -126,6 +126,63 @@ src/careerpilot/
 
 </details>
 
+## 本地运行
+
+本地模型默认使用完全开源的 `Qwen3-4B GGUF Q4_K_M`，由 `llama.cpp` 在 CPU 上运行，不需要付费模型 API。首次启动需要下载约 2.5 GB 模型权重，并额外下载 Docker 镜像；建议至少准备 8 GB 内存，16 GB 体验更稳定。
+
+### 1. 准备 Docker
+
+安装并启动 Docker Desktop，确认以下命令均能输出版本信息：
+
+```powershell
+docker version
+docker compose version
+```
+
+### 2. 启动本地模型
+
+```powershell
+docker compose up -d local-llm
+docker compose logs -f local-llm
+```
+
+模型下载和加载完成后按 `Ctrl+C` 退出日志查看，容器仍会继续运行。模型调试接口只绑定本机：
+
+```text
+http://127.0.0.1:8081/v1
+```
+
+运行真实健康、模型列表和对话冒烟测试：
+
+```powershell
+.venv\Scripts\python.exe scripts\smoke_local_model.py
+```
+
+模型权重保存在 `local-llm-cache` 命名卷中，普通停止和重启不会重复下载：
+
+```powershell
+docker compose stop local-llm
+docker compose start local-llm
+```
+
+### 3. 启动完整 CareerPilot
+
+完整生产容器仍需要在 `.env.production` 中配置应用自身的 Cookie 和邮件验证等设置，但不需要付费模型密钥。Compose 会让 CareerPilot 通过私有地址 `http://local-llm:8080/v1` 调用模型。
+
+```powershell
+docker compose up -d
+.venv\Scripts\python.exe scripts\smoke_deployment.py --base-url http://127.0.0.1:8080
+```
+
+查看状态或停止服务：
+
+```powershell
+docker compose ps
+docker compose down
+```
+
+当前保守配置使用 4096 上下文和单请求并发。确认内存余量和推理速度后再提高 `compose.yaml` 中的 `-c` 或 `-np`；过大的上下文会显著增加内存占用。不要把 `8081` 改为公网绑定，llama.cpp 的本地接口默认不提供应用级鉴权。
+
 ## 延伸阅读
 
 - [产品需求：CareerPilot MVP](PRD/CareerPilot-MVP-PRD-v1.0.md)
