@@ -17,7 +17,7 @@ services:
     ports:
       - "127.0.0.1:8081:8080"
     volumes:
-      - local-llm-cache:/root/.cache/llama.cpp
+      - local-llm-cache:/root/.cache
     restart: unless-stopped
     init: true
     security_opt:
