@@ -43,7 +43,10 @@ class McpToolPlatform:
         self._max_concurrency = max(1, max_concurrency)
 
     async def visible_tools(
-        self, *, force_refresh: bool = False
+        self,
+        *,
+        force_refresh: bool = False,
+        strict_connections: bool = False,
     ) -> tuple[McpToolDescriptor, ...]:
         semaphore = asyncio.Semaphore(self._max_concurrency)
 
@@ -64,6 +67,8 @@ class McpToolPlatform:
         visible: list[McpToolDescriptor] = []
         for discovery in discoveries:
             if isinstance(discovery, McpConnectionError):
+                if strict_connections:
+                    raise McpDiscoveryError("One or more MCP servers are unavailable")
                 continue
             if isinstance(discovery, Exception):
                 raise McpDiscoveryError(

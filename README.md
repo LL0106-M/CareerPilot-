@@ -104,6 +104,7 @@ React / Vite 产品前台
 FastAPI ── AgentService
              ├─ CareerContextCompiler
              ├─ CareerPilotHarness（model → tool → model）
+             ├─ MCP Tool Platform（discover → policy → select → call）
              ├─ Unified Memory / Idea / Dreaming
              ├─ Agentic RAG（local → turbo → max）
              └─ Action Service（preview → confirm → apply → verify）
@@ -117,6 +118,7 @@ src/careerpilot/
 ├── agent/               Agent 定义、Prompt 与 Turn 编排
 ├── context/             意图识别与检索路由
 ├── harness/             模型/工具循环、Session 与工具策略
+├── mcp/                 MCP 配置、发现、安全策略与工具适配
 ├── memory/              长期记忆、Idea 与每日回顾
 ├── rag/                 统一证据索引与混合召回
 ├── actions/             授权、预览、确认、执行与验证
@@ -182,6 +184,27 @@ docker compose down
 ```
 
 当前保守配置使用 4096 上下文和单请求并发。确认内存余量和推理速度后再提高 `compose.yaml` 中的 `-c` 或 `-np`；过大的上下文会显著增加内存占用。不要把 `8081` 改为公网绑定，llama.cpp 的本地接口默认不提供应用级鉴权。
+
+### 4. 配置 MCP 工具服务器（可选）
+
+Tool calling 是模型请求调用某个工具的方式；MCP 是 Agent 发现和连接外部工具服务器的标准协议。CareerPilot 仍由自有 Harness 掌控工具循环，MCP 只是可插拔工具来源，不会把 Agent 控制权交给外部服务。
+
+复制样例配置，然后只启用你信任的服务器和工具：
+
+```powershell
+Copy-Item config\mcp.servers.example.json config\mcp.servers.json
+$env:CAREERPILOT_MCP_CONFIG_PATH = "config/mcp.servers.json"
+.venv\Scripts\python.exe scripts\inspect_mcp_tools.py --config config\mcp.servers.json
+```
+
+支持两种连接方式：
+
+- `stdio`：CareerPilot 在本机启动一个 MCP 子进程，适合访问本地简历、SQLite 求职记录或本地搜索服务。只会传入配置文件 `env` 中明确声明的环境变量。
+- `streamable_http`：连接已运行的 MCP HTTP 服务。非本机地址必须使用 HTTPS；本机 `127.0.0.1` / `localhost` 可用 HTTP。
+
+安全默认值是“不暴露”：服务端必须将工具标记为 `readOnlyHint=true` 且不能标记 `destructiveHint=true`；配置中建议再用 `allowed_tools` 做明确白名单。未标注风险、写入型、破坏性或指纹过期的工具都会被拒绝。每轮根据当前问题最多选择 8 个工具，工具描述会缓存，返回内容会限长并标记为不可信数据。
+
+`scripts/inspect_mcp_tools.py` 只读取工具描述，不会调用工具。联网搜索可以后续作为独立开源 MCP Server（例如接入自建 SearXNG）加入；当前样例只预留连接位，不会自动部署搜索引擎。
 
 ## 延伸阅读
 

@@ -1,0 +1,32 @@
+{
+  "servers": [
+    {
+      "name": "local-career-tools",
+      "description": "Local read-only career data tools",
+      "transport": "stdio",
+      "enabled": false,
+      "command": "python",
+      "args": ["path/to/your_mcp_server.py"],
+      "env": {
+        "CAREERPILOT_DATA_DIR": "data"
+      },
+      "allowed_tools": [
+        "read_resume",
+        "search_job_records"
+      ],
+      "timeout_seconds": 30,
+      "descriptor_ttl_seconds": 300,
+      "max_result_chars": 12000
+    },
+    {
+      "name": "loopback-search",
+      "description": "Locally hosted read-only search MCP",
+      "transport": "streamable_http",
+      "enabled": false,
+      "url": "http://127.0.0.1:3100/mcp",
+      "allowed_tools": [
+        "web_search"
+      ]
+    }
+  ]
+}
