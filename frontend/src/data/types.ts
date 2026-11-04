@@ -94,6 +94,10 @@ export interface JourneyItem {
   meeting_url?: string | null
   notes?: string | null
   created_via?: 'manual' | 'chat' | 'journey'
+  journey_id?: string | null
+  direction_id?: string | null
+  step_kind?: 'role_profile' | 'interview_archive' | 'learning_resource' | null
+  collection_job_id?: string | null
 }
 
 export interface MemoryItem {

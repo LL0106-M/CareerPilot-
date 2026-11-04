@@ -1,10 +1,11 @@
-import { Briefcase, Books, UserCircle } from '@phosphor-icons/react'
+import { Briefcase, Books, ChatsCircle, UserCircle } from '@phosphor-icons/react'
 import { NavLink, Outlet } from 'react-router-dom'
 
 const subNav = [
   { to: '/knowledge/personal', label: '个人资料', icon: UserCircle },
   { to: '/knowledge/jobs', label: '岗位信息', icon: Briefcase },
-  { to: '/knowledge/preparation', label: '学习资料', icon: Books },
+  { to: '/knowledge/interview-archive', label: '往年题目', icon: ChatsCircle },
+  { to: '/knowledge/learning', label: '学习资源', icon: Books },
 ]
 
 export function KnowledgeLayout() {

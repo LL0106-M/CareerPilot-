@@ -1,0 +1,348 @@
+{
+  "schema_version": "1.0",
+  "created_at": "2026-11-05T01:03:43.050684+08:00",
+  "datasets": {
+    "rag": "evals/rag/careerpilot-rag-seed-v1.json",
+    "memory": "evals/memory/careerpilot-memory-seed-v1.json"
+  },
+  "suites": {
+    "rag": {
+      "metrics": {
+        "case_count": 8,
+        "passed_count": 7,
+        "pass_rate": 0.875,
+        "p50_latency_ms": 195.02,
+        "hard_failure_count": 0,
+        "mrr": 1.0,
+        "precision_at_k": 0.9375,
+        "recall_at_k": 1.0
+      },
+      "results": [
+        {
+          "id": "R01",
+          "category": "direct_fact",
+          "passed": true,
+          "latency_ms": 220.84,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_ids": [
+            "pm-interview"
+          ],
+          "expected_ids": [
+            "pm-interview"
+          ],
+          "status": "available",
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "R02",
+          "category": "domain_filter",
+          "passed": true,
+          "latency_ms": 190.81,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_ids": [
+            "portfolio-guide"
+          ],
+          "expected_ids": [
+            "portfolio-guide"
+          ],
+          "status": "available",
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "R03",
+          "category": "multi_source",
+          "passed": true,
+          "latency_ms": 209.37,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_ids": [
+            "ai-pm-a",
+            "ai-pm-b"
+          ],
+          "expected_ids": [
+            "ai-pm-a",
+            "ai-pm-b"
+          ],
+          "status": "available",
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "R04",
+          "category": "graph_evidence",
+          "passed": true,
+          "latency_ms": 193.81,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_ids": [
+            "ux-relation"
+          ],
+          "expected_ids": [
+            "ux-relation"
+          ],
+          "status": "available",
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "R05",
+          "category": "parent_child_context",
+          "passed": true,
+          "latency_ms": 187.84,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_ids": [
+            "long-guide"
+          ],
+          "expected_ids": [
+            "long-guide"
+          ],
+          "status": "available",
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "R06",
+          "category": "no_answer",
+          "passed": true,
+          "latency_ms": 195.41,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_ids": [],
+          "expected_ids": [],
+          "status": "insufficient",
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "R07",
+          "category": "owner_isolation",
+          "passed": true,
+          "latency_ms": 210.53,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_ids": [
+            "plan-a"
+          ],
+          "expected_ids": [
+            "plan-a"
+          ],
+          "status": "available",
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "R08",
+          "category": "freshness",
+          "passed": false,
+          "latency_ms": 194.63,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 0.5,
+            "mrr": 1.0
+          },
+          "retrieved_ids": [
+            "deadline-current",
+            "deadline-old"
+          ],
+          "expected_ids": [
+            "deadline-current"
+          ],
+          "status": "partial",
+          "failures": [
+            "召回禁止文档：deadline-old"
+          ],
+          "hard_failures": []
+        }
+      ]
+    },
+    "memory": {
+      "metrics": {
+        "case_count": 10,
+        "passed_count": 10,
+        "pass_rate": 1.0,
+        "p50_latency_ms": 33.45,
+        "hard_failure_count": 0,
+        "accuracy": 1.0,
+        "lifecycle_accuracy": 1.0,
+        "mrr": 1.0,
+        "precision_at_k": 1.0,
+        "recall_at_k": 1.0
+      },
+      "results": [
+        {
+          "id": "M01",
+          "category": "preference_recall",
+          "passed": true,
+          "latency_ms": 45.63,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_contents": [
+            "我更喜欢安静的办公环境"
+          ],
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "M02",
+          "category": "goal_recall",
+          "passed": true,
+          "latency_ms": 36.8,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_contents": [
+            "我的职业目标是成为 AI 产品经理"
+          ],
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "M03",
+          "category": "irrelevant_suppression",
+          "passed": true,
+          "latency_ms": 32.34,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_contents": [],
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "M04",
+          "category": "owner_isolation",
+          "passed": true,
+          "latency_ms": 34.55,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_contents": [
+            "我的星河计划是完成产品作品集"
+          ],
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "M05",
+          "category": "sensitive_default_hidden",
+          "passed": true,
+          "latency_ms": 29.44,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_contents": [],
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "M06",
+          "category": "sensitive_explicit_recall",
+          "passed": true,
+          "latency_ms": 31.28,
+          "metrics": {
+            "recall_at_k": 1.0,
+            "precision_at_k": 1.0,
+            "mrr": 1.0
+          },
+          "retrieved_contents": [
+            "我的心理疾病诊断是焦虑症"
+          ],
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "M07",
+          "category": "transient_write_rejection",
+          "passed": true,
+          "latency_ms": 29.4,
+          "metrics": {
+            "accuracy": 1.0
+          },
+          "retrieved_contents": [],
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "M08",
+          "category": "durable_write_admission",
+          "passed": true,
+          "latency_ms": 31.73,
+          "metrics": {
+            "accuracy": 1.0
+          },
+          "retrieved_contents": [],
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "M09",
+          "category": "correction",
+          "passed": true,
+          "latency_ms": 42.22,
+          "metrics": {
+            "lifecycle_accuracy": 1.0
+          },
+          "retrieved_contents": [],
+          "failures": [],
+          "hard_failures": []
+        },
+        {
+          "id": "M10",
+          "category": "deduplication",
+          "passed": true,
+          "latency_ms": 36.44,
+          "metrics": {
+            "lifecycle_accuracy": 1.0
+          },
+          "retrieved_contents": [],
+          "failures": [],
+          "hard_failures": []
+        }
+      ]
+    }
+  },
+  "hard_failure_count": 0,
+  "hard_failures": [],
+  "limitations": [
+    "本轮为冻结语料上的离线确定性基线，不调用外部模型或网络。",
+    "RAG 仅评测召回层，不评测最终答案忠实度与引用生成质量。",
+    "记忆评测覆盖召回、写入门控和生命周期，不代表真实用户分布。"
+  ]
+}

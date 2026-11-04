@@ -18,6 +18,11 @@ from careerpilot.memory.models import (
     MemoryUsageType,
 )
 from careerpilot.memory.unified_store import MemoryVersionConflictError, SqliteUnifiedMemoryStore
+from careerpilot.memory.write_policy import (
+    MemoryWriteCandidate,
+    classify_memory_sensitivity,
+    strictest_sensitivity,
+)
 
 
 class MemoryQueryPurpose(StrEnum):
@@ -59,6 +64,9 @@ class MemoryService:
         source_type: MemorySourceType = MemorySourceType.MANUAL,
         source_reference: str | None = None,
     ) -> MemoryRecord:
+        sensitivity = strictest_sensitivity(
+            MemorySensitivity(sensitivity), classify_memory_sensitivity(content)
+        )
         status = (
             MemoryStatus.CANDIDATE
             if sensitivity is MemorySensitivity.SENSITIVE
@@ -68,22 +76,48 @@ class MemoryService:
         if existing is not None:
             self._add_statement_evidence(existing, source_reference, content)
             return existing
-        record = self.store.create_memory(
-            owner_id=owner_id,
-            memory_type=memory_type,
-            content=content,
-            status=status,
-            sensitivity=sensitivity,
-            origin=MemoryOrigin.USER_EXPLICIT,
-            source_type=source_type,
-            source_reference=source_reference,
-            confidence=MemoryConfidence.HIGH,
-            importance=importance,
-            actor_kind="user",
-        )
-        self._add_statement_evidence(record, source_reference, content)
-        self._index(record)
+        with self.store.transaction():
+            record = self.store.create_memory(
+                owner_id=owner_id,
+                memory_type=memory_type,
+                content=content,
+                status=status,
+                sensitivity=sensitivity,
+                origin=MemoryOrigin.USER_EXPLICIT,
+                source_type=source_type,
+                source_reference=source_reference,
+                confidence=MemoryConfidence.HIGH,
+                importance=importance,
+                actor_kind="user",
+            )
+            self._add_statement_evidence(record, source_reference, content)
+            self._index(record)
         return record
+
+    def remember_many_from_conversation(
+        self,
+        *,
+        owner_id: str,
+        candidates: tuple[MemoryWriteCandidate, ...],
+        source_reference: str,
+    ) -> tuple[MemoryRecord, ...]:
+        """Persist all candidates from one completed turn, or persist none."""
+
+        records: list[MemoryRecord] = []
+        with self.store.transaction():
+            for candidate in candidates:
+                records.append(
+                    self.remember_from_conversation(
+                        owner_id=owner_id,
+                        memory_type=candidate.type,
+                        content=candidate.content,
+                        sensitivity=candidate.sensitivity,
+                        importance=candidate.importance,
+                        source_reference=source_reference,
+                        correction=candidate.correction,
+                    )
+                )
+        return tuple(records)
 
     def remember_from_conversation(
         self,
@@ -110,11 +144,10 @@ class MemoryService:
         )
         if not correction or record.status is not MemoryStatus.ACTIVE:
             return record
-        new_tokens = set(_lexical_tokens(record.content))
         for old in previous:
             if old.id == record.id or old.type is not memory_type:
                 continue
-            if not new_tokens.intersection(_lexical_tokens(old.content)):
+            if not _is_specific_correction(record.content, old.content):
                 continue
             self.store.transition_memory(
                 owner_id,
@@ -141,6 +174,9 @@ class MemoryService:
         contradicts_memory_id: str | None = None,
         metadata: dict[str, object] | None = None,
     ) -> MemoryRecord:
+        sensitivity = strictest_sensitivity(
+            MemorySensitivity(sensitivity), classify_memory_sensitivity(content)
+        )
         existing = self._find_duplicate(owner_id, memory_type, content)
         if existing is not None:
             self._add_statement_evidence(existing, source_reference, content)
@@ -179,25 +215,27 @@ class MemoryService:
         current = self.get(owner_id, memory_id)
         if current.version != expected_version:
             raise MemoryVersionConflictError("Memory version conflict")
-        sensitivity = changes.get("sensitivity", current.sensitivity)
+        content = str(changes.get("content", current.content))
+        sensitivity = strictest_sensitivity(
+            current.sensitivity,
+            MemorySensitivity(changes.get("sensitivity", current.sensitivity)),
+            classify_memory_sensitivity(content),
+        )
+        changes["sensitivity"] = sensitivity
         if (
             current.status is MemoryStatus.ACTIVE
             and sensitivity is MemorySensitivity.SENSITIVE
             and current.sensitivity is not MemorySensitivity.SENSITIVE
         ):
-            replacement = self.propose(
+            replacement = self._create_sensitive_replacement(
+                current,
                 owner_id=owner_id,
                 memory_type=changes.get("type", current.type),
-                content=str(changes.get("content", current.content)),
-                origin=MemoryOrigin.USER_EXPLICIT,
-                source_type=current.source_type,
-                source_reference=current.source_reference,
-                sensitivity=MemorySensitivity.SENSITIVE,
+                content=content,
                 confidence=changes.get("confidence", current.confidence),
                 importance=int(changes.get("importance", current.importance)),
-                metadata=current.metadata,
+                metadata=changes.get("metadata", current.metadata),
             )
-            self.store.add_relation(owner_id, replacement.id, current.id, "supersedes")
             return replacement
         updated = self.store.update_memory(
             owner_id, memory_id, expected_version=expected_version, **changes
@@ -220,6 +258,25 @@ class MemoryService:
         )
 
     def confirm(self, owner_id: str, memory_id: str, *, expected_version: int) -> MemoryRecord:
+        supersedes = tuple(
+            target_id
+            for _source_id, target_id, relation_type in self.store.list_relations(
+                owner_id, memory_id
+            )
+            if relation_type == "supersedes"
+        )
+        if len(supersedes) == 1:
+            candidate = self.get(owner_id, memory_id)
+            replaced_version = candidate.metadata.get("replaces_version")
+            if not isinstance(replaced_version, int):
+                raise MemoryVersionConflictError("Replacement source version missing")
+            return self.store.activate_replacement(
+                owner_id,
+                memory_id,
+                expected_version=expected_version,
+                replaced_memory_id=supersedes[0],
+                expected_replaced_version=replaced_version,
+            )
         return self.store.transition_memory(
             owner_id,
             memory_id,
@@ -329,8 +386,29 @@ class MemoryService:
                 record.id,
                 turn_id=turn_id,
                 usage_type=usage_type,
-                result_reference="context_compiler",
+                result_reference="completed_run",
             )
+
+    def record_context_usage_by_ids(
+        self,
+        owner_id: str,
+        memory_ids: tuple[str, ...],
+        *,
+        turn_id: str,
+        purpose: MemoryQueryPurpose,
+    ) -> None:
+        records: list[MemoryRecord] = []
+        for memory_id in dict.fromkeys(memory_ids):
+            try:
+                records.append(self.get(owner_id, memory_id))
+            except Exception:
+                continue
+        self.record_context_usage(
+            owner_id,
+            tuple(records),
+            turn_id=turn_id,
+            purpose=purpose,
+        )
 
     def _find_duplicate(
         self, owner_id: str, memory_type: MemoryType, content: str
@@ -340,6 +418,41 @@ class MemoryService:
             if record.content.casefold() == normalized:
                 return record
         return None
+
+    def _create_sensitive_replacement(
+        self,
+        current: MemoryRecord,
+        *,
+        owner_id: str,
+        memory_type: object,
+        content: str,
+        confidence: object,
+        importance: int,
+        metadata: object,
+    ) -> MemoryRecord:
+        replacement_metadata = (
+            dict(metadata) if isinstance(metadata, dict) else dict(current.metadata)
+        )
+        replacement_metadata["replaces_version"] = current.version
+        with self.store.transaction():
+            record = self.store.create_memory(
+                owner_id=owner_id,
+                memory_type=MemoryType(memory_type),
+                content=content,
+                status=MemoryStatus.CANDIDATE,
+                sensitivity=MemorySensitivity.SENSITIVE,
+                origin=MemoryOrigin.USER_EXPLICIT,
+                source_type=current.source_type,
+                source_reference=current.source_reference,
+                confidence=MemoryConfidence(confidence),
+                importance=importance,
+                metadata=replacement_metadata,
+                actor_kind="user",
+            )
+            self._add_statement_evidence(record, current.source_reference, content)
+            self.store.add_relation(owner_id, record.id, current.id, "supersedes")
+            self._index(record)
+        return record
 
     def _add_statement_evidence(
         self, record: MemoryRecord, source_reference: str | None, content: str
@@ -379,6 +492,39 @@ def _lexical_tokens(text: str) -> tuple[str, ...]:
     cjk = "".join(re.findall(r"[\u4e00-\u9fff]", text))
     cjk_bigrams = tuple(cjk[index : index + 2] for index in range(len(cjk) - 1))
     return tuple(dict.fromkeys((*latin, *cjk_bigrams)))
+
+
+def _is_specific_correction(new_content: str, old_content: str) -> bool:
+    new_subject = _memory_subject(new_content)
+    old_subject = _memory_subject(old_content)
+    if len(new_subject) < 3 or len(old_subject) < 3:
+        return False
+    if new_subject in old_subject or old_subject in new_subject:
+        return True
+    return False
+
+
+def _memory_subject(content: str) -> str:
+    normalized = content.casefold()
+    for marker in (
+        "更正一下",
+        "之前说错了",
+        "现在改为",
+        "不再",
+        "以前",
+        "更新我的偏好",
+        "修改我的偏好",
+        "我更喜欢",
+        "我喜欢",
+        "更喜欢",
+        "喜欢",
+        "我更看重",
+        "更看重",
+        "我不能接受",
+        "不能接受",
+    ):
+        normalized = normalized.replace(marker, "")
+    return "".join(re.findall(r"[a-z0-9_+#.-]+|[\u4e00-\u9fff]", normalized))
 
 
 def _cosine(

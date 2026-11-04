@@ -61,7 +61,7 @@ export function Bobo({
           ease: 'easeInOut',
         }}
       >
-        <img src="/assets/bobo-idle.png" alt="" draggable="false" />
+        <img src="/assets/bobo-idle-v1.webp" alt="" draggable="false" />
       </motion.div>
 
       <span className="bobo-state-mark" aria-hidden="true">

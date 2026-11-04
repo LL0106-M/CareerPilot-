@@ -10,9 +10,7 @@ def test_built_frontend_and_spa_routes_are_served_without_swallowing_api_404(tmp
     assets.mkdir(parents=True)
     (dist / "index.html").write_text("<main>CareerPilot production</main>", "utf-8")
     (assets / "app.js").write_text("console.log('ready')", "utf-8")
-    client = TestClient(
-        create_app(Settings(_env_file=None, CAREERPILOT_FRONTEND_DIST_PATH=dist))
-    )
+    client = TestClient(create_app(Settings(_env_file=None, CAREERPILOT_FRONTEND_DIST_PATH=dist)))
 
     assert client.get("/").text == "<main>CareerPilot production</main>"
     assert client.get("/chat").text == "<main>CareerPilot production</main>"
@@ -40,3 +38,37 @@ def test_readiness_checks_runtime_directories_and_frontend_bundle(tmp_path) -> N
     assert response.status_code == 200
     assert response.json() == {"status": "ready", "service": "careerpilot-agent"}
     assert (tmp_path / "data").is_dir()
+
+
+def test_versioned_assets_are_immutable_while_spa_html_revalidates(tmp_path) -> None:
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<main>latest shell</main>", "utf-8")
+    (assets / "app-a1b2c3d4.js").write_text("console.log('versioned')", "utf-8")
+    (assets / "legacy-logo.png").write_bytes(b"legacy")
+    client = TestClient(create_app(Settings(_env_file=None, CAREERPILOT_FRONTEND_DIST_PATH=dist)))
+
+    asset_response = client.get("/assets/app-a1b2c3d4.js")
+    legacy_response = client.get("/assets/legacy-logo.png")
+    root_response = client.get("/")
+    route_response = client.get("/journey")
+
+    assert asset_response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert legacy_response.headers["cache-control"] == "public, max-age=3600"
+    assert root_response.headers["cache-control"] == "no-cache"
+    assert route_response.headers["cache-control"] == "no-cache"
+
+
+def test_large_responses_are_gzip_compressed(tmp_path) -> None:
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<main>shell</main>", "utf-8")
+    (assets / "app-a1b2c3.js").write_text("const value = 'compressible';\n" * 200, "utf-8")
+    client = TestClient(create_app(Settings(_env_file=None, CAREERPILOT_FRONTEND_DIST_PATH=dist)))
+
+    response = client.get("/assets/app-a1b2c3.js", headers={"Accept-Encoding": "gzip"})
+
+    assert response.headers["content-encoding"] == "gzip"
+    assert "Accept-Encoding" in response.headers["vary"]

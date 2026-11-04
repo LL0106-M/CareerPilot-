@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 from langchain_core.tools import BaseTool
 
-from careerpilot.agent.model import create_qwen_model
+from careerpilot.agent.model import create_qwen_model, create_reasoning_model
 from careerpilot.agent.runtime import CareerPilotResponder
 from careerpilot.agent.service import AgentService, McpToolFactory
 from careerpilot.config import Settings
@@ -12,6 +12,7 @@ from careerpilot.mcp.config import load_mcp_servers
 from careerpilot.mcp.platform import McpToolPlatform
 from careerpilot.memory.base import DisabledMemoryStore, MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
+from careerpilot.memory.direction_signals import JsonDirectionSignalDetector
 from careerpilot.memory.memos import MemosCloudMemoryStore
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
@@ -73,6 +74,9 @@ def build_agent_service(
             unified_memory_service=unified_memory_service,
             run_store=run_store,
             mcp_tool_factory=mcp_tool_factory,
+            direction_signal_detector=JsonDirectionSignalDetector(
+                create_reasoning_model(settings)
+            ),
         ),
         memory_store,
         rag_store,

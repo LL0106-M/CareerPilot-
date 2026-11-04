@@ -68,7 +68,7 @@ def test_dashboard_uses_canonical_memory_and_ignores_demo_memory_seed(tmp_path) 
         unified.close()
 
 
-def test_canonical_hypothesis_can_be_confirmed_and_added_to_journey(tmp_path) -> None:
+def test_canonical_hypothesis_confirmation_does_not_expose_direct_journey_creation(tmp_path) -> None:
     unified = SqliteUnifiedMemoryStore(tmp_path / "memory.db")
     memories = MemoryService(unified)
     products = ProductStore(tmp_path / "product.db")
@@ -98,15 +98,14 @@ def test_canonical_hypothesis_can_be_confirmed_and_added_to_journey(tmp_path) ->
 
         assert confirmed.status_code == 200
         assert memories.get(owner, hypothesis.id).status is MemoryStatus.ACTIVE
-        assert task.status_code == 200
-        assert task.json()["related"] == hypothesis.content
-        assert client.get("/v1/me/dashboard").json()["journey"][0]["hypothesis_id"] == hypothesis.id
+        assert task.status_code == 404
+        assert client.get("/v1/me/dashboard").json()["journey"] == []
     finally:
         products.close()
         unified.close()
 
 
-def test_chat_idea_memory_appears_in_compass_and_can_create_a_journey_task(tmp_path) -> None:
+def test_chat_idea_memory_appears_in_compass_without_direct_journey_creation(tmp_path) -> None:
     unified = SqliteUnifiedMemoryStore(tmp_path / "memory.db")
     memories = MemoryService(unified)
     products = ProductStore(tmp_path / "product.db")
@@ -141,9 +140,8 @@ def test_chat_idea_memory_appears_in_compass_and_can_create_a_journey_task(tmp_p
                 "created_at": idea.created_at.isoformat(),
             }
         ]
-        assert task.status_code == 200
-        assert task.json()["related"] == idea.content
-        assert client.get("/v1/me/dashboard").json()["journey"][0]["idea_id"] == idea.id
+        assert task.status_code == 404
+        assert client.get("/v1/me/dashboard").json()["journey"] == []
     finally:
         products.close()
         unified.close()

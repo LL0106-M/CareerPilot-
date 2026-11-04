@@ -8,6 +8,36 @@ import { JourneyPage } from './JourneyPage'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Journey', () => {
+  it('renders a direction journey and its three collection states from dashboard data', async () => {
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      hypotheses:[], ideas:[], dreaming:[], memories:[],
+      journeys:[{id:'j1',direction_id:'d1',title:'新能源产品经理',status:'active',why:'从确认方向开始'}],
+      journey:[
+        {id:'t1',title:'查看当前岗位画像与可信招聘信息',due:'第 1 步',state:'准备开始',related:'新能源产品经理',journey_id:'j1',direction_id:'d1',step_kind:'role_profile',collection_job_id:'c1'},
+        {id:'t2',title:'查看往年题目与面经证据',due:'第 2 步',state:'准备开始',related:'新能源产品经理',journey_id:'j1',direction_id:'d1',step_kind:'interview_archive',collection_job_id:'c2'},
+        {id:'t3',title:'选择学习资源补齐准备重点',due:'第 3 步',state:'准备开始',related:'新能源产品经理',journey_id:'j1',direction_id:'d1',step_kind:'learning_resource',collection_job_id:'c3'},
+      ],
+      collection_jobs:[
+        {id:'c1',direction_id:'d1',purpose:'job_opportunity',query:'新能源产品经理',status:'collecting',attempts:1},
+        {id:'c2',direction_id:'d1',journey_id:'j1',purpose:'interview_archive',query:'新能源产品经理',status:'queued',attempts:0},
+        {id:'c3',direction_id:'d1',journey_id:'j1',purpose:'learning_resource',query:'新能源产品经理',status:'completed',attempts:1},
+      ],
+    }), { status:200,headers:{'Content-Type':'application/json'} })))
+
+    render(<MemoryRouter><JourneyPage /></MemoryRouter>)
+
+    expect(await screen.findByRole('button',{name:/新能源产品经理/})).toBeInTheDocument()
+    expect(screen.getByText('岗位信息 · 收集中')).toBeInTheDocument()
+    expect(screen.getByText('往年题目 · 等待收集')).toBeInTheDocument()
+    expect(screen.getByText('学习资源 · 已完成')).toBeInTheDocument()
+    expect(document.querySelectorAll('.collection-status-card')).toHaveLength(3)
+    const route = document.querySelector('ol.journey-route')
+    expect(route).toBeInTheDocument()
+    expect(route?.querySelectorAll('li')).toHaveLength(3)
+    expect(route?.querySelector('[class*="stop-"]')).not.toBeInTheDocument()
+    expect(screen.getByRole('button',{name:/添加日程/})).toBeInTheDocument()
+  })
+
   it('uses path as the default view and can switch to calendar', async () => {
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({ hypotheses:[],journey:[{id:'t1',title:'完成岗位拆解',due:'2026-10-28',state:'准备开始',related:'AI 产品经理',why:'验证岗位匹配'},{id:'t2',title:'联系一位从业者',due:'本周',state:'准备开始',related:'AI 产品经理',why:'验证工作内容'}],ideas:[],dreaming:[],memories:[] }), { status:200,headers:{'Content-Type':'application/json'} })))
     const user = userEvent.setup()

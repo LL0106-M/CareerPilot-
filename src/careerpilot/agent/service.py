@@ -12,7 +12,7 @@ from careerpilot.agent.prompt import PromptComposer
 from careerpilot.context.contracts import RetrievalSource, TaskIntent
 from careerpilot.harness.context import CareerContextCompiler, ContextRequest
 from careerpilot.harness.events import HarnessEventType
-from careerpilot.harness.memory import MemoryLifecycle
+from careerpilot.harness.memory import MemoryCommitResult, MemoryLifecycle
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import RunCancellationRequested
 from careerpilot.mcp.platform import McpDiscoveryError
@@ -21,7 +21,12 @@ from careerpilot.memory.dreaming import (
     CognitiveStore,
     DreamingTriggerPolicy,
 )
-from careerpilot.memory.service import MemoryService
+from careerpilot.memory.direction_signals import (
+    DirectionExplicitness,
+    DirectionSignal,
+    DirectionSignalDetector,
+)
+from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
 from careerpilot.memory.write_policy import MemoryWritePolicy
 from careerpilot.support.policy import SupportMode, SupportPolicy
 
@@ -51,7 +56,9 @@ class ChatResult:
     memory_read_status: str
     memory_write_status: str
     dreaming_status: str
+    memory_provider_status: str = "skipped"
     memory_ids: tuple[str, ...] = ()
+    direction_signal: DirectionSignal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +84,7 @@ class AgentService:
         run_store: SqliteAgentRunStore | None = None,
         verifier: AgentVerifier | None = None,
         mcp_tool_factory: McpToolFactory | None = None,
+        direction_signal_detector: DirectionSignalDetector | None = None,
     ) -> None:
         self._agent = agent
         self._rag_tool_factory = rag_tool_factory
@@ -84,6 +92,8 @@ class AgentService:
         self._run_store = run_store
         self._verifier = verifier or AgentVerifier()
         self._mcp_tool_factory = mcp_tool_factory
+        self._direction_signal_detector = direction_signal_detector
+        self._unified_memory_service = unified_memory_service
         self._context_compiler = CareerContextCompiler(
             memory_store,
             support_policy,
@@ -212,14 +222,23 @@ class AgentService:
                 {"verification": verification.as_dict()},
             )
             await self._transition(run_id, AgentStage.LEARN)
-            memory_result = await self._memory_lifecycle.commit_turn(
-                user_id=command.user_id,
-                conversation_id=command.conversation_id,
-                user_message=command.message,
-                assistant_message=agent_response.reply,
-                memories=context.memories,
-                turn_id=run_id,
-            )
+            memory_result = MemoryCommitResult("skipped", "skipped")
+            direction_signal: DirectionSignal | None = None
+            if verification.status != "failed":
+                memory_result = await self._memory_lifecycle.commit_turn(
+                    user_id=command.user_id,
+                    conversation_id=command.conversation_id,
+                    user_message=command.message,
+                    assistant_message=agent_response.reply,
+                    memories=context.memories,
+                    turn_id=run_id,
+                )
+                if self._direction_signal_detector is not None:
+                    detected = await self._direction_signal_detector.analyze(
+                        command.message, agent_response.reply
+                    )
+                    if detected.explicitness is not DirectionExplicitness.NONE:
+                        direction_signal = detected
             result = ChatResult(
                 conversation_id=command.conversation_id,
                 run_id=run_id,
@@ -235,7 +254,9 @@ class AgentService:
                 memory_read_status=context.memory_read_status,
                 memory_write_status=memory_result.write_status,
                 dreaming_status=memory_result.consolidation_status,
+                memory_provider_status=memory_result.provider_write_status,
                 memory_ids=memory_result.memory_ids,
+                direction_signal=direction_signal,
             )
             if self._run_store is not None:
                 await self._run_store.complete(
@@ -248,6 +269,26 @@ class AgentService:
                         "verification": verification.as_dict(),
                     },
                 )
+            if verification.status != "failed" and self._unified_memory_service is not None:
+                recalled_ids = tuple(
+                    item.id
+                    for item in (*context.memories.facts, *context.memories.preferences)
+                    if item.id is not None
+                )
+                try:
+                    self._unified_memory_service.record_context_usage_by_ids(
+                        command.user_id,
+                        recalled_ids,
+                        turn_id=run_id,
+                        purpose=(
+                            MemoryQueryPurpose.COMPANION
+                            if context.decision.mode is SupportMode.LISTEN
+                            else MemoryQueryPurpose.PLANNING
+                        ),
+                    )
+                except Exception:
+                    # Usage telemetry must never turn a completed answer into a failure.
+                    pass
             yield ChatStreamEvent(type="completed", result=result)
         except RunCancellationRequested:
             await self._transition(run_id, AgentStage.CANCELLED)

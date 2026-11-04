@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "name": "CareerPilot Memory Seed Benchmark v1",
+  "cases": [
+    {
+      "id": "M01", "category": "preference_recall", "kind": "retrieval", "owner_id": "u1", "query": "我偏好的办公环境是什么", "purpose": "companion",
+      "seed_memories": [
+        {"owner_id": "u1", "type": "preference", "content": "我更喜欢安静的办公环境", "importance": 4},
+        {"owner_id": "u1", "type": "experience", "content": "我做过一次校园活动运营", "importance": 3}
+      ],
+      "expected_contents": ["我更喜欢安静的办公环境"], "forbidden_contents": []
+    },
+    {
+      "id": "M02", "category": "goal_recall", "kind": "retrieval", "owner_id": "u1", "query": "我的职业目标是什么", "purpose": "planning",
+      "seed_memories": [
+        {"owner_id": "u1", "type": "goal", "content": "我的职业目标是成为 AI 产品经理", "importance": 5},
+        {"owner_id": "u1", "type": "preference", "content": "我喜欢安静的办公环境", "importance": 3}
+      ],
+      "expected_contents": ["我的职业目标是成为 AI 产品经理"], "forbidden_contents": []
+    },
+    {
+      "id": "M03", "category": "irrelevant_suppression", "kind": "retrieval", "owner_id": "u1", "query": "我有没有量子考古经历", "purpose": "review",
+      "seed_memories": [{"owner_id": "u1", "type": "experience", "content": "我做过校园公众号运营", "importance": 3}],
+      "expected_contents": [], "forbidden_contents": []
+    },
+    {
+      "id": "M04", "category": "owner_isolation", "kind": "retrieval", "owner_id": "u1", "query": "星河计划是什么", "purpose": "planning",
+      "seed_memories": [
+        {"owner_id": "u1", "type": "goal", "content": "我的星河计划是完成产品作品集", "importance": 5},
+        {"owner_id": "u2", "type": "goal", "content": "我的星河计划是申请算法工程师", "importance": 5}
+      ],
+      "expected_contents": ["我的星河计划是完成产品作品集"], "forbidden_contents": ["我的星河计划是申请算法工程师"]
+    },
+    {
+      "id": "M05", "category": "sensitive_default_hidden", "kind": "retrieval", "owner_id": "u1", "query": "我的心理疾病诊断是什么", "purpose": "companion", "explicit_personal_recall": false,
+      "seed_memories": [{"owner_id": "u1", "type": "fact", "content": "我的心理疾病诊断是焦虑症", "sensitivity": "sensitive", "confirm": true}],
+      "expected_contents": [], "forbidden_contents": ["我的心理疾病诊断是焦虑症"]
+    },
+    {
+      "id": "M06", "category": "sensitive_explicit_recall", "kind": "retrieval", "owner_id": "u1", "query": "请明确回忆我的心理疾病诊断", "purpose": "companion", "explicit_personal_recall": true,
+      "seed_memories": [{"owner_id": "u1", "type": "fact", "content": "我的心理疾病诊断是焦虑症", "sensitivity": "sensitive", "confirm": true}],
+      "expected_contents": ["我的心理疾病诊断是焦虑症"], "forbidden_contents": []
+    },
+    {
+      "id": "M07", "category": "transient_write_rejection", "kind": "write_policy", "message": "我今天特别焦虑，什么都不想做。", "expected_count": 0, "expected_types": [], "hard_if_admitted": true
+    },
+    {
+      "id": "M08", "category": "durable_write_admission", "kind": "write_policy", "message": "记住：我更看重可以独立研究问题的工作。", "expected_count": 1, "expected_types": ["preference"]
+    },
+    {
+      "id": "M09", "category": "correction", "kind": "correction", "owner_id": "u1",
+      "old_memory": {"owner_id": "u1", "type": "preference", "content": "我更喜欢稳定的大组织"},
+      "new_memory": {"type": "preference", "content": "更正一下，我不再喜欢稳定的大组织", "importance": 4}
+    },
+    {
+      "id": "M10", "category": "deduplication", "kind": "deduplication", "owner_id": "u1", "expected_count": 1,
+      "memory": {"owner_id": "u1", "type": "goal", "content": "我的职业目标是成为 AI 产品经理", "importance": 5}
+    }
+  ]
+}

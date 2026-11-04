@@ -30,6 +30,9 @@ class MemoryContext:
 
 
 class MemoryStore(Protocol):
+    @property
+    def enabled(self) -> bool: ...
+
     async def search(
         self,
         user_id: str,
@@ -71,3 +74,6 @@ class DisabledMemoryStore:
 
     async def aclose(self) -> None:
         return None
+    @property
+    def enabled(self) -> bool:
+        return False

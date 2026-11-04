@@ -161,3 +161,31 @@ def test_preparation_endpoint_lists_indexed_materials_instead_of_an_empty_stub(t
             "source_type": "web_search",
         }
     ]
+
+
+def test_interview_archive_and_learning_endpoints_keep_domains_separate(tmp_path) -> None:
+    rag_path = tmp_path / "rag.db"
+    store = SqliteRagStore(rag_path)
+    indexer = RagIndexer(store)
+    indexer.ingest_document(SourceDocument(
+        id="interview-1", title="产品经理一面面经", source_uri="https://example.com/interview",
+        source_type="experience_report", domain="interview_experience",
+        text="候选人回忆的一面问题。", metadata={"publisher":"候选人经验","year":"2025","round":"一面","trust":"experience"},
+        fetched_at="2026-11-04T00:00:00+00:00", knowledge_origin=KnowledgeOrigin.SYSTEM_WEB,
+    ))
+    indexer.ingest_document(SourceDocument(
+        id="learning-1", title="产品指标学习指南", source_uri="https://example.com/learning",
+        source_type="official_guide", domain="learning_resource",
+        text="官方发布的产品指标学习材料。", metadata={"publisher":"Example Lab","category":"产品设计"},
+        fetched_at="2026-11-04T00:00:00+00:00", knowledge_origin=KnowledgeOrigin.SYSTEM_WEB,
+    ))
+    client = authenticated_client(
+        tmp_path, Settings(_env_file=None, CAREERPILOT_RAG_DB_PATH=rag_path), rag_store=store,
+    )
+
+    interviews = client.get("/v1/knowledge/interview-archive").json()["items"]
+    learning = client.get("/v1/knowledge/learning").json()["items"]
+
+    assert [item["id"] for item in interviews] == ["interview-1"]
+    assert interviews[0]["trust"] == "experience"
+    assert [item["id"] for item in learning] == ["learning-1"]

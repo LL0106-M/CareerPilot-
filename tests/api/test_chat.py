@@ -40,6 +40,7 @@ class StubChatService:
             retrieval_sources=(RetrievalSource.MEMORY,),
             memory_read_status="available",
             memory_write_status="accepted",
+            memory_provider_status="synced",
             dreaming_status="queued",
             memory_ids=(),
         )
@@ -78,6 +79,7 @@ def test_chat_returns_agent_reply_and_transparent_memory_status(tmp_path) -> Non
         "retrieval_sources": ["memory"],
         "memory_read_status": "available",
         "memory_write_status": "accepted",
+        "memory_provider_status": "synced",
         "dreaming_status": "queued",
         "memory_ids": [],
     }

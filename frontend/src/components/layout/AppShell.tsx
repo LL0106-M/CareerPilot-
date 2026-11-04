@@ -25,7 +25,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <AmbientScene />
       <header className="topbar">
         <NavLink className="brand-lockup" to="/" aria-label="返回首页">
-          <img src="/assets/careerpilot-wordmark.png" alt="CareerPilot" />
+          <img src="/assets/careerpilot-wordmark-v1.webp" alt="CareerPilot" />
         </NavLink>
 
         <nav className="main-nav glass-strong" aria-label="主导航">
@@ -50,7 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             aria-label={`${account?.username ?? '用户'}的账户菜单`}
             onClick={() => setAccountMenuOpen((open) => !open)}
           >
-            <img src="/assets/bobo-idle.png" alt="" />
+            <img src="/assets/bobo-idle-v1.webp" alt="" />
             <span>{account?.username}</span>
             <CaretDown size={15} weight="bold" aria-hidden="true" />
           </button>

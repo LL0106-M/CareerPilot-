@@ -559,7 +559,9 @@ def create_app(
         response.delete_cookie(SESSION_COOKIE_NAME, path="/")
         return {"status": "ok"}
 
-    @app.post("/v1/chat", response_model=ChatResponse)
+    @app.post(
+        "/v1/chat", response_model=ChatResponse, response_model_exclude_none=True
+    )
     async def chat(
         request: ChatRequest,
         identity: Identity = Depends(resolve_identity),
@@ -589,7 +591,10 @@ def create_app(
         _save_chat_calendar_event(
             resolve_product_store(), identity.owner_id, request.message, result
         )
-        return _chat_response(result)
+        direction_signal = _save_chat_direction_signal(
+            resolve_product_store(), identity.owner_id, result
+        )
+        return _chat_response(result, direction_signal)
 
     @app.post("/v1/chat/stream")
     async def stream_chat(
@@ -623,7 +628,12 @@ def create_app(
                         _save_chat_calendar_event(
                             resolve_product_store(), identity.owner_id, body.message, result
                         )
-                        payload = _chat_response(result).model_dump(mode="json")
+                        direction_signal = _save_chat_direction_signal(
+                            resolve_product_store(), identity.owner_id, result
+                        )
+                        payload = _chat_response(result, direction_signal).model_dump(
+                            mode="json", exclude_none=True
+                        )
                         yield _sse_event("completed", payload)
             except RunCancellationRequested:
                 yield _sse_event("error", {"message": "run cancelled"})
@@ -651,6 +661,30 @@ def create_app(
         if conversation is None:
             raise HTTPException(status_code=404, detail="conversation not found")
         return conversation
+
+    @app.post("/v1/me/direction-signals/{signal_id}/accept")
+    async def accept_direction_signal(
+        signal_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        direction = resolve_product_store().accept_direction_signal(
+            identity.owner_id, signal_id
+        )
+        if direction is None:
+            raise HTTPException(status_code=404, detail="direction signal not found")
+        return direction
+
+    @app.post("/v1/me/directions/{direction_id}/journey", status_code=201)
+    async def start_direction_journey(
+        direction_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        journey = resolve_product_store().start_direction_journey(
+            identity.owner_id, direction_id
+        )
+        if journey is None:
+            raise HTTPException(status_code=404, detail="direction not found")
+        return journey
 
     @app.get("/v1/runs/{run_id}", response_model=AgentRunResponse)
     async def get_agent_run(
@@ -817,6 +851,64 @@ def create_app(
         return _row_to_job(row)
 
     # ----- Preparation metadata --------------------------------------------
+
+    @app.get("/v1/knowledge/interview-archive")
+    async def list_interview_archive(
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> dict[str, list[dict[str, object]]]:
+        rows = resolve_rag_store().list_documents_for_domains(
+            ("interview_question", "interview_experience"), limit=limit
+        )
+        items: list[dict[str, object]] = []
+        for row in rows:
+            metadata = json.loads(str(row["metadata_json"] or "{}"))
+            items.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "publisher": metadata.get("publisher") or "来源网页",
+                    "year": metadata.get("year"),
+                    "round": metadata.get("round"),
+                    "trust": metadata.get("trust") or "unverified",
+                    "url": row["source_uri"],
+                    "excerpt": str(row["text"] or "")[:500],
+                    "updated_at": row["fetched_at"] or row["published_at"] or "",
+                    "source_type": row["source_type"],
+                }
+            )
+        return {"items": items}
+
+    @app.get("/v1/knowledge/learning")
+    async def list_learning_resources(
+        limit: int = Query(default=200, ge=1, le=1000),
+    ) -> dict[str, list[dict[str, object]]]:
+        rows = resolve_rag_store().list_documents_for_domains(
+            (
+                "learning_resource",
+                "preparation_material",
+                "curated_document",
+                "domain_knowledge",
+                "ai_frontier",
+            ),
+            limit=limit,
+        )
+        items: list[dict[str, object]] = []
+        for row in rows:
+            metadata = json.loads(str(row["metadata_json"] or "{}"))
+            items.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "publisher": metadata.get("publisher") or metadata.get("site_name") or "来源网页",
+                    "category": metadata.get("category") or "其他",
+                    "format": metadata.get("format") or "网页",
+                    "url": row["source_uri"],
+                    "description": str(row["text"] or "")[:500],
+                    "updated_at": row["fetched_at"] or row["published_at"] or "",
+                    "source_type": row["source_type"],
+                }
+            )
+        return {"items": items}
 
     @app.get("/v1/knowledge/preparation")
     async def list_preparation(
@@ -1296,42 +1388,6 @@ def create_app(
             )
         return {"status": "ok"}
 
-    @app.post("/v1/me/hypotheses/{hypothesis_id}/verification-task")
-    async def create_verification_task(
-        hypothesis_id: str,
-        identity: Identity = Depends(resolve_identity),
-    ) -> dict[str, object]:
-        try:
-            hypothesis = resolve_memory_service().get(identity.owner_id, hypothesis_id)
-        except MemoryNotFoundError:
-            hypothesis = None
-        if hypothesis is None or hypothesis.type is not MemoryType.HYPOTHESIS:
-            raise HTTPException(status_code=404, detail="hypothesis not found")
-        return resolve_product_store().create_memory_verification_task(
-            identity.owner_id,
-            hypothesis.id,
-            hypothesis.content,
-            source="hypothesis",
-        )
-
-    @app.post("/v1/me/ideas/{idea_id}/verification-task")
-    async def create_idea_verification_task(
-        idea_id: str,
-        identity: Identity = Depends(resolve_identity),
-    ) -> dict[str, object]:
-        try:
-            idea = resolve_memory_service().get(identity.owner_id, idea_id)
-        except MemoryNotFoundError:
-            idea = None
-        if idea is None or idea.type is not MemoryType.IDEA:
-            raise HTTPException(status_code=404, detail="idea not found")
-        return resolve_product_store().create_memory_verification_task(
-            identity.owner_id,
-            idea.id,
-            idea.content,
-            source="idea",
-        )
-
     @app.post("/v1/me/journey", status_code=201)
     async def create_journey_event(
         body: JourneyCreateRequest,
@@ -1651,7 +1707,43 @@ def _daily_review_payload(review: DailyReview) -> dict[str, object]:
     }
 
 
-def _chat_response(result: ChatResult) -> ChatResponse:
+def _save_chat_direction_signal(
+    store: ProductStore, owner_id: str, result: ChatResult
+) -> dict[str, object] | None:
+    signal = result.direction_signal
+    if signal is None or not signal.detected:
+        return None
+    assert signal.label is not None
+    assert signal.source_quote is not None
+    return store.record_direction_signal(
+        owner_id,
+        source_run_id=result.run_id,
+        label=signal.label,
+        explicitness=signal.explicitness.value,
+        source_quote=signal.source_quote,
+        reason=signal.reason or "",
+        confidence=signal.confidence,
+    )
+
+
+def _chat_response(
+    result: ChatResult, stored_direction_signal: dict[str, object] | None = None
+) -> ChatResponse:
+    direction_signal = None
+    if stored_direction_signal is not None:
+        explicitness = str(stored_direction_signal["explicitness"])
+        direction_signal = {
+            "id": stored_direction_signal["id"],
+            "label": stored_direction_signal["label"],
+            "explicitness": explicitness,
+            "source_quote": stored_direction_signal["source_quote"],
+            "reason": stored_direction_signal["reason"],
+            "confidence": stored_direction_signal["confidence"],
+            "suggested_action": (
+                "add_to_compass" if explicitness == "explicit" else "ask_to_add"
+            ),
+            "status": stored_direction_signal["status"],
+        }
     return ChatResponse(
         conversation_id=result.conversation_id,
         run_id=result.run_id,
@@ -1664,8 +1756,10 @@ def _chat_response(result: ChatResult) -> ChatResponse:
         retrieval_sources=result.retrieval_sources,
         memory_read_status=result.memory_read_status,
         memory_write_status=result.memory_write_status,
+        memory_provider_status=result.memory_provider_status,
         dreaming_status=result.dreaming_status,
         memory_ids=result.memory_ids,
+        direction_signal=direction_signal,
     )
 
 

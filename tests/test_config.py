@@ -139,10 +139,28 @@ def test_production_accepts_explicit_runtime_contract(tmp_path) -> None:
         CAREERPILOT_FRONTEND_DIST_PATH=tmp_path,
         CAREERPILOT_SMTP_ACCOUNT="sender@163.com",
         CAREERPILOT_SMTP_AUTHORIZATION_CODE="smtp-authorization-code",
+        MEMOS_API_KEY="mpg-production-memory-key",
     )
 
     assert settings.frontend_dist_path == tmp_path
     assert settings.secure_cookies is True
+
+
+def test_production_requires_valid_memos_key(tmp_path) -> None:
+    (tmp_path / "index.html").write_text("ready", "utf-8")
+    common = {
+        "CAREERPILOT_ENVIRONMENT": "production",
+        "CAREERPILOT_COOKIE_SECRET": "a-production-secret-with-more-than-32-characters",
+        "CAREERPILOT_MODEL_API_KEY": "model-secret",
+        "CAREERPILOT_FRONTEND_DIST_PATH": tmp_path,
+        "CAREERPILOT_SMTP_ACCOUNT": "sender@163.com",
+        "CAREERPILOT_SMTP_AUTHORIZATION_CODE": "smtp-authorization-code",
+    }
+
+    with pytest.raises(ValidationError, match="MemOS API key"):
+        Settings(_env_file=None, **common, MEMOS_API_KEY="")
+    with pytest.raises(ValidationError, match="MemOS API key"):
+        Settings(_env_file=None, **common, MEMOS_API_KEY="not-a-memos-key")
 
 
 def test_production_requires_email_verification_delivery(tmp_path) -> None:

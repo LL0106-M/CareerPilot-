@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { api } from '../../data/api'
-import type { ActionPreview } from '../../data/api'
+import type { ActionPreview, KnowledgeCollectionJob } from '../../data/api'
 import type { JourneyItem } from '../../data/types'
 import { useDashboard } from '../../hooks/useDashboard'
 import './journey-calendar.css'
@@ -24,6 +24,10 @@ export function JourneyPage() {
   const [createState, setCreateState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const groups = useMemo(() => groupJourneys(data?.journey || []), [data])
   const current = groups[active]
+  const currentDirectionId = current?.tasks.find((task) => task.direction_id)?.direction_id
+  const currentJobs = (data?.collection_jobs || []).filter(
+    (job) => job.direction_id === currentDirectionId,
+  )
 
   useEffect(() => scheduleBrowserReminders(data?.journey || []), [data?.journey])
 
@@ -108,6 +112,7 @@ export function JourneyPage() {
       {!loading && !error && groups.length === 0 && <div className="state-panel glass-card"><Path size={38} /><h2>路还没有开始画</h2><p>从罗盘里选一条猜想，用一个真实行动去验证。</p><Link className="primary-button" to="/compass">去罗盘看看</Link></div>}
       {groups.length > 0 && <>
         <nav className="journey-selector" aria-label="选择航程">{groups.map((group,index) => <button type="button" className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={group.name}><span>{String(index + 1).padStart(2,'0')}</span>{group.name}</button>)}</nav>
+        {view === 'path' && currentJobs.length > 0 && <CollectionProgress jobs={currentJobs} />}
         {view === 'path' && current && <PathView group={current} onAdvance={advance} onPreview={openExternalPreview} />}
         {view === 'calendar' && <CalendarView tasks={data?.journey || []} onSync={openExternalPreview} />}
         {view === 'footprints' && <FootprintView tasks={data?.journey || []} />}
@@ -121,6 +126,22 @@ export function JourneyPage() {
   )
 }
 
+function CollectionProgress({ jobs }: { jobs: KnowledgeCollectionJob[] }) {
+  const purpose = {
+    job_opportunity: '岗位信息',
+    interview_archive: '往年题目',
+    learning_resource: '学习资源',
+  }
+  const status = {
+    queued: '等待收集',
+    collecting: '收集中',
+    completed: '已完成',
+    partial: '部分完成',
+    failed: '暂时失败',
+  }
+  return <section className="collection-progress" aria-label="航程资料收集状态">{jobs.map((job) => <article className={`collection-status-card status-${job.status}`} key={job.id}><span>{purpose[job.purpose]} · {status[job.status]}</span></article>)}</section>
+}
+
 function groupJourneys(tasks: JourneyItem[]) {
   const result = new Map<string, JourneyItem[]>()
   tasks.forEach((task) => { const name = task.related || '未命名航程'; result.set(name, [...(result.get(name) || []), task]) })
@@ -129,7 +150,7 @@ function groupJourneys(tasks: JourneyItem[]) {
 
 function PathView({ group, onAdvance, onPreview }: { group: { name: string; tasks: JourneyItem[] }; onAdvance: (task: JourneyItem) => void; onPreview: (task: JourneyItem) => void }) {
   const focus = group.tasks.find((task) => task.state === '进行中') || group.tasks.find((task) => task.state === '准备开始') || group.tasks[0]
-  return <section className="journey-path"><aside className="journey-story glass-card"><p className="eyebrow">Why this journey</p><h2>{group.name}</h2><p>{focus.why || '用一次真实行动补充证据，而不是只靠想象判断方向。'}</p><div className="next-milestone"><Sparkle weight="fill" /><span>下一节点</span><strong>{focus.due}</strong></div></aside><article className="focus-action glass-strong"><span className={`state state-${focus.state}`}>{focus.state}</span><p className="eyebrow">One focus action</p><h2>{focus.title}</h2><p>现在只需要看这一件。其他动作仍在航线上，但不会同时占据你的注意力。</p><div className="focus-actions"><button type="button" className="primary-button" onClick={() => void onAdvance(focus)} disabled={focus.state === '已完成'}>{focus.state === '准备开始' ? '开始这一步' : focus.state === '进行中' ? '完成并留下足迹' : '已经完成'} <ArrowRight /></button><button type="button" className="secondary-button" onClick={() => onPreview(focus)}><CloudArrowUp /> 调用其他 App</button></div></article><div className="route-line" aria-hidden="true" />{group.tasks.map((task,index) => <div className={`route-stop stop-${index % 4}`} key={task.id}><span>{index + 1}</span><strong>{task.title}</strong><small>{task.state}</small></div>)}</section>
+  return <section className="journey-path"><div className="journey-path-main"><aside className="journey-story glass-card"><p className="eyebrow">Why this journey</p><h2>{group.name}</h2><p>{focus.why || '用一次真实行动补充证据，而不是只靠想象判断方向。'}</p><div className="next-milestone"><Sparkle weight="fill" /><span>下一节点</span><strong>{focus.due}</strong></div></aside><article className="focus-action glass-strong"><span className={`state state-${focus.state}`}>{focus.state}</span><p className="eyebrow">One focus action</p><h2>{focus.title}</h2><p>现在只需要看这一件。其他动作仍在航线上，但不会同时占据你的注意力。</p><div className="focus-actions"><button type="button" className="primary-button" onClick={() => void onAdvance(focus)} disabled={focus.state === '已完成'}>{focus.state === '准备开始' ? '开始这一步' : focus.state === '进行中' ? '完成并留下足迹' : '已经完成'} <ArrowRight /></button><button type="button" className="secondary-button" onClick={() => onPreview(focus)}><CloudArrowUp /> 调用其他 App</button></div></article></div><ol className="journey-route">{group.tasks.map((task,index) => <li className={`route-step state-${task.state}`} key={task.id}><span>{index + 1}</span><div><strong>{task.title}</strong><small>{task.state}</small></div></li>)}</ol></section>
 }
 
 function CalendarView({ tasks, onSync }: { tasks: JourneyItem[]; onSync: (task: JourneyItem) => void }) {

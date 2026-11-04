@@ -140,12 +140,6 @@ class CareerContextCompiler:
                             if item.type is MemoryType.PREFERENCE
                         ),
                     )
-                    self._unified_memory_service.record_context_usage(
-                        request.user_id,
-                        bundle.records,
-                        turn_id=request.conversation_id,
-                        purpose=memory_purpose,
-                    )
                 else:
                     memories = await self._memory_store.search(
                         request.user_id,

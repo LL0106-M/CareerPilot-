@@ -1,22 +1,24 @@
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { AppShell } from '../components/layout/AppShell'
-import { ChatPage } from '../pages/chat/ChatPage'
-import { TodayPage } from '../pages/today/TodayPage'
-import { DreamingPage } from '../pages/dreaming/DreamingPage'
-import { CompassPage } from '../pages/compass/CompassPage'
-import { JourneyPage } from '../pages/journey/JourneyPage'
-import { MemoryPage } from '../pages/memory/MemoryPage'
-import { SettingsPage } from '../pages/settings/SettingsPage'
-import { IntroPage } from '../pages/intro/IntroPage'
-import { KnowledgeLayout } from '../pages/knowledge/KnowledgeLayout'
-import { JobsPage } from '../pages/knowledge/jobs/JobsPage'
-import { PreparationPage } from '../pages/knowledge/preparation/PreparationPage'
-import { PersonalPage } from '../pages/knowledge/personal/PersonalPage'
 import { AuthProvider } from '../auth/AuthProvider'
 import { GuestRoute, ProtectedRoute } from '../auth/ProtectedRoute'
-import { LoginPage } from '../pages/auth/LoginPage'
-import { RegisterPage } from '../pages/auth/RegisterPage'
+
+const ChatPage = lazy(() => import('../pages/chat/ChatPage').then(({ ChatPage }) => ({ default: ChatPage })))
+const TodayPage = lazy(() => import('../pages/today/TodayPage').then(({ TodayPage }) => ({ default: TodayPage })))
+const DreamingPage = lazy(() => import('../pages/dreaming/DreamingPage').then(({ DreamingPage }) => ({ default: DreamingPage })))
+const CompassPage = lazy(() => import('../pages/compass/CompassPage').then(({ CompassPage }) => ({ default: CompassPage })))
+const JourneyPage = lazy(() => import('../pages/journey/JourneyPage').then(({ JourneyPage }) => ({ default: JourneyPage })))
+const SettingsPage = lazy(() => import('../pages/settings/SettingsPage').then(({ SettingsPage }) => ({ default: SettingsPage })))
+const IntroPage = lazy(() => import('../pages/intro/IntroPage').then(({ IntroPage }) => ({ default: IntroPage })))
+const KnowledgeLayout = lazy(() => import('../pages/knowledge/KnowledgeLayout').then(({ KnowledgeLayout }) => ({ default: KnowledgeLayout })))
+const JobsPage = lazy(() => import('../pages/knowledge/jobs/JobsPage').then(({ JobsPage }) => ({ default: JobsPage })))
+const PreparationPage = lazy(() => import('../pages/knowledge/preparation/PreparationPage').then(({ PreparationPage }) => ({ default: PreparationPage })))
+const InterviewArchivePage = lazy(() => import('../pages/knowledge/interview/InterviewArchivePage').then(({ InterviewArchivePage }) => ({ default: InterviewArchivePage })))
+const PersonalPage = lazy(() => import('../pages/knowledge/personal/PersonalPage').then(({ PersonalPage }) => ({ default: PersonalPage })))
+const LoginPage = lazy(() => import('../pages/auth/LoginPage').then(({ LoginPage }) => ({ default: LoginPage })))
+const RegisterPage = lazy(() => import('../pages/auth/RegisterPage').then(({ RegisterPage }) => ({ default: RegisterPage })))
 
 function WrapShell({ children }: { children: React.ReactNode }) {
   return <AppShell>{children}</AppShell>
@@ -25,7 +27,7 @@ function WrapShell({ children }: { children: React.ReactNode }) {
 export function App() {
   return (
     <AuthProvider>
-      <Routes>
+      <Suspense fallback={<div className="auth-boot" role="status">正在打开 CareerPilot…</div>}><Routes>
         <Route element={<GuestRoute />}>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
@@ -38,17 +40,18 @@ export function App() {
           <Route path="/dreaming" element={<WrapShell><DreamingPage /></WrapShell>} />
           <Route path="/compass" element={<WrapShell><CompassPage /></WrapShell>} />
           <Route path="/journey" element={<WrapShell><JourneyPage /></WrapShell>} />
-          <Route path="/memory" element={<WrapShell><MemoryPage /></WrapShell>} />
           <Route path="/settings" element={<WrapShell><SettingsPage /></WrapShell>} />
           <Route path="/knowledge" element={<WrapShell><KnowledgeLayout /></WrapShell>}>
             <Route index element={<Navigate to="/knowledge/jobs" replace />} />
             <Route path="jobs" element={<JobsPage />} />
-            <Route path="preparation" element={<PreparationPage />} />
+            <Route path="preparation" element={<Navigate to="/knowledge/learning" replace />} />
+            <Route path="interview-archive" element={<InterviewArchivePage />} />
+            <Route path="learning" element={<PreparationPage />} />
             <Route path="personal" element={<PersonalPage />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      </Routes></Suspense>
     </AuthProvider>
   )
 }

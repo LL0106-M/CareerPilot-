@@ -6,11 +6,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { JobsPage } from './jobs/JobsPage'
 import { PersonalPage } from './personal/PersonalPage'
 import { PreparationPage } from './preparation/PreparationPage'
+import { InterviewArchivePage } from './interview/InterviewArchivePage'
 
 afterEach(() => vi.unstubAllGlobals())
 function json(value: unknown) { return new Response(JSON.stringify(value), { status: 200, headers: { 'Content-Type': 'application/json' } }) }
 
 describe('knowledge pages', () => {
+  it('labels interview experiences separately from learning resources', async () => {
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(json({items:[{
+      id:'i1',title:'产品经理一面面经',publisher:'候选人经验',year:'2025',round:'一面',trust:'experience',
+      url:'https://example.com/interview',excerpt:'候选人回忆的一面问题。',updated_at:'2026-11-04',source_type:'experience_report',
+    }]})))
+    render(<MemoryRouter><InterviewArchivePage /></MemoryRouter>)
+    expect(await screen.findByText('产品经理一面面经')).toBeInTheDocument()
+    expect(screen.getByText('经验帖 · 待交叉验证')).toBeInTheDocument()
+    expect(screen.getByText(/不代表未来一定出现/)).toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'刷新'})).toHaveClass('library-refresh')
+    expect(screen.getByRole('heading',{name:'往年题目与面经'}).closest('.library-dashboard')).toHaveClass('library-dashboard--single')
+  })
   it('loads jobs from the backend and filters by company type', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ items: [
       { id:'1', company_type:'央企', company:'中国移动', role:'产品运营', role_family:'产品', location:'北京', deadline:'2026-11-08', deadline_status:'招聘中', source:'官网', source_url:'https://example.com' },

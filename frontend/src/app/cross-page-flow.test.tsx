@@ -37,7 +37,7 @@ it('keeps the user intent while moving from home chat into the connected product
 
   await user.type(await screen.findByLabelText('现在，想从哪里开始？'), '我想探索 AI 产品方向')
   await user.click(screen.getByRole('button', { name: '进入对话' }))
-  expect(screen.getByLabelText('给泊泊发送消息')).toHaveValue('我想探索 AI 产品方向')
+  expect(await screen.findByLabelText('给泊泊发送消息')).toHaveValue('我想探索 AI 产品方向')
   await user.click(screen.getByRole('button', { name: '发送' }))
   expect(await screen.findByText('我们先收集一条真实证据。')).toBeInTheDocument()
 

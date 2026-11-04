@@ -1,3 +1,5 @@
+import pytest
+
 from careerpilot.memory.models import (
     MemoryOrigin,
     MemorySensitivity,
@@ -6,7 +8,10 @@ from careerpilot.memory.models import (
     MemoryType,
 )
 from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
-from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
+from careerpilot.memory.unified_store import (
+    MemoryVersionConflictError,
+    SqliteUnifiedMemoryStore,
+)
 
 
 def service(tmp_path) -> MemoryService:
@@ -200,3 +205,162 @@ def test_explicit_correction_supersedes_related_active_memory(tmp_path) -> None:
     assert memories.store.list_relations("u1", new.id) == (
         (new.id, old.id, "supersedes"),
     )
+
+
+def test_explicit_correction_does_not_supersede_unrelated_preference(tmp_path) -> None:
+    memories = service(tmp_path)
+    corrected = memories.create_explicit(
+        owner_id="u1", memory_type=MemoryType.PREFERENCE, content="我更喜欢稳定的大组织"
+    )
+    unrelated = memories.create_explicit(
+        owner_id="u1", memory_type=MemoryType.PREFERENCE, content="我更喜欢安静的办公环境"
+    )
+
+    memories.remember_from_conversation(
+        owner_id="u1",
+        memory_type=MemoryType.PREFERENCE,
+        content="更正一下，我不再喜欢稳定的大组织",
+        sensitivity=MemorySensitivity.NORMAL,
+        importance=4,
+        source_reference="turn-2",
+        correction=True,
+    )
+
+    assert memories.get("u1", corrected.id).status is MemoryStatus.SUPERSEDED
+    assert memories.get("u1", unrelated.id).status is MemoryStatus.ACTIVE
+
+
+def test_explicit_correction_does_not_supersede_nearby_but_distinct_preference(
+    tmp_path,
+) -> None:
+    memories = service(tmp_path)
+    corrected = memories.create_explicit(
+        owner_id="u1", memory_type=MemoryType.PREFERENCE, content="我更喜欢稳定的大组织"
+    )
+    distinct = memories.create_explicit(
+        owner_id="u1", memory_type=MemoryType.PREFERENCE, content="我更喜欢稳定的小组织"
+    )
+
+    memories.remember_from_conversation(
+        owner_id="u1",
+        memory_type=MemoryType.PREFERENCE,
+        content="更正一下，我不再喜欢稳定的大组织",
+        sensitivity=MemorySensitivity.NORMAL,
+        importance=4,
+        source_reference="turn-2",
+        correction=True,
+    )
+
+    assert memories.get("u1", corrected.id).status is MemoryStatus.SUPERSEDED
+    assert memories.get("u1", distinct.id).status is MemoryStatus.ACTIVE
+
+
+def test_sensitivity_upgrade_creates_candidate_and_confirmation_retires_original(
+    tmp_path,
+) -> None:
+    memories = service(tmp_path)
+    original = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.FACT,
+        content="我需要避开上午面试",
+    )
+
+    replacement = memories.update(
+        "u1",
+        original.id,
+        expected_version=original.version,
+        sensitivity=MemorySensitivity.SENSITIVE,
+    )
+
+    assert replacement.id != original.id
+    assert replacement.status is MemoryStatus.CANDIDATE
+    assert replacement.sensitivity is MemorySensitivity.SENSITIVE
+    assert memories.get("u1", original.id).status is MemoryStatus.ACTIVE
+
+    confirmed = memories.confirm(
+        "u1", replacement.id, expected_version=replacement.version
+    )
+
+    assert confirmed.status is MemoryStatus.ACTIVE
+    assert memories.get("u1", original.id).status is MemoryStatus.SUPERSEDED
+
+
+def test_explicit_sensitive_content_cannot_be_declared_normal(tmp_path) -> None:
+    memories = service(tmp_path)
+
+    stored = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.FACT,
+        content="我的身份证号需要更新",
+        sensitivity=MemorySensitivity.NORMAL,
+    )
+
+    assert stored.sensitivity is MemorySensitivity.SENSITIVE
+    assert stored.status is MemoryStatus.CANDIDATE
+
+
+def test_editing_normal_memory_to_sensitive_content_creates_candidate(tmp_path) -> None:
+    memories = service(tmp_path)
+    original = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.FACT,
+        content="我需要更新个人资料",
+    )
+
+    replacement = memories.update(
+        "u1",
+        original.id,
+        expected_version=original.version,
+        content="我的身份证号需要更新",
+    )
+
+    assert replacement.id != original.id
+    assert replacement.sensitivity is MemorySensitivity.SENSITIVE
+    assert replacement.status is MemoryStatus.CANDIDATE
+    assert memories.get("u1", original.id).status is MemoryStatus.ACTIVE
+
+
+def test_confirmed_sensitive_memory_cannot_be_downgraded(tmp_path) -> None:
+    memories = service(tmp_path)
+    candidate = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.FACT,
+        content="我有一项病史",
+        sensitivity=MemorySensitivity.SENSITIVE,
+    )
+    active = memories.confirm("u1", candidate.id, expected_version=candidate.version)
+
+    updated = memories.update(
+        "u1",
+        active.id,
+        expected_version=active.version,
+        sensitivity=MemorySensitivity.NORMAL,
+    )
+
+    assert updated.id == active.id
+    assert updated.sensitivity is MemorySensitivity.SENSITIVE
+
+
+def test_sensitive_replacement_rejects_stale_original_version(tmp_path) -> None:
+    memories = service(tmp_path)
+    original = memories.create_explicit(
+        owner_id="u1", memory_type=MemoryType.FACT, content="我需要更新个人资料"
+    )
+    replacement = memories.update(
+        "u1",
+        original.id,
+        expected_version=original.version,
+        content="我的身份证号需要更新",
+    )
+    changed_original = memories.update(
+        "u1",
+        original.id,
+        expected_version=original.version,
+        content="我需要更新其他个人资料",
+    )
+
+    with pytest.raises(MemoryVersionConflictError):
+        memories.confirm("u1", replacement.id, expected_version=replacement.version)
+
+    assert memories.get("u1", replacement.id).status is MemoryStatus.CANDIDATE
+    assert memories.get("u1", changed_original.id).status is MemoryStatus.ACTIVE

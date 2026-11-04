@@ -15,6 +15,7 @@ class MemoryCommitResult:
     write_status: str
     consolidation_status: str
     memory_ids: tuple[str, ...] = ()
+    provider_write_status: str = "skipped"
 
 
 class MemoryLifecycle:
@@ -45,22 +46,30 @@ class MemoryLifecycle:
         turn_id: str | None = None,
     ) -> MemoryCommitResult:
         write_status = "skipped"
+        provider_write_status = "skipped"
         memory_ids: list[str] = []
         candidates = self._write_policy.extract(user_message)
         if candidates:
             try:
                 if self._unified_memory_service is not None:
-                    for candidate in candidates:
-                        record = self._unified_memory_service.remember_from_conversation(
-                            owner_id=user_id,
-                            memory_type=candidate.type,
-                            content=candidate.content,
-                            sensitivity=candidate.sensitivity,
-                            importance=candidate.importance,
-                            source_reference=turn_id or conversation_id,
-                            correction=candidate.correction,
-                        )
-                        memory_ids.append(record.id)
+                    records = self._unified_memory_service.remember_many_from_conversation(
+                        owner_id=user_id,
+                        candidates=candidates,
+                        source_reference=turn_id or conversation_id,
+                    )
+                    memory_ids.extend(record.id for record in records)
+                    write_status = "accepted"
+                    if self._memory_store.enabled:
+                        try:
+                            await self._memory_store.add_turn(
+                                user_id,
+                                conversation_id,
+                                user_message,
+                                assistant_message,
+                            )
+                            provider_write_status = "synced"
+                        except (MemoryStoreError, Exception):
+                            provider_write_status = "unavailable"
                 else:
                     # Compatibility path for deployments that have not enabled the
                     # authoritative local memory store yet.
@@ -70,7 +79,10 @@ class MemoryLifecycle:
                         user_message,
                         assistant_message,
                     )
-                write_status = "accepted"
+                    write_status = "accepted"
+                    provider_write_status = (
+                        "synced" if self._memory_store.enabled else "skipped"
+                    )
             except (MemoryStoreError, Exception):
                 write_status = "unavailable"
 
@@ -95,4 +107,9 @@ class MemoryLifecycle:
                 except Exception:
                     consolidation_status = "unavailable"
 
-        return MemoryCommitResult(write_status, consolidation_status, tuple(memory_ids))
+        return MemoryCommitResult(
+            write_status,
+            consolidation_status,
+            tuple(memory_ids),
+            provider_write_status,
+        )

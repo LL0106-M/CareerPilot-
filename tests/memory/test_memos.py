@@ -54,6 +54,7 @@ async def test_search_sends_user_scope_and_parses_facts_and_preferences() -> Non
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         store = MemosCloudMemoryStore("test-secret", http_client=client)
+        assert store.enabled is True
         result = await store.search("user-1", "thread-1", "我现在更看重稳定吗？")
 
     assert [item.content for item in result.facts] == ["用户更看重可预期的工作节奏"]
@@ -86,9 +87,11 @@ async def test_add_turn_uses_private_user_scoped_payload() -> None:
         payload = json.loads(request.content)
         assert payload["user_id"] == "user-1"
         assert payload["conversation_id"] == "thread-1"
-        assert "agent_id" not in payload
+        assert payload["agent_id"] == "careerpilot"
+        assert payload["app_id"] == "careerpilot-web"
         assert payload["tags"] == ["careerpilot", "candidate"]
         assert payload["info"]["scene"] == "career_companion"
+        assert payload["info"]["memory_authority"] == "auxiliary"
         assert payload["allow_public"] is False
         assert payload["messages"] == [
             {"role": "user", "content": "我希望先被理解"},

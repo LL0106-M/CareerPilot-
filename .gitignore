@@ -2,8 +2,10 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-precommit-*/
 .mypy_cache/
 .ruff_cache/
+.review/
 
 .env
 .env.*

@@ -15,7 +15,7 @@ export function PreparationPage() {
   const [loading,setLoading] = useState(true)
   const [error,setError] = useState('')
   const [updatedAt,setUpdatedAt] = useState<Date>()
-  const load = useCallback(async () => { setLoading(true); setError(''); try { const {items} = await api.getPreparation(); const live = items.map((item) => ({...item,accent:'pine' as const})); setCollected(live); if (live[0]) setSelected(live[0].id); setUpdatedAt(new Date()) } catch (reason) { setError(reason instanceof Error ? reason.message : '资料更新失败') } finally { setLoading(false) } },[])
+  const load = useCallback(async () => { setLoading(true); setError(''); try { const {items} = await api.getLearningResources(); const live = items.map((item) => ({...item,accent:'pine' as const})); setCollected(live); if (live[0]) setSelected(live[0].id); setUpdatedAt(new Date()) } catch (reason) { setError(reason instanceof Error ? reason.message : '资料更新失败') } finally { setLoading(false) } },[])
   useEffect(() => { void load(); const refresh = () => void load(); window.addEventListener('focus',refresh); return () => window.removeEventListener('focus',refresh) }, [load])
   const allResources = useMemo<LearningResource[]>(() => [...collected, ...curatedLearning.map((item) => ({...item,updated_at:'',source_type:'curated'}))], [collected])
   const resources = useMemo(() => allResources.filter((item) => (category === '全部' || item.category === category) && `${item.title} ${item.publisher} ${item.description}`.toLowerCase().includes(query.toLowerCase())),[allResources,query,category])

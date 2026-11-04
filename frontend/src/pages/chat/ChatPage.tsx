@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { Bobo } from '../../components/bobo/Bobo'
-import { api, type ConversationSummary, type DashboardResponse } from '../../data/api'
+import { api, type ConversationSummary, type DashboardResponse, type DirectionSignal } from '../../data/api'
 
 interface ChatMessage { role: 'user' | 'agent'; content: string }
 interface ChatLocationState { draft?: string }
@@ -33,6 +33,8 @@ export function ChatPage() {
   const [historyOpen, setHistoryOpen] = useState(!startsNarrow)
   const [contextOpen, setContextOpen] = useState(!startsNarrow)
   const [files, setFiles] = useState<File[]>([])
+  const [directionSignal, setDirectionSignal] = useState<DirectionSignal>()
+  const [directionMutation, setDirectionMutation] = useState<'idle' | 'saving' | 'error'>('idle')
   const endRef = useRef<HTMLDivElement>(null)
   const selectionRequestRef = useRef(0)
 
@@ -77,6 +79,7 @@ export function ChatPage() {
       if (requestId !== selectionRequestRef.current) return
       setConversationId(detail.id)
       setMessages(detail.messages)
+      setDirectionSignal(undefined)
       if (startsNarrow) setHistoryOpen(false)
     } catch (reason) {
       if (requestId !== selectionRequestRef.current) return
@@ -89,6 +92,7 @@ export function ChatPage() {
     selectionRequestRef.current += 1
     setMessages([{ role: 'agent', content: '新的这一页，从哪里开始？' }])
     setConversationId(undefined)
+    setDirectionSignal(undefined)
     setError('')
   }
 
@@ -117,6 +121,7 @@ export function ChatPage() {
         ))),
       )
       setConversationId(response.conversation_id)
+      setDirectionSignal(response.direction_signal)
       setMessages((previous) => previous.map((item, index) => (
         index === previous.length - 1 && item.role === 'agent'
           ? { ...item, content: response.reply }
@@ -130,6 +135,19 @@ export function ChatPage() {
       setInput(text)
     } finally {
       setSending(false)
+    }
+  }
+
+  async function acceptDirection() {
+    if (!directionSignal || directionSignal.status === 'accepted') return
+    setDirectionMutation('saving')
+    try {
+      await api.acceptDirectionSignal(directionSignal.id)
+      setDirectionSignal({ ...directionSignal, status: 'accepted' })
+      setDirectionMutation('idle')
+      void loadDashboard().catch(() => undefined)
+    } catch {
+      setDirectionMutation('error')
     }
   }
 
@@ -160,6 +178,11 @@ export function ChatPage() {
               {message.content ? <span>{message.content}</span> : <><i /><i /><i /></>}
             </div>
           ))}
+          {directionSignal && <div className="direction-signal-prompt glass-card" role="status">
+            {directionSignal.status === 'accepted'
+              ? <><small>罗盘已更新</small><strong>“{directionSignal.label}”已经加入罗盘。</strong><p>加入罗盘不等于开启航程，你可以之后再决定。</p></>
+              : <><small>可能的方向</small><strong>要把“{directionSignal.label}”加入罗盘吗？</strong><p>{directionSignal.reason}</p><div><button type="button" className="primary-button" onClick={() => void acceptDirection()} disabled={directionMutation === 'saving'}>{directionMutation === 'saving' ? '正在加入…' : '加入罗盘'}</button><button type="button" className="text-button" onClick={() => setInput(`我想再聊清楚“${directionSignal.label}”这个方向`)}>再聊清楚一点</button></div>{directionMutation === 'error' && <em>这次没有加入成功，请重试。</em>}</>}
+          </div>}
           <div ref={endRef} />
         </div>
         <div className="chat-composer glass-strong">

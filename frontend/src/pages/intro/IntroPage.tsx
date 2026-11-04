@@ -24,7 +24,7 @@ export function IntroPage() {
       <section className="glass-card intro-card">
         <img
           className="intro-bobo"
-          src="/assets/bobo-idle.png"
+          src="/assets/bobo-idle-v1.webp"
           alt="泊泊"
         />
         <div className="intro-body">

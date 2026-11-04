@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0",
+  "name": "CareerPilot RAG Seed Benchmark v1",
+  "cases": [
+    {
+      "id": "R01",
+      "category": "direct_fact",
+      "query": "产品经理用户访谈的核心产出是什么",
+      "domain": "career_knowledge",
+      "limit": 3,
+      "documents": [
+        {"id": "pm-interview", "title": "产品用户访谈", "source_uri": "fixture://pm-interview", "source_type": "official_guide", "domain": "career_knowledge", "text": "产品经理开展用户访谈，核心产出是经过证据支持的用户问题清单与需求假设。"},
+        {"id": "data-sql", "title": "数据分析入门", "source_uri": "fixture://data-sql", "source_type": "official_guide", "domain": "career_knowledge", "text": "数据分析师通常使用 SQL 清洗数据并构建指标。"}
+      ],
+      "expected_document_ids": ["pm-interview"],
+      "forbidden_document_ids": []
+    },
+    {
+      "id": "R02",
+      "category": "domain_filter",
+      "query": "作品集应该展示什么",
+      "domain": "preparation_material",
+      "limit": 3,
+      "documents": [
+        {"id": "portfolio-guide", "title": "作品集指南", "source_uri": "fixture://portfolio", "source_type": "official_guide", "domain": "preparation_material", "text": "作品集应该展示问题定义、分析过程、方案取舍和结果证据。"},
+        {"id": "job-post", "title": "产品岗位招聘", "source_uri": "fixture://job", "source_type": "official_job", "domain": "job_opportunity", "text": "本岗位要求候选人提交作品集，作品集应该展示项目经验。"}
+      ],
+      "expected_document_ids": ["portfolio-guide"],
+      "forbidden_document_ids": ["job-post"],
+      "forbidden_is_hard": false
+    },
+    {
+      "id": "R03",
+      "category": "multi_source",
+      "query": "AI 产品经理需要哪些能力",
+      "sub_queries": ["AI 产品经理模型评测能力", "AI 产品经理用户研究能力"],
+      "limit": 5,
+      "documents": [
+        {"id": "ai-pm-a", "title": "AI 产品岗位说明 A", "source_uri": "fixture://ai-pm-a", "source_type": "official_job", "domain": "job_opportunity", "text": "AI 产品经理需要理解模型评测、数据闭环和提示词设计。"},
+        {"id": "ai-pm-b", "title": "AI 产品岗位说明 B", "source_uri": "fixture://ai-pm-b", "source_type": "official_job", "domain": "job_opportunity", "text": "AI 产品经理需要用户研究、需求优先级判断和跨团队协作能力。"},
+        {"id": "frontend", "title": "前端岗位说明", "source_uri": "fixture://frontend", "source_type": "official_job", "domain": "job_opportunity", "text": "前端工程师需要掌握浏览器渲染和组件开发。"}
+      ],
+      "expected_document_ids": ["ai-pm-a", "ai-pm-b"],
+      "forbidden_document_ids": []
+    },
+    {
+      "id": "R04",
+      "category": "graph_evidence",
+      "query": "用户研究支持哪个职业方向",
+      "domain": "career_knowledge",
+      "use_graph": true,
+      "graph_mode": "local",
+      "limit": 4,
+      "documents": [
+        {"id": "ux-relation", "title": "能力与岗位关系", "source_uri": "fixture://ux-relation", "source_type": "official_guide", "domain": "career_knowledge", "text": "用户研究能力支持用户体验研究员职业方向。用户体验研究员通过访谈和可用性测试形成洞察。"},
+        {"id": "finance-relation", "title": "财务岗位关系", "source_uri": "fixture://finance", "source_type": "official_guide", "domain": "career_knowledge", "text": "财务建模能力支持投资分析岗位。"}
+      ],
+      "expected_document_ids": ["ux-relation"],
+      "forbidden_document_ids": []
+    },
+    {
+      "id": "R05",
+      "category": "parent_child_context",
+      "query": "需求优先级如何验证",
+      "domain": "preparation_material",
+      "limit": 3,
+      "documents": [
+        {"id": "long-guide", "title": "需求分析完整指南", "source_uri": "fixture://long-guide", "source_type": "official_guide", "domain": "preparation_material", "text": "# 问题识别\n先记录用户原话，区分现象与根因。\n\n# 优先级验证\n需求优先级需要结合用户影响范围、发生频率、业务价值和验证成本，不能只凭直觉。\n\n# 方案复盘\n上线后对照基线指标复盘。"},
+        {"id": "resume", "title": "简历指南", "source_uri": "fixture://resume", "source_type": "official_guide", "domain": "preparation_material", "text": "简历应使用行动和结果描述经历。"}
+      ],
+      "expected_document_ids": ["long-guide"],
+      "forbidden_document_ids": []
+    },
+    {
+      "id": "R06",
+      "category": "no_answer",
+      "query": "量子考古学家的火星执照编号是多少",
+      "limit": 3,
+      "documents": [
+        {"id": "normal-career", "title": "职业探索说明", "source_uri": "fixture://normal", "source_type": "official_guide", "domain": "career_knowledge", "text": "职业探索可以通过信息访谈和小型项目验证假设。"}
+      ],
+      "expected_document_ids": [],
+      "forbidden_document_ids": []
+    },
+    {
+      "id": "R07",
+      "category": "owner_isolation",
+      "query": "我的星轨项目下一步是什么",
+      "user_id": "user-a",
+      "origins": ["user_provided"],
+      "limit": 3,
+      "documents": [
+        {"id": "plan-a", "title": "A 的星轨项目", "source_uri": "fixture://user-a/star", "source_type": "user_note", "domain": "user_material", "text": "我的星轨项目下一步是访谈三名应届毕业生。", "knowledge_origin": "user_provided", "owner_user_id": "user-a"},
+        {"id": "plan-b", "title": "B 的星轨项目", "source_uri": "fixture://user-b/star", "source_type": "user_note", "domain": "user_material", "text": "我的星轨项目下一步是联系五名算法工程师。", "knowledge_origin": "user_provided", "owner_user_id": "user-b"}
+      ],
+      "expected_document_ids": ["plan-a"],
+      "forbidden_document_ids": ["plan-b"]
+    },
+    {
+      "id": "R08",
+      "category": "freshness",
+      "query": "校招产品经理申请截止日期",
+      "requires_freshness": true,
+      "limit": 3,
+      "documents": [
+        {"id": "deadline-current", "title": "2026 校招产品岗位", "source_uri": "fixture://deadline-current", "source_type": "official_job", "domain": "job_opportunity", "text": "2026 校招产品经理申请截止日期为 2026 年 12 月 10 日。", "published_at": "2026-10-20T00:00:00+00:00", "fetched_at": "2026-11-01T00:00:00+00:00"},
+        {"id": "deadline-old", "title": "2024 校招产品岗位", "source_uri": "fixture://deadline-old", "source_type": "official_job", "domain": "job_opportunity", "text": "2024 校招产品经理申请截止日期为 2024 年 12 月 10 日。", "published_at": "2024-10-20T00:00:00+00:00", "fetched_at": "2024-11-01T00:00:00+00:00"}
+      ],
+      "expected_document_ids": ["deadline-current"],
+      "forbidden_document_ids": ["deadline-old"],
+      "forbidden_is_hard": false
+    }
+  ]
+}

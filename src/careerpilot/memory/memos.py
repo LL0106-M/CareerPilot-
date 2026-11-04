@@ -32,6 +32,10 @@ class MemosCloudMemoryStore:
             "Content-Type": "application/json",
         }
 
+    @property
+    def enabled(self) -> bool:
+        return True
+
     async def search(
         self,
         user_id: str,
@@ -80,11 +84,17 @@ class MemosCloudMemoryStore:
         payload = {
             "user_id": user_id,
             "conversation_id": conversation_id,
+            "agent_id": "careerpilot",
+            "app_id": "careerpilot-web",
             "source": "careerpilot_web",
             "allow_public": False,
             "async_mode": True,
             "tags": ["careerpilot", "candidate"],
-            "info": {"scene": "career_companion", "memory_status": "candidate"},
+            "info": {
+                "scene": "career_companion",
+                "memory_status": "candidate",
+                "memory_authority": "auxiliary",
+            },
             "messages": [
                 {"role": "user", "content": user_message},
                 {"role": "assistant", "content": assistant_message},

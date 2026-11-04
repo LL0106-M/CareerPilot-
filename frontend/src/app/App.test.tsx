@@ -40,4 +40,14 @@ describe('CareerPilot app shell', () => {
     )
     expect(await screen.findByRole('main')).toBeInTheDocument()
   })
+
+  it('does not expose a standalone memory management route', async () => {
+    render(
+      <MemoryRouter initialEntries={['/memory']}>
+        <App />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('main')).toBeInTheDocument()
+    expect(screen.queryByText('记忆管理')).not.toBeInTheDocument()
+  })
 })

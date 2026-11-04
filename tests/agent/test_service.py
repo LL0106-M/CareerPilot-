@@ -16,6 +16,14 @@ from careerpilot.memory.base import (
     MemoryStoreError,
 )
 from careerpilot.memory.dreaming import CareerHypothesis
+from careerpilot.memory.models import MemoryType
+from careerpilot.memory.direction_signals import (
+    DirectionExplicitness,
+    DirectionSignal,
+    DirectionSignalAction,
+)
+from careerpilot.memory.service import MemoryService
+from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
 from careerpilot.support.policy import SupportMode, SupportPolicy
 
 
@@ -25,6 +33,10 @@ class RecordingMemoryStore:
     context: MemoryContext = field(default_factory=MemoryContext)
     search_error: bool = False
     write_error: bool = False
+
+    @property
+    def enabled(self) -> bool:
+        return True
 
     async def search(
         self,
@@ -202,6 +214,60 @@ class RecordingCognitiveStore:
         raise NotImplementedError
 
 
+@dataclass
+class StubDirectionSignalDetector:
+    signal: DirectionSignal
+    calls: list[tuple[str, str]] = field(default_factory=list)
+
+    async def analyze(self, user_message: str, assistant_message: str) -> DirectionSignal:
+        self.calls.append((user_message, assistant_message))
+        return self.signal
+
+
+@pytest.mark.asyncio
+async def test_service_returns_structured_direction_signal_after_successful_reply() -> None:
+    detector = StubDirectionSignalDetector(
+        DirectionSignal(
+            explicitness=DirectionExplicitness.IMPLICIT,
+            action=DirectionSignalAction.ASK_TO_ADD,
+            label="平台型产品工作",
+            source_quote="最近总是在关注平台型产品",
+            reason="表达了持续关注但没有确认选择",
+            confidence=0.76,
+        )
+    )
+    service = AgentService(
+        RecordingMemoryStore([]),
+        RecordingAgent([]),
+        SupportPolicy(),
+        direction_signal_detector=detector,
+    )
+
+    result = await service.chat(
+        ChatCommand("u1", "c1", "最近总是在关注平台型产品")
+    )
+
+    assert result.direction_signal == detector.signal
+    assert detector.calls == [
+        ("最近总是在关注平台型产品", result.reply)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_service_omits_none_direction_signal() -> None:
+    detector = StubDirectionSignalDetector(DirectionSignal.none())
+    service = AgentService(
+        RecordingMemoryStore([]),
+        RecordingAgent([]),
+        SupportPolicy(),
+        direction_signal_detector=detector,
+    )
+
+    result = await service.chat(ChatCommand("u1", "c1", "今天天气不错"))
+
+    assert result.direction_signal is None
+
+
 @pytest.mark.asyncio
 async def test_service_searches_then_responds_then_writes_completed_turn() -> None:
     events: list[str] = []
@@ -227,6 +293,7 @@ async def test_service_searches_then_responds_then_writes_completed_turn() -> No
     assert result.support_mode is SupportMode.LISTEN
     assert result.memory_read_status == "available"
     assert result.memory_write_status == "accepted"
+    assert result.memory_provider_status == "synced"
     assert result.dreaming_status == "unavailable"
     assert "用户正在探索国央企产品岗" in agent.system_context
     assert "受挫时先倾听" in agent.system_context
@@ -505,6 +572,67 @@ async def test_service_keeps_transient_emotion_out_of_long_term_memory() -> None
     assert result.memory_write_status == "skipped"
     assert result.memory_read_status == "skipped"
     assert events == ["agent"]
+
+
+@pytest.mark.asyncio
+async def test_service_records_recalled_memory_only_after_completed_run(tmp_path) -> None:
+    store = SqliteUnifiedMemoryStore(tmp_path / "memory.db")
+    memories = MemoryService(store)
+    remembered = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.PREFERENCE,
+        content="我更看重稳定节奏",
+    )
+    service = AgentService(
+        RecordingMemoryStore([]),
+        RecordingAgent([]),
+        SupportPolicy(),
+        unified_memory_service=memories,
+    )
+
+    await service.chat(
+        ChatCommand(
+            "u1",
+            "c1",
+            "根据我的偏好，帮我规划下一步",
+            run_id="run-memory-usage",
+        )
+    )
+
+    usage = store.connection.execute(
+        "SELECT turn_id, result_reference FROM memory_usage WHERE owner_id=? AND memory_id=?",
+        ("u1", remembered.id),
+    ).fetchall()
+    assert [row["turn_id"] for row in usage] == ["run-memory-usage"]
+    assert [row["result_reference"] for row in usage] == ["completed_run"]
+
+
+@pytest.mark.asyncio
+async def test_service_does_not_learn_or_record_usage_for_failed_response(tmp_path) -> None:
+    store = SqliteUnifiedMemoryStore(tmp_path / "memory.db")
+    memories = MemoryService(store)
+    remembered = memories.create_explicit(
+        owner_id="u1",
+        memory_type=MemoryType.PREFERENCE,
+        content="我更看重稳定节奏",
+    )
+    service = AgentService(
+        RecordingMemoryStore([]),
+        RecordingAgent([], response=AgentResponse(reply="", run_id="failed-run")),
+        SupportPolicy(),
+        unified_memory_service=memories,
+    )
+
+    result = await service.chat(
+        ChatCommand("u1", "c1", "记住：以后我做职业选择时更看重稳定节奏", run_id="failed-run")
+    )
+
+    usage = store.connection.execute(
+        "SELECT 1 FROM memory_usage WHERE owner_id=?", ("u1",)
+    ).fetchall()
+    assert result.result_status == "failed"
+    assert usage == []
+    assert [item.id for item in memories.list("u1")] == [remembered.id]
 
 
 @pytest.mark.asyncio

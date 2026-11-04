@@ -45,6 +45,17 @@ class ChatRequest(BaseModel):
     support_mode: SupportMode | None = None
 
 
+class DirectionSignalResponse(BaseModel):
+    id: str
+    label: str
+    explicitness: Literal["implicit", "explicit"]
+    source_quote: str
+    reason: str
+    confidence: float
+    suggested_action: Literal["ask_to_add", "add_to_compass"]
+    status: Literal["pending", "accepted"]
+
+
 class ChatResponse(BaseModel):
     conversation_id: str
     run_id: str
@@ -57,8 +68,10 @@ class ChatResponse(BaseModel):
     retrieval_sources: tuple[RetrievalSource, ...]
     memory_read_status: str
     memory_write_status: str
+    memory_provider_status: str = "skipped"
     dreaming_status: str
     memory_ids: tuple[str, ...] = ()
+    direction_signal: DirectionSignalResponse | None = None
 
 
 class AgentRunResponse(BaseModel):

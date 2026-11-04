@@ -31,7 +31,6 @@ class MemoryWritePolicy:
         "我的专业是",
         "我擅长",
         "我的专业",
-        "我有",
         "我做过",
         "我决定",
         "我的想法是",
@@ -40,6 +39,8 @@ class MemoryWritePolicy:
         "我想做",
         "更正一下",
         "不再",
+        "更新我的偏好",
+        "修改我的偏好",
     )
 
     _sensitive_markers = (
@@ -59,7 +60,18 @@ class MemoryWritePolicy:
         (MemoryType.GOAL, ("职业目标", "我的目标", "我正在探索", "想成为")),
         (MemoryType.DECISION, ("我决定", "已经决定")),
         (MemoryType.EXPERIENCE, ("我做过", "我曾经", "我有过")),
-        (MemoryType.PREFERENCE, ("偏好", "喜欢", "更看重", "我希望以后", "以后我")),
+        (
+            MemoryType.PREFERENCE,
+            (
+                "偏好",
+                "喜欢",
+                "更看重",
+                "我希望以后",
+                "以后我",
+                "更新我的偏好",
+                "修改我的偏好",
+            ),
+        ),
     )
 
     _correction_markers = ("更正一下", "不再", "现在改为", "以前", "之前说错了")
@@ -106,8 +118,23 @@ class MemoryWritePolicy:
         return MemoryType.FACT
 
     def _classify_sensitivity(self, content: str) -> MemorySensitivity:
-        if any(marker in content for marker in self._sensitive_markers):
-            return MemorySensitivity.SENSITIVE
-        if any(marker in content for marker in self._private_markers):
-            return MemorySensitivity.PRIVATE
-        return MemorySensitivity.NORMAL
+        return classify_memory_sensitivity(content)
+
+
+def classify_memory_sensitivity(content: str) -> MemorySensitivity:
+    """Apply the deterministic privacy floor used by every memory write path."""
+
+    if any(marker in content for marker in MemoryWritePolicy._sensitive_markers):
+        return MemorySensitivity.SENSITIVE
+    if any(marker in content for marker in MemoryWritePolicy._private_markers):
+        return MemorySensitivity.PRIVATE
+    return MemorySensitivity.NORMAL
+
+
+def strictest_sensitivity(*values: MemorySensitivity) -> MemorySensitivity:
+    rank = {
+        MemorySensitivity.NORMAL: 0,
+        MemorySensitivity.PRIVATE: 1,
+        MemorySensitivity.SENSITIVE: 2,
+    }
+    return max((MemorySensitivity(value) for value in values), key=rank.__getitem__)

@@ -47,3 +47,19 @@ def test_explicit_chat_idea_is_captured_as_an_idea_memory() -> None:
     assert len(candidates) == 1
     assert candidates[0].type is MemoryType.IDEA
     assert candidates[0].content == "我的想法是做一个帮助应届生复盘面试的工具"
+
+
+def test_incidental_wo_you_dian_distress_is_not_a_durable_fact() -> None:
+    policy = MemoryWritePolicy()
+
+    assert policy.should_write("我有点焦虑，觉得自己什么都做不好") is False
+    assert policy.extract("我有点焦虑，觉得自己什么都做不好") == ()
+
+
+@pytest.mark.parametrize("prefix", ["更新我的偏好", "修改我的偏好"])
+def test_profile_update_wording_creates_a_preference_candidate(prefix: str) -> None:
+    candidates = MemoryWritePolicy().extract(f"{prefix}：我现在更喜欢远程工作。")
+
+    assert len(candidates) == 1
+    assert candidates[0].type is MemoryType.PREFERENCE
+    assert candidates[0].content.endswith("我现在更喜欢远程工作")

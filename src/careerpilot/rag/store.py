@@ -1505,7 +1505,6 @@ class SqliteRagStore:
             """,
             job,
         )
-
     # --- User document metadata -----------------------------------------------
 
     def list_user_documents(self, user_id: str) -> tuple[sqlite3.Row, ...]:

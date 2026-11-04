@@ -71,7 +71,7 @@ export function TodayPage() {
       </section>
 
       <footer className="product-footer" role="contentinfo">
-        <div className="footer-story"><img src="/assets/careerpilot-wordmark.png" alt="CareerPilot" /><h2>A companion for the uncertain middle.</h2><p>CareerPilot turns conversations, small thoughts and real-world evidence into a path you can keep adjusting.</p><a href="https://github.com" target="_blank" rel="noreferrer"><GithubLogo size={18} /> GitHub</a></div>
+        <div className="footer-story"><img src="/assets/careerpilot-wordmark-v1.webp" alt="CareerPilot" /><h2>A companion for the uncertain middle.</h2><p>CareerPilot turns conversations, small thoughts and real-world evidence into a path you can keep adjusting.</p><a href="https://github.com" target="_blank" rel="noreferrer"><GithubLogo size={18} /> GitHub</a></div>
         <div className="footer-column"><strong>Menu</strong><a href="/chat">Chat</a><a href="/compass">Compass</a><a href="/journey">Journey</a><a href="/knowledge/jobs">Knowledge</a></div>
         <div className="footer-column"><strong>Essentials</strong><a href="/settings">Privacy</a><a href="/settings">Safety</a></div>
         <div className="footer-column"><strong>Supported by</strong><span>MemOS</span><span>Alibaba Cloud</span><span>OpenAI</span><span>FastAPI</span></div>

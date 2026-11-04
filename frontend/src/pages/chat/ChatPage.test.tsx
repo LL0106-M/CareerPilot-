@@ -8,7 +8,7 @@ import { ChatPage } from './ChatPage'
 
 vi.mock('../../data/api', () => ({ api: {
   chat: vi.fn(), chatStream: vi.fn(), getConversations: vi.fn(), getConversation: vi.fn(),
-  getDashboard: vi.fn(), uploadDocument: vi.fn(),
+  getDashboard: vi.fn(), uploadDocument: vi.fn(), acceptDirectionSignal: vi.fn(),
 } }))
 
 describe('chat page', () => {
@@ -22,6 +22,7 @@ describe('chat page', () => {
       hypotheses: [], journey: [], ideas: [], dreaming: [], memories: [],
     })
     vi.mocked(api.uploadDocument).mockReset()
+    vi.mocked(api.acceptDirectionSignal).mockReset()
   })
 
   it('lets the agent choose support mode and renders the real reply', async () => {
@@ -30,7 +31,7 @@ describe('chat page', () => {
       return {
       conversation_id: 'c1', run_id: 'r1', result_status: 'completed', reply: '我们先从最小的一步开始。',
       support_mode: 'organize', primary_intent: 'planning', retrieval_sources: [], memory_read_status: 'ok',
-      memory_write_status: 'skipped', dreaming_status: 'queued', memory_ids: [], citation_ids: [], citation_warnings: [],
+      memory_write_status: 'skipped', memory_provider_status: 'skipped', dreaming_status: 'queued', memory_ids: [], citation_ids: [], citation_warnings: [],
       }
     })
     const user = userEvent.setup()
@@ -40,6 +41,61 @@ describe('chat page', () => {
     await user.click(screen.getByRole('button', { name: '发送' }))
     expect(await screen.findByText('我们先从最小的一步开始。')).toBeInTheDocument()
     expect(api.chatStream).toHaveBeenCalledWith({ message: '我不知道先做什么' }, expect.any(Function))
+  })
+
+  it('asks before adding an implicit direction and persists acceptance', async () => {
+    vi.mocked(api.chatStream).mockImplementation(async (_body, onDelta) => {
+      onDelta('这可能是一条值得留意的线索。')
+      return {
+        conversation_id: 'c1', run_id: 'r1', result_status: 'completed', reply: '这可能是一条值得留意的线索。',
+        support_mode: 'organize', primary_intent: 'career_direction', retrieval_sources: [], memory_read_status: 'ok',
+        memory_write_status: 'skipped', memory_provider_status: 'skipped', dreaming_status: 'skipped', memory_ids: [], citation_ids: [], citation_warnings: [],
+        direction_signal: {
+          id: 'signal-1', label: '平台型产品工作', explicitness: 'implicit',
+          source_quote: '最近总是在关注平台型产品', reason: '持续关注但没有确认选择', confidence: 0.76,
+          suggested_action: 'ask_to_add', status: 'pending',
+        },
+      }
+    })
+    vi.mocked(api.acceptDirectionSignal).mockResolvedValue({
+      id: 'direction-1', label: '平台型产品工作', status: 'confirmed', source_signal_id: 'signal-1',
+      source_kind: 'conversation', source_quote: '最近总是在关注平台型产品',
+      reason: '持续关注但没有确认选择', confidence: 0.76,
+    })
+    const user = userEvent.setup()
+    render(<MemoryRouter><ChatPage /></MemoryRouter>)
+
+    await user.type(screen.getByLabelText('给泊泊发送消息'), '最近总是在关注平台型产品')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('要把“平台型产品工作”加入罗盘吗？')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '加入罗盘' }))
+    expect(api.acceptDirectionSignal).toHaveBeenCalledWith('signal-1')
+    expect(await screen.findByText(/已经加入罗盘/)).toBeInTheDocument()
+  })
+
+  it('acknowledges an explicit direction without asking again', async () => {
+    vi.mocked(api.chatStream).mockImplementation(async (_body, onDelta) => {
+      onDelta('我们可以继续梳理。')
+      return {
+        conversation_id: 'c1', run_id: 'r1', result_status: 'completed', reply: '我们可以继续梳理。',
+        support_mode: 'organize', primary_intent: 'career_direction', retrieval_sources: [], memory_read_status: 'ok',
+        memory_write_status: 'skipped', memory_provider_status: 'skipped', dreaming_status: 'skipped', memory_ids: [], citation_ids: [], citation_warnings: [],
+        direction_signal: {
+          id: 'signal-2', label: '用户明确表达的方向', explicitness: 'explicit',
+          source_quote: '我确定要推进这个方向', reason: '用户明确表达', confidence: 0.99,
+          suggested_action: 'add_to_compass', status: 'accepted',
+        },
+      }
+    })
+    const user = userEvent.setup()
+    render(<MemoryRouter><ChatPage /></MemoryRouter>)
+
+    await user.type(screen.getByLabelText('给泊泊发送消息'), '我确定要推进这个方向')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('“用户明确表达的方向”已经加入罗盘。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '加入罗盘' })).not.toBeInTheDocument()
   })
 
   it('uploads selected files before sending their context to chat', async () => {
@@ -52,7 +108,7 @@ describe('chat page', () => {
       return {
       conversation_id: 'c1', run_id: 'r1', result_status: 'completed', reply: '我会结合这份资料来看。',
       support_mode: 'organize', primary_intent: 'planning', retrieval_sources: [], memory_read_status: 'ok',
-      memory_write_status: 'skipped', dreaming_status: 'queued', memory_ids: [], citation_ids: [], citation_warnings: [],
+      memory_write_status: 'skipped', memory_provider_status: 'skipped', dreaming_status: 'queued', memory_ids: [], citation_ids: [], citation_warnings: [],
       }
     })
     const user = userEvent.setup()
@@ -120,7 +176,7 @@ describe('chat page', () => {
       return {
         conversation_id: 'c1', run_id: 'r1', result_status: 'completed', reply: '已经收到回复。',
         support_mode: 'listen', primary_intent: 'general_question', retrieval_sources: [], memory_read_status: 'ok',
-        memory_write_status: 'skipped', dreaming_status: 'skipped', memory_ids: [], citation_ids: [], citation_warnings: [],
+        memory_write_status: 'skipped', memory_provider_status: 'skipped', dreaming_status: 'skipped', memory_ids: [], citation_ids: [], citation_warnings: [],
       }
     })
     const user = userEvent.setup()
@@ -144,7 +200,7 @@ describe('chat page', () => {
       return {
         conversation_id: 'new', run_id: 'r1', result_status: 'completed', reply: '新的流式回复',
         support_mode: 'listen', primary_intent: 'general_question', retrieval_sources: [], memory_read_status: 'ok',
-        memory_write_status: 'skipped', dreaming_status: 'skipped', memory_ids: [], citation_ids: [], citation_warnings: [],
+        memory_write_status: 'skipped', memory_provider_status: 'skipped', dreaming_status: 'skipped', memory_ids: [], citation_ids: [], citation_warnings: [],
       }
     })
     const user = userEvent.setup()

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -67,12 +69,33 @@ class SqliteUnifiedMemoryStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(self._path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
+        self._transaction_depth = 0
         self._connection.execute("PRAGMA foreign_keys=ON")
         self._create_schema()
 
     @property
     def connection(self) -> sqlite3.Connection:
         return self._connection
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Compose store operations into one commit without nested early commits."""
+
+        outermost = self._transaction_depth == 0
+        if outermost:
+            self._connection.execute("BEGIN IMMEDIATE")
+        self._transaction_depth += 1
+        try:
+            yield
+        except Exception:
+            self._transaction_depth -= 1
+            if outermost:
+                self._connection.rollback()
+            raise
+        else:
+            self._transaction_depth -= 1
+            if outermost:
+                self._connection.commit()
 
     def _create_schema(self) -> None:
         self._connection.executescript(
@@ -206,7 +229,7 @@ class SqliteUnifiedMemoryStore:
             raise ValueError("Memory importance must be between 1 and 5")
         created = _now()
         record_id = memory_id or str(uuid4())
-        with self._connection:
+        with self.transaction():
             self._connection.execute(
                 """
                 INSERT INTO memory_records (
@@ -329,7 +352,7 @@ class SqliteUnifiedMemoryStore:
             raise ValueError("Memory importance must be between 1 and 5")
         after_version = expected_version + 1
         updated = _now()
-        with self._connection:
+        with self.transaction():
             cursor = self._connection.execute(
                 """
                 UPDATE memory_records SET content=?, normalized_content=?, type=?, sensitivity=?,
@@ -390,7 +413,7 @@ class SqliteUnifiedMemoryStore:
         after.update(status=target, version=version, updated_at=now)
         if target is MemoryStatus.DELETED:
             after["deleted_at"] = now
-        with self._connection:
+        with self.transaction():
             cursor = self._connection.execute(
                 """UPDATE memory_records
                 SET status=?, version=?, updated_at=?, deleted_at=?
@@ -411,6 +434,96 @@ class SqliteUnifiedMemoryStore:
             self._audit(owner_id, memory_id, f"transition:{target.value}", actor_kind, version)
         return self.get_memory(owner_id, memory_id, include_deleted=True)
 
+    def activate_replacement(
+        self,
+        owner_id: str,
+        memory_id: str,
+        *,
+        expected_version: int,
+        replaced_memory_id: str,
+        expected_replaced_version: int,
+    ) -> MemoryRecord:
+        candidate = self.get_memory(owner_id, memory_id, include_deleted=True)
+        replaced = self.get_memory(owner_id, replaced_memory_id, include_deleted=True)
+        if candidate.version != expected_version:
+            raise MemoryVersionConflictError("Memory version conflict")
+        if candidate.status is not MemoryStatus.CANDIDATE:
+            raise ValueError("Replacement must be a candidate")
+        if replaced.status not in {MemoryStatus.ACTIVE, MemoryStatus.PAUSED}:
+            raise ValueError("Replaced memory is no longer eligible")
+        if replaced.version != expected_replaced_version:
+            raise MemoryVersionConflictError("Replaced memory version conflict")
+        relation = self._connection.execute(
+            """SELECT 1 FROM memory_relations
+            WHERE owner_id=? AND source_memory_id=? AND target_memory_id=?
+              AND relation_type='supersedes'""",
+            (owner_id, memory_id, replaced_memory_id),
+        ).fetchone()
+        if relation is None:
+            raise ValueError("Replacement relation not found")
+
+        now = _now()
+        candidate_version = candidate.version + 1
+        replaced_version = replaced.version + 1
+        candidate_before = self._snapshot(candidate)
+        candidate_after = dict(candidate_before)
+        candidate_after.update(
+            status=MemoryStatus.ACTIVE,
+            version=candidate_version,
+            updated_at=now,
+        )
+        replaced_before = self._snapshot(replaced)
+        replaced_after = dict(replaced_before)
+        replaced_after.update(
+            status=MemoryStatus.SUPERSEDED,
+            version=replaced_version,
+            updated_at=now,
+        )
+        with self.transaction():
+            activated = self._connection.execute(
+                """UPDATE memory_records SET status='active', version=?, updated_at=?
+                WHERE owner_id=? AND id=? AND version=? AND status='candidate'""",
+                (candidate_version, _iso(now), owner_id, memory_id, candidate.version),
+            )
+            retired = self._connection.execute(
+                """UPDATE memory_records SET status='superseded', version=?, updated_at=?
+                WHERE owner_id=? AND id=? AND version=? AND status IN ('active', 'paused')""",
+                (
+                    replaced_version,
+                    _iso(now),
+                    owner_id,
+                    replaced_memory_id,
+                    replaced.version,
+                ),
+            )
+            if activated.rowcount != 1 or retired.rowcount != 1:
+                raise MemoryVersionConflictError("Memory replacement conflict")
+            self._revision(
+                owner_id,
+                memory_id,
+                candidate.version,
+                candidate_version,
+                candidate_before,
+                candidate_after,
+            )
+            self._revision(
+                owner_id,
+                replaced_memory_id,
+                replaced.version,
+                replaced_version,
+                replaced_before,
+                replaced_after,
+            )
+            self._audit(owner_id, memory_id, "confirm_replacement", "user", candidate_version)
+            self._audit(
+                owner_id,
+                replaced_memory_id,
+                "transition:superseded",
+                "user",
+                replaced_version,
+            )
+        return self.get_memory(owner_id, memory_id, include_deleted=True)
+
     def add_evidence(
         self,
         owner_id: str,
@@ -424,7 +537,7 @@ class SqliteUnifiedMemoryStore:
         evidence_id = str(uuid4())
         created = _now()
         bounded = excerpt.strip()[:1000]
-        with self._connection:
+        with self.transaction():
             self._connection.execute(
                 """INSERT INTO memory_evidence
                 (id, memory_id, owner_id, kind, source_reference, excerpt, created_at)
@@ -467,7 +580,7 @@ class SqliteUnifiedMemoryStore:
         current = self.get_memory(owner_id, memory_id)
         usage_id = str(uuid4())
         created = _now()
-        with self._connection:
+        with self.transaction():
             self._connection.execute(
                 """INSERT INTO memory_usage
                 (id, memory_id, owner_id, turn_id, usage_type, result_reference, created_at)
@@ -501,7 +614,7 @@ class SqliteUnifiedMemoryStore:
         self, owner_id: str, memory_id: str, vector: list[float]
     ) -> None:
         self.get_memory(owner_id, memory_id, include_deleted=True)
-        with self._connection:
+        with self.transaction():
             self._connection.execute(
                 """INSERT INTO memory_embeddings(owner_id, memory_id, vector_json, updated_at)
                 VALUES (?, ?, ?, ?)
@@ -535,7 +648,7 @@ class SqliteUnifiedMemoryStore:
     ) -> None:
         self.get_memory(owner_id, source_memory_id, include_deleted=True)
         self.get_memory(owner_id, target_memory_id, include_deleted=True)
-        with self._connection:
+        with self.transaction():
             self._connection.execute(
                 """INSERT OR IGNORE INTO memory_relations
                 (source_memory_id, target_memory_id, owner_id, relation_type, created_at)

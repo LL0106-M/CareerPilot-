@@ -233,6 +233,11 @@ class Settings(BaseSettings):
             raise ValueError("production frontend dist path must contain index.html")
         if self.smtp_account is None or self.smtp_authorization_code is None:
             raise ValueError("production SMTP account and authorization code must be configured")
+        if (
+            self.memos_api_key is None
+            or not self.memos_api_key.get_secret_value().startswith("mpg-")
+        ):
+            raise ValueError("production MemOS API key must be configured and start with mpg-")
         return self
 
     @property

@@ -22,10 +22,60 @@ export interface ChatResponse {
   retrieval_sources: string[]
   memory_read_status: string
   memory_write_status: string
+  memory_provider_status: string
   dreaming_status: string
   memory_ids: string[]
   citation_ids: string[]
   citation_warnings: string[]
+  direction_signal?: DirectionSignal
+}
+
+export interface DirectionSignal {
+  id: string
+  label: string
+  explicitness: 'implicit' | 'explicit'
+  source_quote: string
+  reason: string
+  confidence: number
+  suggested_action: 'ask_to_add' | 'add_to_compass'
+  status: 'pending' | 'accepted'
+}
+
+export interface DashboardDirection {
+  id: string
+  label: string
+  status: 'confirmed' | 'paused' | 'archived'
+  source_signal_id: string
+  source_kind: 'conversation' | 'idea' | 'manual'
+  source_quote: string
+  reason: string
+  confidence: number
+}
+
+export interface DashboardJourney {
+  id: string
+  direction_id: string
+  title: string
+  status: 'active' | 'paused' | 'completed'
+  why: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface KnowledgeCollectionJob {
+  id: string
+  direction_id: string
+  journey_id?: string | null
+  purpose: 'job_opportunity' | 'interview_archive' | 'learning_resource'
+  query: string
+  status: 'queued' | 'collecting' | 'completed' | 'partial' | 'failed'
+  attempts: number
+}
+
+export interface DirectionJourneyStart {
+  journey: DashboardJourney
+  tasks: JourneyItem[]
+  collection_jobs: KnowledgeCollectionJob[]
 }
 
 export interface ConversationSummary {
@@ -77,6 +127,33 @@ export interface DashboardResponse {
   ideas: DashboardIdea[]
   dreaming: DreamingReview[]
   memories: unknown[]
+  directions?: DashboardDirection[]
+  direction_signals?: DirectionSignal[]
+  journeys?: DashboardJourney[]
+  collection_jobs?: KnowledgeCollectionJob[]
+}
+
+export type CanonicalMemoryType = 'fact' | 'preference' | 'goal' | 'constraint' | 'idea' | 'experience' | 'decision' | 'hypothesis'
+export type CanonicalMemoryStatus = 'candidate' | 'active' | 'paused' | 'superseded' | 'deleted'
+
+export interface CanonicalMemory {
+  id: string
+  type: CanonicalMemoryType
+  content: string
+  status: CanonicalMemoryStatus
+  sensitivity: 'normal' | 'private' | 'sensitive'
+  origin: 'user_explicit' | 'agent_extracted' | 'dreaming' | 'imported'
+  source_type: 'conversation' | 'manual' | 'integration' | 'dreaming' | 'migration'
+  source_reference: string | null
+  confidence: 'low' | 'medium' | 'high'
+  importance: number
+  version: number
+  created_at: string
+  updated_at: string
+  last_used_at: string | null
+  expires_at: string | null
+  deleted_at: string | null
+  metadata: Record<string, unknown>
 }
 
 export interface DreamingHypothesis {
@@ -148,6 +225,19 @@ export interface PreparationResource {
   format: string
   url: string
   description: string
+  updated_at: string
+  source_type: string
+}
+
+export interface InterviewArchiveResource {
+  id: string
+  title: string
+  publisher: string
+  year?: string | null
+  round?: string | null
+  trust: 'official' | 'first_party' | 'experience' | 'unverified'
+  url: string
+  excerpt: string
   updated_at: string
   source_type: string
 }
@@ -316,6 +406,36 @@ export const api = {
   getDashboard() {
     return request<DashboardResponse>('/v1/me/dashboard')
   },
+  acceptDirectionSignal(id: string) {
+    return request<DashboardDirection>(`/v1/me/direction-signals/${encodeURIComponent(id)}/accept`, {
+      method: 'POST',
+    })
+  },
+  startDirectionJourney(id: string) {
+    return request<DirectionJourneyStart>(`/v1/me/directions/${encodeURIComponent(id)}/journey`, {
+      method: 'POST',
+    })
+  },
+  getMemories() {
+    return request<{ items: CanonicalMemory[] }>('/v1/me/memories')
+  },
+  updateMemory(id: string, expectedVersion: number, content: string) {
+    return request<CanonicalMemory>(`/v1/me/memories/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ expected_version: expectedVersion, content }),
+    })
+  },
+  transitionMemory(id: string, operation: 'confirm' | 'pause' | 'resume', expectedVersion: number) {
+    return request<CanonicalMemory>(`/v1/me/memories/${encodeURIComponent(id)}/${operation}`, {
+      method: 'POST',
+      body: JSON.stringify({ expected_version: expectedVersion }),
+    })
+  },
+  deleteMemory(id: string, expectedVersion: number) {
+    return request<CanonicalMemory>(`/v1/me/memories/${encodeURIComponent(id)}?expected_version=${expectedVersion}`, {
+      method: 'DELETE',
+    })
+  },
   createIdea(text: string) {
     const title = text.length > 200 ? `${text.slice(0, 197)}…` : text
     return request<DashboardIdea>('/v1/me/ideas', {
@@ -346,12 +466,6 @@ export const api = {
       body: JSON.stringify({ decision }),
     })
   },
-  createVerificationTask(id: string) {
-    return request<JourneyItem>(`/v1/me/hypotheses/${encodeURIComponent(id)}/verification-task`, { method: 'POST' })
-  },
-  createIdeaVerificationTask(id: string) {
-    return request<JourneyItem>(`/v1/me/ideas/${encodeURIComponent(id)}/verification-task`, { method: 'POST' })
-  },
   createJourneyEvent(input: {
     title: string
     start_at: string
@@ -377,6 +491,12 @@ export const api = {
   },
   getPreparation() {
     return request<{ items: PreparationResource[] }>('/v1/knowledge/preparation')
+  },
+  getLearningResources() {
+    return request<{ items: PreparationResource[] }>('/v1/knowledge/learning')
+  },
+  getInterviewArchive() {
+    return request<{ items: InterviewArchiveResource[] }>('/v1/knowledge/interview-archive')
   },
   getDocuments() {
     return request<{ items: ApiDocument[] }>('/v1/me/documents')
