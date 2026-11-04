@@ -24,11 +24,16 @@ class LangChainToolAdapter(HarnessTool):
 
     def __init__(self, tool: BaseTool) -> None:
         self._tool = tool
-        input_schema = tool.get_input_schema()
+        input_schema = tool.args_schema
+        parameters = (
+            input_schema
+            if isinstance(input_schema, dict)
+            else tool.get_input_schema().model_json_schema()
+        )
         self._schema = ToolSchema(
             name=tool.name,
             description=tool.description,
-            parameters=input_schema.model_json_schema(),
+            parameters=parameters,
         )
 
     @property

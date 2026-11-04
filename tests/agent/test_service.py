@@ -8,6 +8,7 @@ from careerpilot.agent.service import AgentService, ChatCommand
 from careerpilot.harness.events import HarnessEvent, HarnessEventType, RunPhase
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import RunCancellationRequested
+from careerpilot.mcp.platform import McpDiscoveryError
 from careerpilot.memory.base import (
     MemoryContext,
     MemoryItem,
@@ -570,3 +571,73 @@ async def test_service_degrades_when_dreaming_enqueue_fails() -> None:
 
     assert result.reply
     assert result.dreaming_status == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_service_adds_query_selected_mcp_tools_to_the_current_turn() -> None:
+    events: list[str] = []
+    calls: list[tuple[str, str]] = []
+
+    @tool
+    def mcp__search__search_jobs(query: str) -> str:
+        """Search jobs through an MCP server."""
+        return query
+
+    async def mcp_factory(user_id: str, query: str) -> tuple[BaseTool, ...]:
+        calls.append((user_id, query))
+        return (mcp__search__search_jobs,)
+
+    agent = RecordingAgent(events)
+    service = AgentService(
+        RecordingMemoryStore(events),
+        agent,
+        SupportPolicy(),
+        mcp_tool_factory=mcp_factory,
+    )
+
+    await service.chat(ChatCommand("user-9", "thread-1", "搜索最新产品岗位"))
+
+    assert calls == [("user-9", "搜索最新产品岗位")]
+    assert [item.name for item in agent.runtime_tools] == [
+        "mcp__search__search_jobs"
+    ]
+    assert "mcp__search__search_jobs" in agent.allowed_tool_names
+
+
+@pytest.mark.asyncio
+async def test_service_keeps_internal_behavior_when_mcp_discovery_fails() -> None:
+    async def unavailable_mcp(_: str, __: str) -> tuple[BaseTool, ...]:
+        raise McpDiscoveryError("sanitized discovery failure")
+
+    agent = RecordingAgent([])
+    service = AgentService(
+        RecordingMemoryStore([]),
+        agent,
+        SupportPolicy(),
+        mcp_tool_factory=unavailable_mcp,
+    )
+
+    result = await service.chat(ChatCommand("user-9", "thread-1", "搜索最新产品岗位"))
+
+    assert result.reply
+    assert agent.runtime_tools == ()
+
+
+@pytest.mark.asyncio
+async def test_service_does_not_discover_mcp_tools_in_listen_mode() -> None:
+    calls: list[str] = []
+
+    async def mcp_factory(_: str, query: str) -> tuple[BaseTool, ...]:
+        calls.append(query)
+        return ()
+
+    service = AgentService(
+        RecordingMemoryStore([]),
+        RecordingAgent([]),
+        SupportPolicy(),
+        mcp_tool_factory=mcp_factory,
+    )
+
+    await service.chat(ChatCommand("user-9", "thread-1", "我被拒了，现在只想说说"))
+
+    assert calls == []
