@@ -1,0 +1,14 @@
+.journey-header-actions { display: flex; align-items: center; gap: 12px; }
+.calendar-create-form { display: grid; gap: 14px; }
+.calendar-create-form label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 13px; font-weight: 650; }
+.calendar-create-form input,
+.calendar-create-form select,
+.calendar-create-form textarea { box-sizing: border-box; width: 100%; padding: 11px 12px; border: 1px solid rgba(44,68,56,.14); border-radius: 12px; background: rgba(255,255,255,.72); color: var(--text-primary); font: inherit; }
+.calendar-create-form textarea { min-height: 76px; resize: vertical; }
+.calendar-event { display: grid; gap: 3px; margin-top: 4px; padding: 6px; border-radius: 9px; background: rgba(63,117,98,.09); }
+.calendar-board .calendar-event strong { margin: 0; padding: 0; background: transparent; }
+.calendar-event small,
+.calendar-event a { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 10px; text-decoration: none; }
+.calendar-event a { color: var(--brand-pine); font-weight: 700; }
+.journey-save-message { width: fit-content; margin: 12px auto; }
+@media (max-width: 820px) { .journey-header-actions { width: 100%; align-items: stretch; flex-direction: column; } }

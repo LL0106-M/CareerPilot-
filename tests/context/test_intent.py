@@ -18,6 +18,8 @@ from careerpilot.support.policy import SupportMode
         ("两个 offer 应该怎么选", TaskIntent.OFFER_DECISION),
         ("我适合什么职业方向", TaskIntent.CAREER_DIRECTION),
         ("帮我做一个未来三个月的求职计划", TaskIntent.CAREER_PLANNING),
+        ("提醒我明天下午三点参加腾讯产品二面", TaskIntent.CALENDAR_MANAGEMENT),
+        ("把周五的复盘加到日历", TaskIntent.CALENDAR_MANAGEMENT),
         ("记住，以后只考虑上海", TaskIntent.PROFILE_UPDATE),
         ("产品经理一般需要哪些能力", TaskIntent.GENERAL_QUESTION),
     ],
@@ -57,3 +59,15 @@ async def test_explicit_mode_remains_authoritative() -> None:
 
     assert frame.support_mode is SupportMode.LISTEN
     assert frame.primary_intent is TaskIntent.JOB_DISCOVERY
+
+
+async def test_calendar_topic_without_creation_request_stays_general() -> None:
+    frame = await RuleBasedIntentInterpreter().interpret("腾讯会议好用吗")
+
+    assert frame.primary_intent is TaskIntent.GENERAL_QUESTION
+
+
+async def test_negated_calendar_request_stays_general() -> None:
+    frame = await RuleBasedIntentInterpreter().interpret("不要提醒我明天下午三点面试")
+
+    assert frame.primary_intent is TaskIntent.GENERAL_QUESTION

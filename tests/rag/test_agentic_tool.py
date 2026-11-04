@@ -97,3 +97,27 @@ async def test_explicit_preparation_search_saves_url_backed_sources_for_the_libr
     assert len(saved) == 1
     assert saved[0]["title"] == "AI 产品课程"
     assert saved[0]["source_uri"] == "https://example.com/course"
+
+
+@pytest.mark.asyncio
+async def test_explicit_job_search_saves_url_backed_source_for_the_jobs_library(
+    tmp_path: Path,
+) -> None:
+    provider = RecordingSearchProvider()
+    store = SqliteRagStore(tmp_path / "rag.db")
+    tool = build_agentic_rag_tool(store, provider, user_id="u1")
+
+    await tool.ainvoke(
+        {
+            "query": "搜索并保存最新的 AI 产品岗位",
+            "scopes": ["jobs"],
+            "requires_freshness": True,
+            "save_to_library": True,
+        }
+    )
+
+    saved = store.list_documents_for_domains(("job_source",))
+    assert len(saved) == 1
+    assert saved[0]["title"] == "官方岗位"
+    assert saved[0]["source_uri"] == "https://example.com/job"
+    assert saved[0]["knowledge_origin"] == "system_web"

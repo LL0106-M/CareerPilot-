@@ -88,6 +88,12 @@ export interface JourneyItem {
   hypothesisId?: string
   why?: string
   reflection?: string | null
+  start_at?: string | null
+  end_at?: string | null
+  reminder_minutes?: number | null
+  meeting_url?: string | null
+  notes?: string | null
+  created_via?: 'manual' | 'chat' | 'journey'
 }
 
 export interface MemoryItem {

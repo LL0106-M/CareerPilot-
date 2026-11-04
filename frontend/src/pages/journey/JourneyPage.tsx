@@ -1,11 +1,12 @@
-import { ArrowRight, CalendarBlank, CheckCircle, CloudArrowUp, Footprints, Path, Sparkle } from '@phosphor-icons/react'
-import { useMemo, useState } from 'react'
+import { ArrowRight, Bell, CalendarBlank, CheckCircle, CloudArrowUp, Footprints, Path, Plus, Sparkle, VideoCamera } from '@phosphor-icons/react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { api } from '../../data/api'
 import type { ActionPreview } from '../../data/api'
 import type { JourneyItem } from '../../data/types'
 import { useDashboard } from '../../hooks/useDashboard'
+import './journey-calendar.css'
 
 type ViewMode = 'path' | 'calendar' | 'footprints'
 
@@ -15,11 +16,16 @@ export function JourneyPage() {
   const [active, setActive] = useState(0)
   const [status, setStatus] = useState('')
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [syncTask, setSyncTask] = useState<JourneyItem>()
   const [actionPreview, setActionPreview] = useState<ActionPreview>()
   const [actionState, setActionState] = useState<'idle' | 'previewing' | 'confirming' | 'done' | 'error'>('idle')
   const [actionError, setActionError] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createState, setCreateState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const groups = useMemo(() => groupJourneys(data?.journey || []), [data])
   const current = groups[active]
+
+  useEffect(() => scheduleBrowserReminders(data?.journey || []), [data?.journey])
 
   async function advance(task: JourneyItem) {
     const next: JourneyItem['state'] = task.state === '准备开始' ? '进行中' : task.state === '进行中' ? '已完成' : task.state
@@ -30,17 +36,17 @@ export function JourneyPage() {
   }
 
   async function generatePreview() {
-    const task = current?.tasks.find((item) => item.state !== '已完成') || current?.tasks[0]
+    const task = syncTask || current?.tasks.find((item) => item.state !== '已完成') || current?.tasks[0]
     if (!task) return
     setActionState('previewing'); setActionError('')
-    const start = new Date(Date.now() + 24 * 60 * 60 * 1000)
-    start.setHours(19, 0, 0, 0)
-    const end = new Date(start.getTime() + 45 * 60 * 1000)
+    const start = task.start_at ? new Date(task.start_at) : new Date(Date.now() + 24 * 60 * 60 * 1000)
+    if (!task.start_at) start.setHours(19, 0, 0, 0)
+    const end = task.end_at ? new Date(task.end_at) : new Date(start.getTime() + 45 * 60 * 1000)
     try {
       const preview = await api.previewAction('feishu', 'calendar.create', {
         summary: task.title,
-        start: start.toISOString(),
-        end: end.toISOString(),
+        start: task.start_at || start.toISOString(),
+        end: task.end_at || end.toISOString(),
       })
       setActionPreview(preview)
       setActionState('idle')
@@ -63,19 +69,53 @@ export function JourneyPage() {
     }
   }
 
+  async function createEvent(input: CalendarFormValue) {
+    setCreateState('saving')
+    try {
+      await api.createJourneyEvent({
+        title: input.title,
+        start_at: localDateTimeToOffsetIso(input.startAt),
+        reminder_minutes: input.reminderMinutes || undefined,
+        meeting_url: input.meetingUrl || undefined,
+        notes: input.notes || undefined,
+      })
+      setCreateState('saved')
+      setCreateOpen(false)
+      setView('calendar')
+    } catch {
+      setCreateState('error')
+      return
+    }
+    if (input.reminderMinutes > 0) {
+      try { await requestNotificationPermission() } catch { /* saved locally already */ }
+    }
+    try { await reload() } catch { /* saved locally already */ }
+  }
+
+  function openExternalPreview(task: JourneyItem) {
+    setSyncTask(task)
+    setActionPreview(undefined)
+    setActionState('idle')
+    setActionError('')
+    setPreviewOpen(true)
+  }
+
   return (
     <div className="journey-experience">
-      <header className="journey-hero"><div><p className="eyebrow">Journey</p><h1>不是更多待办，<br />而是一段正在发生的路。</h1></div><div className="journey-view-switch glass-strong">{([['path','航线',Path],['calendar','日历',CalendarBlank],['footprints','足迹',Footprints]] as const).map(([key,label,Icon]) => <button type="button" key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}><Icon />{label}</button>)}</div></header>
+      <header className="journey-hero"><div><p className="eyebrow">Journey</p><h1>不是更多待办，<br />而是一段正在发生的路。</h1></div><div className="journey-header-actions"><button type="button" className="primary-button" onClick={() => { setCreateOpen(true); setCreateState('idle') }}><Plus /> 添加日程</button><div className="journey-view-switch glass-strong">{([['path','航线',Path],['calendar','日历',CalendarBlank],['footprints','足迹',Footprints]] as const).map(([key,label,Icon]) => <button type="button" key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}><Icon />{label}</button>)}</div></div></header>
       {loading && <div className="state-panel glass-card">正在展开你的航程……</div>}
       {error && <div className="state-panel glass-card error">{error}<button type="button" onClick={() => void reload()}>重试</button></div>}
       {!loading && !error && groups.length === 0 && <div className="state-panel glass-card"><Path size={38} /><h2>路还没有开始画</h2><p>从罗盘里选一条猜想，用一个真实行动去验证。</p><Link className="primary-button" to="/compass">去罗盘看看</Link></div>}
       {groups.length > 0 && <>
         <nav className="journey-selector" aria-label="选择航程">{groups.map((group,index) => <button type="button" className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={group.name}><span>{String(index + 1).padStart(2,'0')}</span>{group.name}</button>)}</nav>
-        {view === 'path' && current && <PathView group={current} onAdvance={advance} onPreview={() => setPreviewOpen(true)} />}
-        {view === 'calendar' && <CalendarView tasks={data?.journey || []} />}
+        {view === 'path' && current && <PathView group={current} onAdvance={advance} onPreview={openExternalPreview} />}
+        {view === 'calendar' && <CalendarView tasks={data?.journey || []} onSync={openExternalPreview} />}
         {view === 'footprints' && <FootprintView tasks={data?.journey || []} />}
         <p className="mutation-note center" aria-live="polite">{status === 'saving' ? '正在推进……' : status === 'saved' ? '航程已更新。' : status === 'error' ? '这次没有更新成功。' : ''}</p>
       </>}
+      {createState === 'saved' && <p className="action-success journey-save-message" role="status">日程已保存到 CareerPilot。</p>}
+      {createState === 'error' && <p className="chat-error journey-save-message" role="alert">日程没有保存成功，请重试。</p>}
+      {createOpen && <CalendarCreateDialog onClose={() => setCreateOpen(false)} onSave={createEvent} saving={createState === 'saving'} />}
       {previewOpen && <div className="modal-backdrop"><div className="modal-panel glass-strong" role="dialog" aria-modal="true" aria-label="确认调用外部应用"><CloudArrowUp size={28} /><h2>先预览，再交给其他应用</h2><p>CareerPilot 会先生成操作预览。你确认内容和目标应用后，才会真正执行。</p><div className="preview-row"><span>目标</span><strong>飞书日历</strong></div><div className="preview-row"><span>内容</span><strong>{current?.tasks[0]?.title}</strong></div>{actionPreview && <div className="action-confirmation"><p className="eyebrow">等待你的最终确认</p><small>预览已由后端生成；只有点击确认后才会写入外部应用。</small></div>}{actionState === 'done' && <p className="action-success">已交给飞书日历。</p>}{actionError && <p className="chat-error" role="alert">{actionError}</p>}<div className="modal-actions"><button className="text-button" type="button" onClick={() => { setPreviewOpen(false); setActionPreview(undefined); setActionState('idle'); setActionError('') }}>关闭</button>{!actionPreview && actionState !== 'done' && <button className="primary-button" type="button" onClick={() => void generatePreview()} disabled={actionState === 'previewing'}>{actionState === 'previewing' ? '正在生成…' : '生成预览'}</button>}{actionPreview && actionState !== 'done' && <button className="primary-button" type="button" onClick={() => void confirmAndApply()} disabled={actionState === 'confirming'}>{actionState === 'confirming' ? '正在执行…' : '确认并创建日程'}</button>}</div></div></div>}
     </div>
   )
@@ -87,12 +127,12 @@ function groupJourneys(tasks: JourneyItem[]) {
   return Array.from(result, ([name, grouped]) => ({ name, tasks: grouped }))
 }
 
-function PathView({ group, onAdvance, onPreview }: { group: { name: string; tasks: JourneyItem[] }; onAdvance: (task: JourneyItem) => void; onPreview: () => void }) {
+function PathView({ group, onAdvance, onPreview }: { group: { name: string; tasks: JourneyItem[] }; onAdvance: (task: JourneyItem) => void; onPreview: (task: JourneyItem) => void }) {
   const focus = group.tasks.find((task) => task.state === '进行中') || group.tasks.find((task) => task.state === '准备开始') || group.tasks[0]
-  return <section className="journey-path"><aside className="journey-story glass-card"><p className="eyebrow">Why this journey</p><h2>{group.name}</h2><p>{focus.why || '用一次真实行动补充证据，而不是只靠想象判断方向。'}</p><div className="next-milestone"><Sparkle weight="fill" /><span>下一节点</span><strong>{focus.due}</strong></div></aside><article className="focus-action glass-strong"><span className={`state state-${focus.state}`}>{focus.state}</span><p className="eyebrow">One focus action</p><h2>{focus.title}</h2><p>现在只需要看这一件。其他动作仍在航线上，但不会同时占据你的注意力。</p><div className="focus-actions"><button type="button" className="primary-button" onClick={() => void onAdvance(focus)} disabled={focus.state === '已完成'}>{focus.state === '准备开始' ? '开始这一步' : focus.state === '进行中' ? '完成并留下足迹' : '已经完成'} <ArrowRight /></button><button type="button" className="secondary-button" onClick={onPreview}><CloudArrowUp /> 调用其他 App</button></div></article><div className="route-line" aria-hidden="true" />{group.tasks.map((task,index) => <div className={`route-stop stop-${index % 4}`} key={task.id}><span>{index + 1}</span><strong>{task.title}</strong><small>{task.state}</small></div>)}</section>
+  return <section className="journey-path"><aside className="journey-story glass-card"><p className="eyebrow">Why this journey</p><h2>{group.name}</h2><p>{focus.why || '用一次真实行动补充证据，而不是只靠想象判断方向。'}</p><div className="next-milestone"><Sparkle weight="fill" /><span>下一节点</span><strong>{focus.due}</strong></div></aside><article className="focus-action glass-strong"><span className={`state state-${focus.state}`}>{focus.state}</span><p className="eyebrow">One focus action</p><h2>{focus.title}</h2><p>现在只需要看这一件。其他动作仍在航线上，但不会同时占据你的注意力。</p><div className="focus-actions"><button type="button" className="primary-button" onClick={() => void onAdvance(focus)} disabled={focus.state === '已完成'}>{focus.state === '准备开始' ? '开始这一步' : focus.state === '进行中' ? '完成并留下足迹' : '已经完成'} <ArrowRight /></button><button type="button" className="secondary-button" onClick={() => onPreview(focus)}><CloudArrowUp /> 调用其他 App</button></div></article><div className="route-line" aria-hidden="true" />{group.tasks.map((task,index) => <div className={`route-stop stop-${index % 4}`} key={task.id}><span>{index + 1}</span><strong>{task.title}</strong><small>{task.state}</small></div>)}</section>
 }
 
-function CalendarView({ tasks }: { tasks: JourneyItem[] }) {
+function CalendarView({ tasks, onSync }: { tasks: JourneyItem[]; onSync: (task: JourneyItem) => void }) {
   const dated = tasks.map((task) => ({ task, date: parseJourneyDate(task.due) })).filter((item): item is { task: JourneyItem; date: Date } => item.date !== null)
   const firstDate = dated[0]?.date || new Date()
   const [month, setMonth] = useState(() => new Date(firstDate.getFullYear(), firstDate.getMonth(), 1))
@@ -107,7 +147,45 @@ function CalendarView({ tasks }: { tasks: JourneyItem[] }) {
     tasksByDay.set(date.getDate(), [...(tasksByDay.get(date.getDate()) || []), task])
   })
   const undated = tasks.filter((task) => parseJourneyDate(task.due) === null)
-  return <section className="calendar-board glass-card"><header><div><p className="eyebrow">Calendar · 所有航程</p><div className="calendar-month-nav"><button type="button" aria-label="上个月" onClick={() => setMonth(new Date(year, monthIndex - 1, 1))}>‹</button><h2>{year} 年 {monthIndex + 1} 月</h2><button type="button" aria-label="下个月" onClick={() => setMonth(new Date(year, monthIndex + 1, 1))}>›</button></div></div><p>只有明确日期的行动进入日历；其余仍留在路径里。</p></header><div className="calendar-grid">{['一','二','三','四','五','六','日'].map((day) => <div className="calendar-head" key={day}>{day}</div>)}{Array.from({length:cellCount},(_,index) => { const day = index - leading + 1; const dayTasks = tasksByDay.get(day) || []; return day > 0 && day <= daysInMonth ? <div className={`calendar-cell${dayTasks.length ? ' has-task' : ''}`} key={index}><span>{day}</span>{dayTasks.map((task) => <strong key={task.id}>{task.title}</strong>)}</div> : <div className="calendar-cell empty" key={index} /> })}</div>{undated.length > 0 && <aside className="calendar-unscheduled"><h3>未安排具体日期</h3><p>这些行动不会被随意塞进某一天。</p><div>{undated.map((task) => <span key={task.id}><strong>{task.title}</strong><small>{task.due}</small></span>)}</div></aside>}</section>
+  return <section className="calendar-board glass-card"><header><div><p className="eyebrow">Calendar · 所有航程</p><div className="calendar-month-nav"><button type="button" aria-label="上个月" onClick={() => setMonth(new Date(year, monthIndex - 1, 1))}>‹</button><h2>{year} 年 {monthIndex + 1} 月</h2><button type="button" aria-label="下个月" onClick={() => setMonth(new Date(year, monthIndex + 1, 1))}>›</button></div></div><p>对话和手动添加都会保存在这里；飞书是可选同步，不影响本地日程。</p></header><div className="calendar-grid">{['一','二','三','四','五','六','日'].map((day) => <div className="calendar-head" key={day}>{day}</div>)}{Array.from({length:cellCount},(_,index) => { const day = index - leading + 1; const dayTasks = tasksByDay.get(day) || []; return day > 0 && day <= daysInMonth ? <div className={`calendar-cell${dayTasks.length ? ' has-task' : ''}`} key={index}><span>{day}</span>{dayTasks.map((task) => <CalendarEvent task={task} onSync={onSync} key={task.id} />)}</div> : <div className="calendar-cell empty" key={index} /> })}</div>{undated.length > 0 && <aside className="calendar-unscheduled"><h3>未安排具体日期</h3><p>这些行动不会被随意塞进某一天。</p><div>{undated.map((task) => <span key={task.id}><strong>{task.title}</strong><small>{task.due}</small></span>)}</div></aside>}</section>
+}
+
+function CalendarEvent({ task, onSync }: { task: JourneyItem; onSync: (task: JourneyItem) => void }) {
+  const start = task.start_at ? new Date(task.start_at) : null
+  return <article className="calendar-event"><strong>{task.title}</strong>{start && <small>{start.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}</small>}{typeof task.reminder_minutes === 'number' && task.reminder_minutes > 0 && <small><Bell /> 提前 {task.reminder_minutes} 分钟提醒</small>}{task.meeting_url && <a href={task.meeting_url} target="_blank" rel="noreferrer"><VideoCamera /> 加入腾讯会议</a>}{task.start_at && <button type="button" className="text-button" aria-label={`同步“${task.title}”到飞书`} onClick={() => onSync(task)}><CloudArrowUp /> 同步飞书</button>}</article>
+}
+
+type CalendarFormValue = { title: string; startAt: string; reminderMinutes: number; meetingUrl: string; notes: string }
+
+function localDateTimeToOffsetIso(value: string) {
+  const local = new Date(value)
+  const offset = -local.getTimezoneOffset()
+  const sign = offset >= 0 ? '+' : '-'
+  const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2,'0')
+  const minutes = String(Math.abs(offset) % 60).padStart(2,'0')
+  const withSeconds = value.length === 16 ? `${value}:00` : value
+  return `${withSeconds}${sign}${hours}:${minutes}`
+}
+
+function CalendarCreateDialog({ onClose, onSave, saving }: { onClose: () => void; onSave: (value: CalendarFormValue) => void; saving: boolean }) {
+  const [value,setValue] = useState<CalendarFormValue>({ title:'',startAt:'',reminderMinutes:0,meetingUrl:'',notes:'' })
+  return <div className="modal-backdrop"><form className="modal-panel calendar-create-form glass-strong" role="dialog" aria-modal="true" aria-label="添加日程" onSubmit={(event) => { event.preventDefault(); void onSave(value) }}><CalendarBlank size={28} /><h2>添加到 CareerPilot 日历</h2><p>日程先保存在这里，之后可选择同步到飞书。</p><label>日程标题<input aria-label="日程标题" required value={value.title} onChange={(event) => setValue({...value,title:event.target.value})} /></label><label>开始时间<input aria-label="开始时间" type="datetime-local" required value={value.startAt} onChange={(event) => setValue({...value,startAt:event.target.value})} /></label><label>提醒时间<select aria-label="提醒时间" value={value.reminderMinutes} onChange={(event) => setValue({...value,reminderMinutes:Number(event.target.value)})}><option value="0">不提醒</option><option value="10">提前 10 分钟</option><option value="30">提前 30 分钟</option><option value="60">提前 1 小时</option><option value="1440">提前 1 天</option></select></label><label>腾讯会议链接（可选）<input aria-label="腾讯会议链接" type="url" placeholder="https://meeting.tencent.com/..." value={value.meetingUrl} onChange={(event) => setValue({...value,meetingUrl:event.target.value})} /></label><label>备注（可选）<textarea aria-label="备注" value={value.notes} onChange={(event) => setValue({...value,notes:event.target.value})} /></label><div className="modal-actions"><button type="button" className="text-button" onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={saving}>{saving ? '正在保存…' : '保存到 CareerPilot'}</button></div></form></div>
+}
+
+async function requestNotificationPermission() {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'default') return
+  await Notification.requestPermission()
+}
+
+function scheduleBrowserReminders(tasks: JourneyItem[]) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return undefined
+  const timers = tasks.flatMap((task) => {
+    if (!task.start_at || !task.reminder_minutes) return []
+    const delay = new Date(task.start_at).getTime() - task.reminder_minutes * 60_000 - Date.now()
+    if (delay <= 0 || delay > 2_147_000_000) return []
+    return [window.setTimeout(() => new Notification(task.title,{body: task.meeting_url ? '日程即将开始，腾讯会议链接已准备好。' : '日程即将开始。'}),delay)]
+  })
+  return () => timers.forEach((timer) => window.clearTimeout(timer))
 }
 
 function FootprintView({ tasks }: { tasks: JourneyItem[] }) {

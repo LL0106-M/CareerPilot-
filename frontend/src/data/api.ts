@@ -161,6 +161,16 @@ export interface ActionPreview {
   requires_confirmation: boolean
 }
 
+export interface CollectedJobSource {
+  id: string
+  title: string
+  publisher: string
+  url: string
+  description: string
+  updated_at: string
+  source_type: string
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -342,6 +352,19 @@ export const api = {
   createIdeaVerificationTask(id: string) {
     return request<JourneyItem>(`/v1/me/ideas/${encodeURIComponent(id)}/verification-task`, { method: 'POST' })
   },
+  createJourneyEvent(input: {
+    title: string
+    start_at: string
+    end_at?: string
+    reminder_minutes?: number
+    meeting_url?: string
+    notes?: string
+  }) {
+    return request<JourneyItem>('/v1/me/journey', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    })
+  },
   updateJourneyTask(id: string, state: JourneyItem['state'], reflection?: string) {
     return request<{ status: string }>(`/v1/me/journey/${encodeURIComponent(id)}`, {
       method: 'PATCH',
@@ -350,7 +373,7 @@ export const api = {
   },
   getJobs(filters: { companyType?: string; company?: string } = {}) {
     const query = toQuery({ company_type: filters.companyType, company: filters.company })
-    return request<{ items: ApiJob[] }>(`/v1/knowledge/jobs${query}`)
+    return request<{ items: ApiJob[]; collected_sources?: CollectedJobSource[] }>(`/v1/knowledge/jobs${query}`)
   },
   getPreparation() {
     return request<{ items: PreparationResource[] }>('/v1/knowledge/preparation')

@@ -16,6 +16,7 @@ class TaskIntent(StrEnum):
     INTERVIEW_REVIEW = "interview_review"
     OFFER_DECISION = "offer_decision"
     CAREER_PLANNING = "career_planning"
+    CALENDAR_MANAGEMENT = "calendar_management"
     PROFILE_UPDATE = "profile_update"
     GENERAL_QUESTION = "general_question"
 

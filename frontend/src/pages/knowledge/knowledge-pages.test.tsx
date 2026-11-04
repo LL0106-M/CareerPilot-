@@ -45,6 +45,38 @@ describe('knowledge pages', () => {
     expect(screen.getByText('刚刚在对话中收集的资料。')).toBeInTheDocument()
   })
 
+  it('keeps unverified job search results separate from active jobs', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ items: [], collected_sources: [{
+      id:'source-1', title:'AI 产品岗位汇总', publisher:'示例招聘站',
+      url:'https://example.com/jobs', description:'需要打开原网页核实岗位状态。',
+      updated_at:'2026-10-29T08:00:00+00:00', source_type:'web_search',
+    }] })))
+
+    render(<MemoryRouter><JobsPage /></MemoryRouter>)
+
+    expect(await screen.findByText('待核实的岗位来源')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'AI 产品岗位汇总' })).toHaveAttribute('href','https://example.com/jobs')
+    expect(screen.getByText('还没有保存的岗位。')).toBeInTheDocument()
+  })
+
+  it('lets the user refresh the library and see newly collected material', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ items: [] }))
+      .mockResolvedValueOnce(json({ items: [{
+        id:'live-2', title:'刚收录的 Agent 指南', publisher:'Example Lab', category:'工程实践',
+        format:'网页', url:'https://example.com/agent', description:'来自刚才的对话收集。',
+        updated_at:'2026-10-29T08:00:00+00:00', source_type:'web_search',
+      }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<MemoryRouter><PreparationPage /></MemoryRouter>)
+
+    await user.click(await screen.findByRole('button',{name:'刷新知识库'}))
+
+    expect(await screen.findAllByText('刚收录的 Agent 指南')).not.toHaveLength(0)
+    expect(screen.getByText(/最近检查/)).toBeInTheDocument()
+  })
+
   it('does not fabricate personal documents when the backend is empty', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ items: [] })))
     render(<MemoryRouter><PersonalPage /></MemoryRouter>)

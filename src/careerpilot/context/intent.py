@@ -45,6 +45,40 @@ class RuleBasedIntentInterpreter:
         "发展方向",
     )
     _planning_markers = ("规划", "计划", "未来三个月", "秋招计划", "求职计划")
+    _calendar_action_markers = (
+        "提醒我",
+        "加到日历",
+        "加入日历",
+        "添加到日历",
+        "创建日程",
+        "添加日程",
+        "安排日程",
+    )
+    _calendar_time_markers = (
+        "今天",
+        "明天",
+        "后天",
+        "周一",
+        "周二",
+        "周三",
+        "周四",
+        "周五",
+        "周六",
+        "周日",
+        "星期",
+        "点",
+        ":",
+    )
+    _calendar_negation_markers = (
+        "不要提醒",
+        "不用提醒",
+        "别提醒",
+        "取消提醒",
+        "不要加到日历",
+        "别加到日历",
+        "不要创建日程",
+        "取消日程",
+    )
     _knowledge_markers = ("是什么", "做什么", "需要什么", "哪些能力", "要求")
 
     _locations = (
@@ -116,6 +150,12 @@ class RuleBasedIntentInterpreter:
         has_interview = self._contains_any(message, self._interview_markers)
         has_job = self._contains_any(message, self._job_markers)
 
+        if (
+            self._contains_any(message, self._calendar_action_markers)
+            and self._contains_any(message, self._calendar_time_markers)
+            and not self._contains_any(message, self._calendar_negation_markers)
+        ):
+            return TaskIntent.CALENDAR_MANAGEMENT, "calendar_write_requested"
         if self._contains_any(message, self._profile_markers):
             return TaskIntent.PROFILE_UPDATE, "explicit_profile_or_memory_update"
         if has_resume and self._contains_any(message, self._tailoring_markers):

@@ -67,7 +67,26 @@ class ProductStore:
         }
         if "idea_id" not in journey_columns:
             self._connection.execute("ALTER TABLE journey_tasks ADD COLUMN idea_id TEXT")
-            self._connection.commit()
+        journey_column_definitions = {
+            "start_at": "TEXT",
+            "end_at": "TEXT",
+            "reminder_minutes": "INTEGER",
+            "meeting_url": "TEXT",
+            "notes": "TEXT",
+            "created_via": "TEXT NOT NULL DEFAULT 'journey'",
+            "source_reference": "TEXT",
+        }
+        for column, definition in journey_column_definitions.items():
+            if column not in journey_columns:
+                self._connection.execute(
+                    f"ALTER TABLE journey_tasks ADD COLUMN {column} {definition}"
+                )
+        self._connection.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS journey_source_reference_idx
+            ON journey_tasks(owner_id, source_reference)
+            WHERE source_reference IS NOT NULL"""
+        )
+        self._connection.commit()
 
     def close(self) -> None:
         self._connection.close()
@@ -246,6 +265,61 @@ class ProductStore:
         )
         self._connection.commit()
         return cursor.rowcount > 0
+
+    def create_journey_event(
+        self,
+        owner_id: str,
+        *,
+        title: str,
+        start_at: str,
+        end_at: str,
+        reminder_minutes: int | None = None,
+        meeting_url: str | None = None,
+        notes: str | None = None,
+        created_via: str = "manual",
+        related: str = "个人日程",
+        why: str = "由你添加到航程日历。",
+        source_reference: str | None = None,
+    ) -> dict[str, object]:
+        if source_reference is not None:
+            existing = self._connection.execute(
+                """SELECT * FROM journey_tasks
+                WHERE owner_id = ? AND source_reference = ?""",
+                (owner_id, source_reference),
+            ).fetchone()
+            if existing is not None:
+                return self._decode(existing)
+        task_id = f"task-{uuid.uuid4().hex[:10]}"
+        due = datetime.fromisoformat(start_at).date().isoformat()
+        self._connection.execute(
+            """INSERT INTO journey_tasks
+            (owner_id,id,title,due,state,related,hypothesis_id,why,reflection,idea_id,
+             start_at,end_at,reminder_minutes,meeting_url,notes,created_via,source_reference)
+            VALUES (?,?,?,?,?,?,NULL,?,NULL,NULL,?,?,?,?,?,?,?)""",
+            (
+                owner_id,
+                task_id,
+                title,
+                due,
+                "准备开始",
+                related,
+                why,
+                start_at,
+                end_at,
+                reminder_minutes,
+                meeting_url,
+                notes,
+                created_via,
+                source_reference,
+            ),
+        )
+        self._connection.commit()
+        row = self._connection.execute(
+            "SELECT * FROM journey_tasks WHERE owner_id = ? AND id = ?",
+            (owner_id, task_id),
+        ).fetchone()
+        assert row is not None
+        return self._decode(row)
 
     def _rows(self, table: str, owner_id: str, order: str) -> list[dict[str, object]]:
         rows = self._connection.execute(

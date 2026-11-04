@@ -3,7 +3,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -56,6 +56,7 @@ from careerpilot.api.schemas import (
     IdeaStageRequest,
     IdeaUpdateRequest,
     IntegrationGrantRequest,
+    JourneyCreateRequest,
     JourneyUpdateRequest,
     LoginRequest,
     MemoryCreateRequest,
@@ -82,9 +83,11 @@ from careerpilot.config import Settings, get_settings
 from careerpilot.connectors.feishu_cli import FeishuCliConnector
 from careerpilot.connectors.netease_mail import NeteaseMailConnector
 from careerpilot.connectors.wps import WpsConnector
+from careerpilot.context.contracts import TaskIntent
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import RunCancellationRequested
 from careerpilot.harness.session import SqliteSessionStore
+from careerpilot.journey.chat_parser import parse_calendar_request
 from careerpilot.memory.base import MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.daily_review import DailyReview
@@ -110,6 +113,7 @@ from careerpilot.rag.loaders import load_document
 from careerpilot.rag.models import KnowledgeOrigin
 from careerpilot.rag.routing import KnowledgeScope
 from careerpilot.rag.store import SqliteRagStore
+from careerpilot.support.policy import SupportMode
 
 
 class ChatService(Protocol):
@@ -134,6 +138,33 @@ def _request_origin_is_allowed(
         and parsed.netloc
         and parsed.scheme.casefold() == effective_proto.casefold()
         and parsed.netloc.casefold() == effective_host.casefold()
+    )
+
+
+def _save_chat_calendar_event(
+    store: ProductStore,
+    owner_id: str,
+    message: str,
+    result: ChatResult,
+) -> None:
+    if (
+        result.primary_intent is not TaskIntent.CALENDAR_MANAGEMENT
+        or result.support_mode is SupportMode.LISTEN
+        or result.result_status != "completed"
+    ):
+        return
+    parsed = parse_calendar_request(message)
+    if parsed is None:
+        return
+    store.create_journey_event(
+        owner_id,
+        title=parsed.title,
+        start_at=parsed.start_at.isoformat(),
+        end_at=parsed.end_at.isoformat(),
+        reminder_minutes=parsed.reminder_minutes,
+        meeting_url=parsed.meeting_url,
+        created_via="chat",
+        source_reference=f"chat:{result.run_id}",
     )
 
 
@@ -555,6 +586,9 @@ def create_app(
             request.message,
             result.reply,
         )
+        _save_chat_calendar_event(
+            resolve_product_store(), identity.owner_id, request.message, result
+        )
         return _chat_response(result)
 
     @app.post("/v1/chat/stream")
@@ -585,6 +619,9 @@ def create_app(
                             result.conversation_id,
                             body.message,
                             result.reply,
+                        )
+                        _save_chat_calendar_event(
+                            resolve_product_store(), identity.owner_id, body.message, result
                         )
                         payload = _chat_response(result).model_dump(mode="json")
                         yield _sse_event("completed", payload)
@@ -752,7 +789,24 @@ def create_app(
         rows = store.list_jobs(
             company_type=company_type, company=company, user_id=None, limit=limit
         )
-        return {"items": [_row_to_job(row) for row in rows]}
+        collected_sources: list[dict[str, object]] = []
+        for row in store.list_documents_for_domains(("job_source",), limit=limit):
+            metadata = json.loads(str(row["metadata_json"] or "{}"))
+            collected_sources.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "publisher": metadata.get("publisher") or "来源网页",
+                    "url": row["source_uri"],
+                    "description": str(row["text"] or "")[:500],
+                    "updated_at": row["fetched_at"] or row["published_at"] or "",
+                    "source_type": row["source_type"],
+                }
+            )
+        return {
+            "items": [_row_to_job(row) for row in rows],
+            "collected_sources": collected_sources,
+        }
 
     @app.get("/v1/knowledge/jobs/{job_id}")
     async def get_job(job_id: str) -> dict[str, object]:
@@ -1276,6 +1330,24 @@ def create_app(
             idea.id,
             idea.content,
             source="idea",
+        )
+
+    @app.post("/v1/me/journey", status_code=201)
+    async def create_journey_event(
+        body: JourneyCreateRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        end_at = body.end_at or body.start_at + timedelta(hours=1)
+        return resolve_product_store().create_journey_event(
+            identity.owner_id,
+            title=body.title,
+            start_at=body.start_at.isoformat(),
+            end_at=end_at.isoformat(),
+            reminder_minutes=body.reminder_minutes,
+            meeting_url=body.meeting_url,
+            notes=body.notes,
+            related=body.related,
+            created_via="manual",
         )
 
     @app.patch("/v1/me/journey/{task_id}")

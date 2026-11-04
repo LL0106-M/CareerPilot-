@@ -1,6 +1,8 @@
+from datetime import datetime
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from careerpilot.context.contracts import RetrievalSource, TaskIntent
 from careerpilot.memory.ideas import IdeaStage, StorageAuthorization
@@ -106,6 +108,34 @@ class HypothesisDecisionRequest(BaseModel):
 class JourneyUpdateRequest(BaseModel):
     state: str = Field(pattern="^(准备开始|进行中|已完成)$")
     reflection: str | None = Field(default=None, max_length=2_000)
+
+
+class JourneyCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    title: str = Field(min_length=1, max_length=240)
+    start_at: datetime
+    end_at: datetime | None = None
+    reminder_minutes: int | None = Field(default=None, ge=0, le=43_200)
+    meeting_url: str | None = Field(default=None, max_length=2_000)
+    notes: str | None = Field(default=None, max_length=2_000)
+    related: str = Field(default="个人日程", min_length=1, max_length=240)
+
+    @field_validator("meeting_url")
+    @classmethod
+    def validate_meeting_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("meeting_url must be an HTTPS URL")
+        return value
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "JourneyCreateRequest":
+        if self.end_at is not None and self.end_at <= self.start_at:
+            raise ValueError("end_at must be later than start_at")
+        return self
 
 
 class IntegrationGrantRequest(BaseModel):
