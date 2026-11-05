@@ -78,6 +78,4 @@ python -m careerpilot.evaluation.system_benchmark `
   --output-md evals/reports/system-benchmark.md
 ```
 
-## 如何解读这些数字
 
-当前结果是 MVP 离线确定性基线，不代表真实用户请求分布，也不覆盖最终答案忠实度、引用生成质量或长期在线稳定性。一个高通过率不能抵消任何隐私或授权硬失败；后续版本应加入匿名化真实 Trace、多次 Trial、故障注入、长程对话和端到端回答评测。
