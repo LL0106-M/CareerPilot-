@@ -131,6 +131,60 @@ describe('Journey', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2,'/v1/me/journeys/j-current/branches/jb-jd-retail/activate',expect.objectContaining({method:'POST'}))
   })
 
+  it('shows one collection status per purpose for the selected target journey', async () => {
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      hypotheses:[], ideas:[], dreaming:[], memories:[],
+      journeys:[
+        {id:'j-jd',direction_id:'d-jd',title:'AI 产品经理',status:'active',why:'京东方向'},
+        {id:'j-tencent',direction_id:'d-tencent',title:'AI 产品经理',status:'active',why:'腾讯方向'},
+      ],
+      journey_branches:[
+        {id:'jb-jd',journey_id:'j-jd',compass_branch_id:'b-jd',kind:'target',title:'京东｜京东零售',status:'active',rationale:'京东准备',company:'京东',business:'京东零售',role:'AI 产品经理',location:'北京'},
+        {id:'jb-tencent',journey_id:'j-tencent',compass_branch_id:'b-tencent',kind:'target',title:'腾讯｜混元',status:'active',rationale:'腾讯准备',company:'腾讯',business:'混元',role:'AI 产品经理',location:'深圳'},
+      ],
+      journey:[
+        {id:'t-jd',title:'准备京东案例',due:'第 1 步',state:'准备开始',related:'AI 产品经理',journey_id:'j-jd',direction_id:'d-jd',journey_branch_id:'jb-jd',scope:'branch_specific'},
+        {id:'t-tencent',title:'准备腾讯案例',due:'第 1 步',state:'准备开始',related:'AI 产品经理',journey_id:'j-tencent',direction_id:'d-tencent',journey_branch_id:'jb-tencent',scope:'branch_specific'},
+      ],
+      collection_jobs:[
+        {id:'jd-role',direction_id:'d-jd',purpose:'job_opportunity',query:'京东 AI 产品经理',status:'queued',attempts:0},
+        {id:'jd-interview',direction_id:'d-jd',journey_id:'j-jd',purpose:'interview_archive',query:'京东 AI 产品经理',status:'collecting',attempts:1},
+        {id:'jd-learning',direction_id:'d-jd',journey_id:'j-jd',purpose:'learning_resource',query:'京东 AI 产品经理',status:'queued',attempts:0},
+        {id:'tx-role',direction_id:'d-tencent',purpose:'job_opportunity',query:'腾讯 AI 产品经理',status:'completed',attempts:1},
+        {id:'tx-interview',direction_id:'d-tencent',journey_id:'j-tencent',purpose:'interview_archive',query:'腾讯 AI 产品经理',status:'completed',attempts:1},
+        {id:'tx-learning',direction_id:'d-tencent',journey_id:'j-tencent',purpose:'learning_resource',query:'腾讯 AI 产品经理',status:'completed',attempts:1},
+      ],
+    }), {status:200,headers:{'Content-Type':'application/json'}})))
+
+    render(<MemoryRouter><JourneyPage /></MemoryRouter>)
+
+    expect(await screen.findByLabelText('当前航程目标')).toHaveTextContent('AI 产品经理/京东/京东零售')
+    expect(document.querySelectorAll('.collection-status-card')).toHaveLength(3)
+    expect(screen.getAllByText('岗位信息 · 等待收集')).toHaveLength(1)
+    expect(screen.getAllByText('往年题目 · 收集中')).toHaveLength(1)
+    expect(screen.getAllByText('学习资源 · 等待收集')).toHaveLength(1)
+    expect(screen.queryByText('岗位信息 · 已完成')).not.toBeInTheDocument()
+  })
+
+  it('shows a pending business line when the stored value is only AI', async () => {
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      hypotheses:[], ideas:[], dreaming:[], memories:[], collection_jobs:[],
+      journeys:[{id:'j1',direction_id:'d1',title:'AI 产品经理',status:'active',why:'验证方向'}],
+      journey_branches:[
+        {id:'jb1',journey_id:'j1',compass_branch_id:'b1',kind:'target',title:'京东｜AI',status:'active',rationale:'继续确认业务线',company:'京东',business:'AI',role:'AI 产品经理',location:'北京'},
+      ],
+      journey:[
+        {id:'t1',title:'确认具体业务线',due:'第 1 步',state:'准备开始',related:'AI 产品经理',journey_id:'j1',direction_id:'d1',journey_branch_id:'jb1',scope:'branch_specific'},
+      ],
+    }), {status:200,headers:{'Content-Type':'application/json'}})))
+
+    render(<MemoryRouter><JourneyPage /></MemoryRouter>)
+
+    expect(await screen.findByRole('button',{name:'业务线待确认'})).toBeInTheDocument()
+    expect(screen.getByLabelText('当前航程目标')).toHaveTextContent('AI 产品经理/京东/业务线待确认')
+    expect(screen.queryByText(/\/AI$/)).not.toBeInTheDocument()
+  })
+
   it('uses path as the default view and can switch to calendar', async () => {
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({ hypotheses:[],journey:[{id:'t1',title:'完成岗位拆解',due:'2026-10-28',state:'准备开始',related:'AI 产品经理',why:'验证岗位匹配'},{id:'t2',title:'联系一位从业者',due:'本周',state:'准备开始',related:'AI 产品经理',why:'验证工作内容'}],ideas:[],dreaming:[],memories:[] }), { status:200,headers:{'Content-Type':'application/json'} })))
     const user = userEvent.setup()

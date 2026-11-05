@@ -46,9 +46,12 @@ export function JourneyPage() {
     ? current.tasks.filter((task) => task.scope !== 'branch_specific' || task.journey_branch_id === selectedBranch.id)
     : current.tasks.filter((task) => task.scope !== 'branch_specific')
   const visibleGroup = current ? { ...current, tasks: visibleTasks } : undefined
-  const currentJobs = (data?.collection_jobs || []).filter(
-    (job) => current?.directionIds.includes(job.direction_id),
+  const selectedJourney = (data?.journeys || []).find(
+    (journey) => journey.id === (selectedBranch?.journey_id || current?.id),
   )
+  const currentJobs = (data?.collection_jobs || []).filter(
+    (job) => job.direction_id === selectedJourney?.direction_id,
+  ).filter((job, index, jobs) => jobs.findIndex((item) => item.purpose === job.purpose) === index)
 
   useEffect(() => scheduleBrowserReminders(data?.journey || []), [data?.journey])
   useEffect(() => {
@@ -251,8 +254,12 @@ function branchCompany(branch: { company?: string; title: string }) {
   return branch.company?.trim() || branch.title.split('｜')[0]?.trim() || '目标公司待确认'
 }
 
-function branchBusiness(branch: { business?: string; role?: string; title: string }) {
-  return branch.business?.trim() || branch.title.split('｜')[1]?.trim() || branch.role?.trim() || '业务线待确认'
+function branchBusiness(branch: { business?: string; title: string }) {
+  const business = branch.business?.trim() || branch.title.split('｜')[1]?.trim() || ''
+  const normalized = business.toLocaleLowerCase('zh-CN').replace(/[\s_-]+/g, '')
+  return !business || ['ai', '人工智能', 'ai方向', '人工智能方向'].includes(normalized)
+    ? '业务线待确认'
+    : business
 }
 
 function PathView({ group, onAdvance, onPreview, onFutureLetter, futureState, futureLetter }: { group: { name: string; tasks: JourneyItem[] }; onAdvance: (task: JourneyItem) => void; onPreview: (task: JourneyItem) => void; onFutureLetter: (journeyId: string) => void; futureState: 'idle' | 'loading' | 'error'; futureLetter?: FutureLetter }) {
