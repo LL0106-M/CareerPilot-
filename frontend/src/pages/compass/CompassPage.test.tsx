@@ -68,6 +68,34 @@ describe('Compass', () => {
     expect(await screen.findByRole('link',{name:'查看航程'})).toHaveAttribute('href','/journey')
   })
 
+  it('shows target branches, decision context, evidence and branch comparison', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      hypotheses: [], journey: [], journeys: [], collection_jobs: [], ideas: [], dreaming: [], memories: [],
+      directions: [{ id:'d1',label:'AI 产品经理',status:'confirmed',source_signal_id:'s1',source_kind:'conversation',source_quote:'我想做 AI 产品经理',reason:'用户明确表达',confidence:.98 }],
+      direction_branches: [
+        { id:'b1',direction_id:'d1',company:'腾讯',business:'混元',role:'AI 产品经理',location:'深圳',status:'active' },
+        { id:'b2',direction_id:'d1',company:'美团',business:'Agent',role:'AI 产品经理',location:'',status:'active' },
+      ],
+      direction_summaries: [{ direction_id:'d1',reason:'你明确想探索 AI 产品岗位',unknown_question:'更喜欢平台能力还是场景落地？',recent_change:'新增腾讯混元与美团 Agent',next_validation:'各拆解一份真实 JD',updated_at:'2026-11-05T00:00:00Z' }],
+      direction_evidence: [
+        { id:'e1',direction_id:'d1',branch_id:'b1',kind:'support',content:'有 AI 项目经验',source_kind:'conversation',source_quote:'我做过一个 RAG 项目' },
+        { id:'e2',direction_id:'d1',branch_id:null,kind:'unknown',content:'还不了解日常协作方式',source_kind:'system' },
+      ],
+      career_profile: [{ id:'p1',category:'environment',value:'希望工作节奏可预期',status:'active' }],
+    }), { status:200,headers:{'Content-Type':'application/json'} })))
+    const user = userEvent.setup()
+    render(<MemoryRouter><CompassPage /></MemoryRouter>)
+
+    expect(await screen.findByText('腾讯｜混元')).toBeInTheDocument()
+    expect(screen.getByText('美团｜Agent')).toBeInTheDocument()
+    expect(screen.getByText('更喜欢平台能力还是场景落地？')).toBeInTheDocument()
+    expect(screen.getByText('有 AI 项目经验')).toBeInTheDocument()
+    expect(screen.getByText('希望工作节奏可预期')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '对比目标' }))
+    expect(screen.getByRole('region', { name: '目标分支对比' })).toBeInTheDocument()
+    expect(screen.getAllByText('还不知道').length).toBeGreaterThan(0)
+  })
+
   it('shows an existing journey without offering a duplicate start action', async () => {
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({
       hypotheses:[], journey:[], ideas:[], dreaming:[], memories:[],

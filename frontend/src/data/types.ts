@@ -98,6 +98,9 @@ export interface JourneyItem {
   direction_id?: string | null
   step_kind?: 'role_profile' | 'interview_archive' | 'learning_resource' | null
   collection_job_id?: string | null
+  journey_branch_id?: string | null
+  scope?: 'common' | 'branch_specific'
+  target_job_id?: string | null
 }
 
 export interface MemoryItem {

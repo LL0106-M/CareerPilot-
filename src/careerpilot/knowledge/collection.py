@@ -96,6 +96,13 @@ class KnowledgeCollectionProcessor:
                 "collection_job_id": job["id"],
                 "direction_id": job["direction_id"],
             }
+            for context_key in (
+                "compass_branch_id",
+                "journey_id",
+                "journey_branch_id",
+            ):
+                if job.get(context_key):
+                    metadata[context_key] = job[context_key]
             if purpose == "interview_archive":
                 metadata["trust"] = "unverified"
             elif purpose == "learning_resource":

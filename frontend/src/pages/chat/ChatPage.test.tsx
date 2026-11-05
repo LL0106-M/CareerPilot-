@@ -9,6 +9,7 @@ import { ChatPage } from './ChatPage'
 vi.mock('../../data/api', () => ({ api: {
   chat: vi.fn(), chatStream: vi.fn(), getConversations: vi.fn(), getConversation: vi.fn(),
   getDashboard: vi.fn(), uploadDocument: vi.fn(), acceptDirectionSignal: vi.fn(),
+  undoCompassUpdate: vi.fn(),
 } }))
 
 describe('chat page', () => {
@@ -23,6 +24,7 @@ describe('chat page', () => {
     })
     vi.mocked(api.uploadDocument).mockReset()
     vi.mocked(api.acceptDirectionSignal).mockReset()
+    vi.mocked(api.undoCompassUpdate).mockReset()
   })
 
   it('lets the agent choose support mode and renders the real reply', async () => {
@@ -96,6 +98,45 @@ describe('chat page', () => {
 
     expect(await screen.findByText('“用户明确表达的方向”已经加入罗盘。')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '加入罗盘' })).not.toBeInTheDocument()
+  })
+
+  it('shows this-turn Compass updates in the right rail and can undo them', async () => {
+    vi.mocked(api.chatStream).mockImplementation(async (_body, onDelta) => {
+      onDelta('已经帮你整理到罗盘。')
+      return {
+        conversation_id: 'c1', run_id: 'r-branch', result_status: 'completed', reply: '已经帮你整理到罗盘。',
+        support_mode: 'organize', primary_intent: 'career_direction', retrieval_sources: [], memory_read_status: 'ok',
+        memory_write_status: 'accepted', memory_provider_status: 'skipped', dreaming_status: 'skipped', memory_ids: [], citation_ids: [], citation_warnings: [],
+        direction_signal: {
+          id: 's1', label: 'AI 产品经理', explicitness: 'explicit', source_quote: '我想看腾讯混元的 AI 产品经理',
+          reason: '明确方向和目标', confidence: .98, suggested_action: 'add_to_compass', status: 'accepted',
+        },
+        compass_update_batch: {
+          id: 'batch-1', run_id: 'r-branch', conversation_id: 'c1', direction_id: 'd1', branch_id: 'b1',
+          source_quote: '我想看腾讯混元的 AI 产品经理', status: 'committed', created_at: '2026-11-05T00:00:00Z',
+          items: [
+            { id: 'i1', kind: 'direction', value: 'AI 产品经理', explicitness: 'explicit', status: 'applied', source_quote: '我想看腾讯混元的 AI 产品经理' },
+            { id: 'i2', kind: 'company', value: '腾讯', explicitness: 'explicit', status: 'applied', source_quote: '我想看腾讯混元的 AI 产品经理' },
+            { id: 'i3', kind: 'business', value: '混元', explicitness: 'explicit', status: 'applied', source_quote: '我想看腾讯混元的 AI 产品经理' },
+          ],
+        },
+      }
+    })
+    vi.mocked(api.undoCompassUpdate).mockResolvedValue({ status: 'undone' })
+    const user = userEvent.setup()
+    render(<MemoryRouter><ChatPage /></MemoryRouter>)
+
+    await user.type(screen.getByLabelText('给泊泊发送消息'), '我想看腾讯混元的 AI 产品经理')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('本轮刚刚理解')).toBeInTheDocument()
+    expect(screen.getByText('AI 产品经理')).toBeInTheDocument()
+    expect(screen.getByText('腾讯')).toBeInTheDocument()
+    expect(screen.getByText('混元')).toBeInTheDocument()
+    expect(screen.getByText('“我想看腾讯混元的 AI 产品经理”')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '去罗盘查看' })).toHaveAttribute('href', '/compass')
+    await user.click(screen.getByRole('button', { name: '撤销本轮更新' }))
+    expect(api.undoCompassUpdate).toHaveBeenCalledWith('batch-1')
   })
 
   it('uploads selected files before sending their context to chat', async () => {

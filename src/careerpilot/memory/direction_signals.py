@@ -31,9 +31,15 @@ class DirectionSignal:
     source_quote: str | None = None
     reason: str | None = None
     confidence: float = 0.0
+    signal_kind: str = "direction"
+    company: str | None = None
+    business: str | None = None
+    role: str | None = None
+    location: str | None = None
+    constraints: tuple[str, ...] = ()
 
     @classmethod
-    def none(cls) -> "DirectionSignal":
+    def none(cls) -> DirectionSignal:
         return cls(DirectionExplicitness.NONE, DirectionSignalAction.NONE)
 
     @property
@@ -75,8 +81,12 @@ class JsonDirectionSignalDetector:
                             "一个可命名的职业方向。explicit 表示用户明确要考虑、申请或推进；"
                             "implicit 表示持续兴趣或倾向但没有确认；uncertain 表示证据不足；"
                             "none 表示没有方向信号。source_quote 必须逐字摘自用户消息，不能改写。"
-                            "只输出 JSON 对象：{\"explicitness\":\"none|uncertain|implicit|explicit\","
-                            "\"label\":string|null,\"source_quote\":string|null,\"reason\":string,"
+                            "只输出 JSON 对象：{\"explicitness\":"
+                            "\"none|uncertain|implicit|explicit\","
+                            "\"signal_kind\":\"direction|target\",\"label\":string|null,"
+                            "\"company\":string|null,\"business\":string|null,"
+                            "\"role\":string|null,\"location\":string|null,"
+                            "\"constraints\":string[],\"source_quote\":string|null,\"reason\":string,"
                             "\"confidence\":0到1数字,\"suggested_action\":"
                             "\"none|clarify|ask_to_add|add_to_compass\"}。"
                         )
@@ -137,15 +147,40 @@ class JsonDirectionSignalDetector:
                 reason=reason.strip() or None,
                 confidence=float(confidence),
             )
-        if not isinstance(label, str) or not label.strip():
-            return DirectionSignal.none()
         if not isinstance(quote, str) or not quote.strip() or quote not in user_message:
             return DirectionSignal.none()
+        signal_kind = value.get("signal_kind", "direction")
+        if signal_kind not in {"direction", "target"}:
+            return DirectionSignal.none()
+        if signal_kind == "direction" and (not isinstance(label, str) or not label.strip()):
+            return DirectionSignal.none()
+        if label is not None and not isinstance(label, str):
+            return DirectionSignal.none()
+
+        def quoted_optional(name: str) -> str | None:
+            item = value.get(name)
+            if not isinstance(item, str) or not item.strip():
+                return None
+            normalized = " ".join(item.split())
+            return normalized if normalized in quote else None
+
+        raw_constraints = value.get("constraints", [])
+        constraints = tuple(
+            " ".join(item.split())
+            for item in raw_constraints
+            if isinstance(item, str) and item.strip() and " ".join(item.split()) in quote
+        ) if isinstance(raw_constraints, list) else ()
         return DirectionSignal(
             explicitness=explicitness,
             action=action,
-            label=" ".join(label.split()),
+            label=" ".join(label.split()) if isinstance(label, str) else None,
             source_quote=quote,
             reason=reason.strip() or None,
             confidence=float(confidence),
+            signal_kind=signal_kind,
+            company=quoted_optional("company"),
+            business=quoted_optional("business"),
+            role=quoted_optional("role"),
+            location=quoted_optional("location"),
+            constraints=constraints,
         )

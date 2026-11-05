@@ -54,6 +54,18 @@ class DirectionSignalResponse(BaseModel):
     confidence: float
     suggested_action: Literal["ask_to_add", "add_to_compass"]
     status: Literal["pending", "accepted"]
+    signal_kind: Literal["direction", "target"] = "direction"
+    company: str | None = None
+    business: str | None = None
+    role: str | None = None
+    location: str | None = None
+    constraints: tuple[str, ...] = ()
+
+
+class CompassItemCorrectionRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    value: str = Field(min_length=1, max_length=500)
 
 
 class ChatResponse(BaseModel):
@@ -72,6 +84,7 @@ class ChatResponse(BaseModel):
     dreaming_status: str
     memory_ids: tuple[str, ...] = ()
     direction_signal: DirectionSignalResponse | None = None
+    compass_update_batch: dict[str, Any] | None = None
 
 
 class AgentRunResponse(BaseModel):

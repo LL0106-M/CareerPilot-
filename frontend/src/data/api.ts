@@ -28,6 +28,28 @@ export interface ChatResponse {
   citation_ids: string[]
   citation_warnings: string[]
   direction_signal?: DirectionSignal
+  compass_update_batch?: CompassUpdateBatch
+}
+
+export interface CompassUpdateItem {
+  id: string
+  kind: 'direction' | 'company' | 'business' | 'role' | 'location' | 'constraint' | 'profile' | 'evidence'
+  value: string
+  explicitness: 'explicit' | 'implicit'
+  status: 'applied' | 'pending' | 'undone'
+  source_quote: string
+}
+
+export interface CompassUpdateBatch {
+  id: string
+  run_id: string
+  conversation_id: string
+  direction_id?: string | null
+  branch_id?: string | null
+  source_quote: string
+  status: 'committed' | 'undone'
+  created_at: string
+  items: CompassUpdateItem[]
 }
 
 export interface DirectionSignal {
@@ -50,6 +72,35 @@ export interface DashboardDirection {
   source_quote: string
   reason: string
   confidence: number
+}
+
+export interface DirectionBranch {
+  id: string
+  direction_id: string
+  company: string
+  business: string
+  role: string
+  location: string
+  status: 'active' | 'paused' | 'archived'
+}
+
+export interface JourneyBranch {
+  id: string
+  journey_id: string
+  compass_branch_id?: string | null
+  kind: 'common' | 'target'
+  title: string
+  status: 'draft' | 'active' | 'paused' | 'completed' | 'archived'
+  rationale: string
+}
+
+export interface DirectionSummary {
+  direction_id: string
+  reason: string
+  unknown_question: string
+  recent_change: string
+  next_validation: string
+  updated_at: string
 }
 
 export interface DashboardJourney {
@@ -75,6 +126,7 @@ export interface KnowledgeCollectionJob {
 export interface DirectionJourneyStart {
   journey: DashboardJourney
   tasks: JourneyItem[]
+  branches?: JourneyBranch[]
   collection_jobs: KnowledgeCollectionJob[]
 }
 
@@ -150,6 +202,12 @@ export interface DashboardResponse {
   direction_signals?: DirectionSignal[]
   journeys?: DashboardJourney[]
   collection_jobs?: KnowledgeCollectionJob[]
+  compass_update_batches?: CompassUpdateBatch[]
+  direction_branches?: DirectionBranch[]
+  journey_branches?: JourneyBranch[]
+  direction_summaries?: DirectionSummary[]
+  career_profile?: Array<{ id: string; category: string; value: string; status: string }>
+  direction_evidence?: Array<{ id: string; direction_id: string; branch_id?: string | null; kind: string; content: string; source_quote?: string | null; source_kind: string }>
 }
 
 export type CanonicalMemoryType = 'fact' | 'preference' | 'goal' | 'constraint' | 'idea' | 'experience' | 'decision' | 'hypothesis'
@@ -430,10 +488,27 @@ export const api = {
       method: 'POST',
     })
   },
+  undoCompassUpdate(id: string) {
+    return request<{ status: 'undone' }>(`/v1/me/compass-updates/${encodeURIComponent(id)}/undo`, {
+      method: 'POST',
+    })
+  },
+  correctCompassUpdateItem(batchId: string, itemId: string, value: string) {
+    return request<CompassUpdateBatch>(
+      `/v1/me/compass-updates/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}`,
+      { method: 'PATCH', body: JSON.stringify({ value }) },
+    )
+  },
   startDirectionJourney(id: string) {
     return request<DirectionJourneyStart>(`/v1/me/directions/${encodeURIComponent(id)}/journey`, {
       method: 'POST',
     })
+  },
+  activateJourneyBranch(journeyId: string, branchId: string) {
+    return request<DirectionJourneyStart>(
+      `/v1/me/journeys/${encodeURIComponent(journeyId)}/branches/${encodeURIComponent(branchId)}/activate`,
+      { method: 'POST' },
+    )
   },
   getMemories() {
     return request<{ items: CanonicalMemory[] }>('/v1/me/memories')

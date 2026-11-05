@@ -1,10 +1,10 @@
 import { CaretDoubleLeft, CaretDoubleRight, FolderSimple, Paperclip, PaperPlaneTilt, Plus, SidebarSimple } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 
 import { Bobo } from '../../components/bobo/Bobo'
 import { MessageContent } from '../../components/chat/MessageContent'
-import { api, type ConversationSummary, type DashboardResponse, type DirectionSignal } from '../../data/api'
+import { api, type CompassUpdateBatch, type ConversationSummary, type DashboardResponse, type DirectionSignal } from '../../data/api'
 
 interface ChatMessage { role: 'user' | 'agent'; content: string }
 interface ChatLocationState { draft?: string }
@@ -36,6 +36,7 @@ export function ChatPage() {
   const [files, setFiles] = useState<File[]>([])
   const [directionSignal, setDirectionSignal] = useState<DirectionSignal>()
   const [directionMutation, setDirectionMutation] = useState<'idle' | 'saving' | 'error'>('idle')
+  const [compassUpdate, setCompassUpdate] = useState<CompassUpdateBatch>()
   const endRef = useRef<HTMLDivElement>(null)
   const selectionRequestRef = useRef(0)
 
@@ -81,6 +82,7 @@ export function ChatPage() {
       setConversationId(detail.id)
       setMessages(detail.messages)
       setDirectionSignal(undefined)
+      setCompassUpdate(undefined)
       if (startsNarrow) setHistoryOpen(false)
     } catch (reason) {
       if (requestId !== selectionRequestRef.current) return
@@ -94,6 +96,7 @@ export function ChatPage() {
     setMessages([{ role: 'agent', content: '新的这一页，从哪里开始？' }])
     setConversationId(undefined)
     setDirectionSignal(undefined)
+    setCompassUpdate(undefined)
     setError('')
   }
 
@@ -123,6 +126,7 @@ export function ChatPage() {
       )
       setConversationId(response.conversation_id)
       setDirectionSignal(response.direction_signal)
+      setCompassUpdate(response.compass_update_batch)
       setMessages((previous) => previous.map((item, index) => (
         index === previous.length - 1 && item.role === 'agent'
           ? { ...item, content: response.reply }
@@ -147,6 +151,31 @@ export function ChatPage() {
       setDirectionSignal({ ...directionSignal, status: 'accepted' })
       setDirectionMutation('idle')
       void loadDashboard().catch(() => undefined)
+    } catch {
+      setDirectionMutation('error')
+    }
+  }
+
+  async function undoCompassUpdate() {
+    if (!compassUpdate || compassUpdate.status === 'undone') return
+    try {
+      await api.undoCompassUpdate(compassUpdate.id)
+      setCompassUpdate({ ...compassUpdate, status: 'undone', items: compassUpdate.items.map((item) => ({ ...item, status: 'undone' })) })
+      void loadDashboard().catch(() => undefined)
+    } catch {
+      setError('这次没有撤销成功，请重试。')
+    }
+  }
+
+  async function correctCompassItem(itemId: string, currentValue: string) {
+    if (!compassUpdate) return
+    const value = window.prompt('把这条信息改成：', currentValue)?.trim()
+    if (!value || value === currentValue) return
+    try {
+      setDirectionMutation('saving')
+      setCompassUpdate(await api.correctCompassUpdateItem(compassUpdate.id, itemId, value))
+      await loadDashboard()
+      setDirectionMutation('idle')
     } catch {
       setDirectionMutation('error')
     }
@@ -195,13 +224,22 @@ export function ChatPage() {
       </div>
       <aside className="chat-context glass-card" aria-label="关联内容">
         <div className="chat-panel-head"><span>Alongside</span><button type="button" aria-label="收起关联内容" onClick={() => setContextOpen(false)}><CaretDoubleRight /></button></div>
-        <p className="context-label">泊泊正在留意</p>
-        <h2>{latestDream?.summary || pendingHypothesis?.statement || pendingHypothesis?.content || '对话中的线索会在这里慢慢形成。'}</h2>
-        {latestDream && <div className="context-card"><span>Dreaming</span><strong>{latestDream.title || latestDream.summary || '新的观察'}</strong><small>来自你的近期复盘</small></div>}
-        {pendingHypothesis && <div className="context-card pending"><span>{pendingHypothesis.status || '等待确认'}</span><strong>{pendingHypothesis.statement || pendingHypothesis.content}</strong><small>需要更多真实经历来验证</small></div>}
+        {compassUpdate ? <div className="turn-understanding">
+          <p className="context-label">本轮刚刚理解</p>
+          <div className="understanding-list">{compassUpdate.items.map((item) => <div className={`understanding-item ${item.status}`} key={item.id}><span>{({direction:'方向',company:'公司',business:'业务',role:'岗位',location:'地点',constraint:'约束',profile:'画像',evidence:'证据'} as const)[item.kind]}</span><strong>{item.value}</strong><small>{item.status === 'pending' ? '等待确认' : item.status === 'undone' ? '已撤销' : '已自动更新'}</small>{compassUpdate.status === 'committed' && <button type="button" className="text-button" onClick={() => void correctCompassItem(item.id, item.value)}>纠正</button>}</div>)}</div>
+          <blockquote>“{compassUpdate.source_quote}”</blockquote>
+          {compassUpdate.status === 'committed' ? <button type="button" className="text-button rail-undo" onClick={() => void undoCompassUpdate()}>撤销本轮更新</button> : <p className="mutation-note">本轮更新已撤销。</p>}
+          <div className="current-target-card"><span>当前关联目标</span><strong>{compassUpdate.items.filter((item) => ['direction','company','business','role'].includes(item.kind)).map((item) => item.value).join(' · ')}</strong></div>
+          <Link className="primary-button rail-next" to="/compass">去罗盘查看</Link>
+        </div> : <>
+          <p className="context-label">泊泊正在留意</p>
+          <h2>{latestDream?.summary || pendingHypothesis?.statement || pendingHypothesis?.content || '对话中的线索会在这里慢慢形成。'}</h2>
+          {latestDream && <div className="context-card"><span>Dreaming</span><strong>{latestDream.title || latestDream.summary || '新的观察'}</strong><small>来自你的近期复盘</small></div>}
+          {pendingHypothesis && <div className="context-card pending"><span>{pendingHypothesis.status || '等待确认'}</span><strong>{pendingHypothesis.statement || pendingHypothesis.content}</strong><small>需要更多真实经历来验证</small></div>}
+        </>}
         {contextStatus === 'loading' && <p className="conversation-empty">正在加载关联内容…</p>}
         {contextStatus === 'error' && <div className="conversation-empty"><p>关联内容加载失败</p><button type="button" onClick={() => void loadDashboard().catch(() => undefined)}>重新加载关联内容</button></div>}
-        {contextStatus === 'ready' && !latestDream && !pendingHypothesis && <p className="conversation-empty">还没有形成关联线索</p>}
+        {contextStatus === 'ready' && !compassUpdate && !latestDream && !pendingHypothesis && <p className="conversation-empty">还没有形成关联线索</p>}
       </aside>
       {!contextOpen && <button className="panel-reopen context-reopen" type="button" aria-label="展开关联内容" onClick={() => { setContextOpen(true); if (startsNarrow) setHistoryOpen(false) }}><SidebarSimple /></button>}
     </section>

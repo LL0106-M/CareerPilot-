@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import sqlite3
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -51,6 +52,7 @@ from careerpilot.api.schemas import (
     AgentRunResponse,
     ChatRequest,
     ChatResponse,
+    CompassItemCorrectionRequest,
     FutureLetterCreateRequest,
     FutureTakeawayCreateRequest,
     HypothesisDecisionRequest,
@@ -601,6 +603,7 @@ def create_app(
     )
     async def chat(
         request: ChatRequest,
+        background_tasks: BackgroundTasks,
         identity: Identity = Depends(resolve_identity),
     ) -> ChatResponse:
         """Chat endpoint. ``owner_id`` is derived from an HttpOnly cookie —
@@ -628,15 +631,22 @@ def create_app(
         _save_chat_calendar_event(
             resolve_product_store(), identity.owner_id, request.message, result
         )
-        direction_signal = _save_chat_direction_signal(
+        direction_signal, compass_update_batch = _save_chat_direction_signal(
             resolve_product_store(), identity.owner_id, result
         )
-        return _chat_response(result, direction_signal)
+        if compass_update_batch and compass_update_batch.get("branch_id"):
+            background_tasks.add_task(
+                resolve_knowledge_collection_processor().process_for_owner,
+                identity.owner_id,
+                purpose="job_opportunity",
+            )
+        return _chat_response(result, direction_signal, compass_update_batch)
 
     @app.post("/v1/chat/stream")
     async def stream_chat(
         body: ChatRequest,
         http_request: Request,
+        background_tasks: BackgroundTasks,
         identity: Identity = Depends(resolve_identity),
     ) -> StreamingResponse:
         conversation_id = body.conversation_id or generate_conversation_id()
@@ -665,10 +675,18 @@ def create_app(
                         _save_chat_calendar_event(
                             resolve_product_store(), identity.owner_id, body.message, result
                         )
-                        direction_signal = _save_chat_direction_signal(
+                        direction_signal, compass_update_batch = _save_chat_direction_signal(
                             resolve_product_store(), identity.owner_id, result
                         )
-                        payload = _chat_response(result, direction_signal).model_dump(
+                        if compass_update_batch and compass_update_batch.get("branch_id"):
+                            background_tasks.add_task(
+                                resolve_knowledge_collection_processor().process_for_owner,
+                                identity.owner_id,
+                                purpose="job_opportunity",
+                            )
+                        payload = _chat_response(
+                            result, direction_signal, compass_update_batch
+                        ).model_dump(
                             mode="json", exclude_none=True
                         )
                         yield _sse_event("completed", payload)
@@ -711,6 +729,33 @@ def create_app(
             raise HTTPException(status_code=404, detail="direction signal not found")
         return direction
 
+    @app.post("/v1/me/compass-updates/{batch_id}/undo")
+    async def undo_compass_update(
+        batch_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        result = resolve_product_store().undo_compass_update(identity.owner_id, batch_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="compass update not found")
+        return result
+
+    @app.patch("/v1/me/compass-updates/{batch_id}/items/{item_id}")
+    async def correct_compass_update_item(
+        batch_id: str,
+        item_id: str,
+        body: CompassItemCorrectionRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            result = resolve_product_store().correct_compass_update_item(
+                identity.owner_id, batch_id, item_id, body.value
+            )
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if result is None:
+            raise HTTPException(status_code=404, detail="compass update item not found")
+        return result
+
     @app.post("/v1/me/directions/{direction_id}/journey", status_code=201)
     async def start_direction_journey(
         direction_id: str,
@@ -722,6 +767,29 @@ def create_app(
         if journey is None:
             raise HTTPException(status_code=404, detail="direction not found")
         return journey
+
+    @app.post(
+        "/v1/me/journeys/{journey_id}/branches/{branch_id}/activate",
+        status_code=201,
+    )
+    async def activate_journey_branch(
+        journey_id: str,
+        branch_id: str,
+        background_tasks: BackgroundTasks,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        payload = resolve_product_store().activate_journey_branch(
+            identity.owner_id, journey_id, branch_id
+        )
+        if payload is None:
+            raise HTTPException(status_code=404, detail="journey branch not found")
+        for purpose in ("interview_archive", "learning_resource"):
+            background_tasks.add_task(
+                resolve_knowledge_collection_processor().process_for_owner,
+                identity.owner_id,
+                purpose=purpose,
+            )
+        return payload
 
     @app.get("/v1/runs/{run_id}", response_model=AgentRunResponse)
     async def get_agent_run(
@@ -1896,25 +1964,45 @@ def _daily_review_payload(review: DailyReview) -> dict[str, object]:
 
 def _save_chat_direction_signal(
     store: ProductStore, owner_id: str, result: ChatResult
-) -> dict[str, object] | None:
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
     signal = result.direction_signal
     if signal is None or not signal.detected:
-        return None
-    assert signal.label is not None
+        return None, None
     assert signal.source_quote is not None
-    return store.record_direction_signal(
+    batch = store.commit_compass_update(
         owner_id,
-        source_run_id=result.run_id,
+        run_id=result.run_id,
+        conversation_id=result.conversation_id,
         label=signal.label,
         explicitness=signal.explicitness.value,
         source_quote=signal.source_quote,
         reason=signal.reason or "",
         confidence=signal.confidence,
+        signal_kind=signal.signal_kind,
+        company=signal.company,
+        business=signal.business,
+        role=signal.role,
+        location=signal.location,
+        constraints=signal.constraints,
     )
+    stored = store.record_direction_signal(
+        owner_id,
+        source_run_id=result.run_id,
+        label=signal.label or signal.role or signal.company or signal.business or "待确认目标",
+        explicitness=signal.explicitness.value,
+        source_quote=signal.source_quote,
+        reason=signal.reason or "",
+        confidence=signal.confidence,
+        conversation_id=result.conversation_id,
+        signal_kind=signal.signal_kind,
+    )
+    return stored, batch
 
 
 def _chat_response(
-    result: ChatResult, stored_direction_signal: dict[str, object] | None = None
+    result: ChatResult,
+    stored_direction_signal: dict[str, object] | None = None,
+    compass_update_batch: dict[str, object] | None = None,
 ) -> ChatResponse:
     direction_signal = None
     if stored_direction_signal is not None:
@@ -1930,6 +2018,7 @@ def _chat_response(
                 "add_to_compass" if explicitness == "explicit" else "ask_to_add"
             ),
             "status": stored_direction_signal["status"],
+            "signal_kind": stored_direction_signal.get("signal_kind", "direction"),
         }
     return ChatResponse(
         conversation_id=result.conversation_id,
@@ -1947,6 +2036,7 @@ def _chat_response(
         dreaming_status=result.dreaming_status,
         memory_ids=result.memory_ids,
         direction_signal=direction_signal,
+        compass_update_batch=compass_update_batch,
     )
 
 

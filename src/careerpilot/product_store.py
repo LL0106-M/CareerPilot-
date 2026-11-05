@@ -55,6 +55,8 @@ class ProductStore:
                 owner_id TEXT NOT NULL, id TEXT NOT NULL, source_run_id TEXT NOT NULL,
                 label TEXT NOT NULL, explicitness TEXT NOT NULL, source_quote TEXT NOT NULL,
                 reason TEXT NOT NULL, confidence REAL NOT NULL, status TEXT NOT NULL,
+                conversation_id TEXT, signal_kind TEXT NOT NULL DEFAULT 'direction',
+                context_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                 PRIMARY KEY(owner_id, id), UNIQUE(owner_id, source_run_id)
             );
@@ -72,6 +74,48 @@ class ProductStore:
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                 PRIMARY KEY(owner_id, id), UNIQUE(owner_id, direction_id)
             );
+            CREATE TABLE IF NOT EXISTS journey_branches (
+                owner_id TEXT NOT NULL, id TEXT NOT NULL, journey_id TEXT NOT NULL,
+                compass_branch_id TEXT, kind TEXT NOT NULL, title TEXT NOT NULL,
+                status TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 0,
+                rationale TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, id)
+            );
+            CREATE TABLE IF NOT EXISTS compass_update_batches (
+                owner_id TEXT NOT NULL, id TEXT NOT NULL, run_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL, direction_id TEXT, branch_id TEXT,
+                source_quote TEXT NOT NULL, status TEXT NOT NULL,
+                created_at TEXT NOT NULL, undone_at TEXT,
+                PRIMARY KEY(owner_id, id), UNIQUE(owner_id, run_id)
+            );
+            CREATE TABLE IF NOT EXISTS compass_update_items (
+                owner_id TEXT NOT NULL, id TEXT NOT NULL, batch_id TEXT NOT NULL,
+                kind TEXT NOT NULL, value TEXT NOT NULL, explicitness TEXT NOT NULL,
+                status TEXT NOT NULL, source_quote TEXT NOT NULL, created_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, id)
+            );
+            CREATE TABLE IF NOT EXISTS direction_branches (
+                owner_id TEXT NOT NULL, id TEXT NOT NULL, direction_id TEXT NOT NULL,
+                company TEXT NOT NULL DEFAULT '', business TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL DEFAULT '', location TEXT NOT NULL DEFAULT '',
+                normalized_key TEXT NOT NULL, status TEXT NOT NULL,
+                source_batch_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, id), UNIQUE(owner_id, direction_id, normalized_key)
+            );
+            CREATE TABLE IF NOT EXISTS career_profile_items (
+                owner_id TEXT NOT NULL, id TEXT NOT NULL, category TEXT NOT NULL,
+                value TEXT NOT NULL, explicitness TEXT NOT NULL, status TEXT NOT NULL,
+                source_batch_id TEXT NOT NULL, source_quote TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, id)
+            );
+            CREATE TABLE IF NOT EXISTS direction_evidence (
+                owner_id TEXT NOT NULL, id TEXT NOT NULL, direction_id TEXT NOT NULL,
+                branch_id TEXT, kind TEXT NOT NULL, content TEXT NOT NULL,
+                status TEXT NOT NULL, source_kind TEXT NOT NULL, source_reference TEXT,
+                source_quote TEXT, created_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, id)
+            );
             CREATE TABLE IF NOT EXISTS knowledge_collection_jobs (
                 owner_id TEXT NOT NULL, id TEXT NOT NULL, direction_id TEXT NOT NULL,
                 journey_id TEXT, purpose TEXT NOT NULL, query TEXT NOT NULL,
@@ -79,6 +123,15 @@ class ProductStore:
                 result_count INTEGER NOT NULL DEFAULT 0, last_error TEXT,
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                 PRIMARY KEY(owner_id, id), UNIQUE(owner_id, direction_id, purpose)
+            );
+            CREATE TABLE IF NOT EXISTS contextual_collection_jobs (
+                owner_id TEXT NOT NULL, id TEXT NOT NULL, direction_id TEXT NOT NULL,
+                compass_branch_id TEXT, journey_id TEXT, journey_branch_id TEXT,
+                purpose TEXT NOT NULL, query TEXT NOT NULL, normalized_query_key TEXT NOT NULL,
+                status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                result_count INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+                last_verified_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, id), UNIQUE(owner_id, normalized_query_key)
             );
             CREATE TABLE IF NOT EXISTS journey_future_letters (
                 owner_id TEXT NOT NULL, id TEXT NOT NULL, journey_id TEXT NOT NULL,
@@ -104,8 +157,19 @@ class ProductStore:
                 ON directions(owner_id, status, updated_at DESC);
             CREATE INDEX IF NOT EXISTS journeys_owner_updated_idx
                 ON journeys(owner_id, updated_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS journey_common_branch_idx
+                ON journey_branches(owner_id, journey_id) WHERE kind = 'common';
+            CREATE UNIQUE INDEX IF NOT EXISTS journey_target_branch_idx
+                ON journey_branches(owner_id, journey_id, compass_branch_id)
+                WHERE kind = 'target' AND compass_branch_id IS NOT NULL;
             CREATE INDEX IF NOT EXISTS collection_jobs_owner_status_idx
                 ON knowledge_collection_jobs(owner_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS contextual_jobs_owner_status_idx
+                ON contextual_collection_jobs(owner_id, status, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS compass_batches_owner_created_idx
+                ON compass_update_batches(owner_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS direction_branches_owner_direction_idx
+                ON direction_branches(owner_id, direction_id, updated_at DESC);
             CREATE INDEX IF NOT EXISTS future_letters_owner_journey_idx
                 ON journey_future_letters(owner_id, journey_id, created_at DESC);
             """
@@ -128,6 +192,9 @@ class ProductStore:
             "direction_id": "TEXT",
             "step_kind": "TEXT",
             "collection_job_id": "TEXT",
+            "journey_branch_id": "TEXT",
+            "scope": "TEXT NOT NULL DEFAULT 'common'",
+            "target_job_id": "TEXT",
         }
         for column, definition in journey_column_definitions.items():
             if column not in journey_columns:
@@ -149,6 +216,19 @@ class ProductStore:
             self._connection.execute(
                 "ALTER TABLE knowledge_collection_jobs ADD COLUMN last_error TEXT"
             )
+        signal_columns = {
+            str(row["name"])
+            for row in self._connection.execute("PRAGMA table_info(direction_signals)").fetchall()
+        }
+        for column, definition in {
+            "conversation_id": "TEXT",
+            "signal_kind": "TEXT NOT NULL DEFAULT 'direction'",
+            "context_json": "TEXT NOT NULL DEFAULT '{}'",
+        }.items():
+            if column not in signal_columns:
+                self._connection.execute(
+                    f"ALTER TABLE direction_signals ADD COLUMN {column} {definition}"
+                )
         self._connection.execute(
             """CREATE UNIQUE INDEX IF NOT EXISTS journey_source_reference_idx
             ON journey_tasks(owner_id, source_reference)
@@ -159,22 +239,52 @@ class ProductStore:
             ON journey_tasks(owner_id, journey_id, step_kind)
             WHERE journey_id IS NOT NULL AND step_kind IS NOT NULL"""
         )
+        self._connection.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS direction_evidence_source_idx
+            ON direction_evidence(owner_id, source_kind, source_reference)
+            WHERE source_reference IS NOT NULL"""
+        )
         self._connection.commit()
 
     def close(self) -> None:
         self._connection.close()
 
     def dashboard(self, owner_id: str) -> dict[str, object]:
+        directions = self.list_directions(owner_id)
         return {
             "hypotheses": self._rows("hypotheses", owner_id, "id"),
             "journey": self._rows("journey_tasks", owner_id, "rowid"),
             "memories": self._rows("memories", owner_id, "rowid"),
             "dreaming": self._rows("dreaming_insights", owner_id, "rowid DESC"),
-            "directions": self.list_directions(owner_id),
+            "directions": directions,
             "journeys": self._rows("journeys", owner_id, "updated_at DESC"),
             "collection_jobs": self.list_collection_jobs(owner_id),
             "direction_signals": self._rows(
                 "direction_signals", owner_id, "updated_at DESC"
+            ),
+            "compass_update_batches": self.list_compass_update_batches(owner_id),
+            "direction_branches": self._rows(
+                "direction_branches", owner_id, "updated_at DESC"
+            ),
+            "career_profile": self._rows(
+                "career_profile_items", owner_id, "updated_at DESC"
+            ),
+            "direction_evidence": self._rows(
+                "direction_evidence", owner_id, "created_at DESC"
+            ),
+            "direction_summaries": [
+                {
+                    "direction_id": item["id"],
+                    "reason": item["reason"],
+                    "unknown_question": "这个方向的真实工作方式是否适合你？",
+                    "recent_change": item["source_quote"],
+                    "next_validation": "查看一个真实岗位并记录最想进一步确认的问题",
+                    "updated_at": item["updated_at"],
+                }
+                for item in directions
+            ],
+            "journey_branches": self._rows(
+                "journey_branches", owner_id, "updated_at DESC"
             ),
         }
 
@@ -188,6 +298,9 @@ class ProductStore:
         source_quote: str,
         reason: str,
         confidence: float,
+        conversation_id: str | None = None,
+        signal_kind: str = "direction",
+        context: dict[str, object] | None = None,
     ) -> dict[str, object]:
         if explicitness not in {"explicit", "implicit"}:
             raise ValueError("only explicit or implicit signals can be persisted")
@@ -204,8 +317,8 @@ class ProductStore:
             self._connection.execute(
                 """INSERT INTO direction_signals
                 (owner_id,id,source_run_id,label,explicitness,source_quote,reason,
-                 confidence,status,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                 confidence,status,conversation_id,signal_kind,context_json,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     owner_id,
                     signal_id,
@@ -216,11 +329,14 @@ class ProductStore:
                     reason,
                     confidence,
                     status,
+                    conversation_id,
+                    signal_kind,
+                    json.dumps(context or {}, ensure_ascii=False),
                     now,
                     now,
                 ),
             )
-            if explicitness == "explicit":
+            if explicitness == "explicit" and signal_kind == "direction":
                 self._create_direction_from_signal(owner_id, signal_id, now)
         row = self._connection.execute(
             "SELECT * FROM direction_signals WHERE owner_id = ? AND id = ?",
@@ -229,6 +345,382 @@ class ProductStore:
         assert row is not None
         return self._decode(row)
 
+    def commit_compass_update(
+        self,
+        owner_id: str,
+        *,
+        run_id: str,
+        conversation_id: str,
+        label: str | None,
+        explicitness: str,
+        source_quote: str,
+        reason: str,
+        confidence: float,
+        signal_kind: str = "direction",
+        company: str | None = None,
+        business: str | None = None,
+        role: str | None = None,
+        location: str | None = None,
+        constraints: tuple[str, ...] = (),
+    ) -> dict[str, object]:
+        existing = self._connection.execute(
+            "SELECT id FROM compass_update_batches WHERE owner_id = ? AND run_id = ?",
+            (owner_id, run_id),
+        ).fetchone()
+        if existing is not None:
+            return self._compass_batch_payload(owner_id, str(existing["id"]))
+
+        context = {
+            "company": company,
+            "business": business,
+            "role": role,
+            "location": location,
+            "constraints": list(constraints),
+        }
+        signal = self.record_direction_signal(
+            owner_id,
+            source_run_id=run_id,
+            label=label or role or company or business or "待确认目标",
+            explicitness=explicitness,
+            source_quote=source_quote,
+            reason=reason,
+            confidence=confidence,
+            conversation_id=conversation_id,
+            signal_kind=signal_kind,
+            context=context,
+        )
+        direction_id: str | None = None
+        if signal_kind == "direction":
+            direction = self._connection.execute(
+                "SELECT id FROM directions WHERE owner_id = ? AND source_signal_id = ?",
+                (owner_id, signal["id"]),
+            ).fetchone()
+            if direction is None and label:
+                direction = self._connection.execute(
+                    """SELECT id FROM directions
+                    WHERE owner_id = ? AND status != 'archived'
+                      AND lower(trim(label)) = lower(trim(?))
+                    ORDER BY updated_at DESC LIMIT 1""",
+                    (owner_id, label),
+                ).fetchone()
+            if direction is not None:
+                direction_id = str(direction["id"])
+        else:
+            bound = self._connection.execute(
+                """SELECT d.id FROM directions d
+                JOIN direction_signals s ON s.owner_id = d.owner_id
+                    AND s.id = d.source_signal_id
+                WHERE d.owner_id = ? AND s.conversation_id = ?
+                ORDER BY s.updated_at DESC LIMIT 1""",
+                (owner_id, conversation_id),
+            ).fetchone()
+            if bound is not None:
+                direction_id = str(bound["id"])
+
+        now = datetime.now(UTC).isoformat()
+        batch_id = f"compass-{uuid.uuid4().hex[:12]}"
+        branch_id: str | None = None
+        with self._connection:
+            if direction_id and any((company, business)):
+                branch_role = role or self._direction_label(owner_id, direction_id)
+                normalized_key = "|".join(
+                    self._normalize_identity(value)
+                    for value in (company or "", business or "", branch_role or "")
+                )
+                existing_branch = self._connection.execute(
+                    """SELECT id FROM direction_branches
+                    WHERE owner_id = ? AND direction_id = ? AND normalized_key = ?""",
+                    (owner_id, direction_id, normalized_key),
+                ).fetchone()
+                if existing_branch is None:
+                    branch_id = f"branch-{uuid.uuid4().hex[:12]}"
+                    self._connection.execute(
+                        """INSERT INTO direction_branches
+                        (owner_id,id,direction_id,company,business,role,location,
+                         normalized_key,status,source_batch_id,created_at,updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            owner_id, branch_id, direction_id, company or "", business or "",
+                            branch_role or "", location or "", normalized_key,
+                            "active" if explicitness == "explicit" else "candidate",
+                            batch_id, now, now,
+                        ),
+                    )
+                else:
+                    branch_id = str(existing_branch["id"])
+                    if explicitness == "explicit":
+                        self._connection.execute(
+                            """UPDATE direction_branches
+                            SET status = 'active', source_batch_id = ?, updated_at = ?
+                            WHERE owner_id = ? AND id = ? AND status = 'candidate'""",
+                            (batch_id, now, owner_id, branch_id),
+                        )
+            self._connection.execute(
+                """INSERT INTO compass_update_batches
+                (owner_id,id,run_id,conversation_id,direction_id,branch_id,source_quote,
+                 status,created_at) VALUES (?,?,?,?,?,?,?,'committed',?)""",
+                (owner_id, batch_id, run_id, conversation_id, direction_id, branch_id,
+                 source_quote, now),
+            )
+            values = [("direction", label)] if label and signal_kind == "direction" else []
+            values.extend((kind, value) for kind, value in (
+                ("company", company), ("business", business), ("role", role),
+                ("location", location),
+            ) if value)
+            values.extend(("constraint", value) for value in constraints)
+            for kind, value in values:
+                self._connection.execute(
+                    """INSERT INTO compass_update_items
+                    (owner_id,id,batch_id,kind,value,explicitness,status,source_quote,created_at)
+                    VALUES (?,?,?,?,?,?,?, ?,?)""",
+                    (owner_id, f"update-{uuid.uuid4().hex[:12]}", batch_id, kind, value,
+                     explicitness, "applied" if explicitness == "explicit" else "pending",
+                    source_quote, now),
+                )
+            if explicitness == "explicit":
+                profile_values = [
+                    *(('现实约束', value) for value in constraints),
+                    *((('地点偏好', location),) if location else ()),
+                ]
+                for category, value in profile_values:
+                    exists = self._connection.execute(
+                        """SELECT 1 FROM career_profile_items
+                        WHERE owner_id = ? AND category = ? AND value = ?
+                          AND status != 'archived'""",
+                        (owner_id, category, value),
+                    ).fetchone()
+                    if exists is None:
+                        self._connection.execute(
+                            """INSERT INTO career_profile_items
+                            (owner_id,id,category,value,explicitness,status,source_batch_id,
+                             source_quote,created_at,updated_at)
+                            VALUES (?,?,?,?,?,'confirmed',?,?,?,?)""",
+                            (
+                                owner_id,
+                                f"profile-{uuid.uuid4().hex[:12]}",
+                                category,
+                                value,
+                                explicitness,
+                                batch_id,
+                                source_quote,
+                                now,
+                                now,
+                            ),
+                        )
+            if direction_id and branch_id and explicitness == "explicit":
+                query = " ".join(
+                    value for value in (company, business, role or label) if value
+                )
+                self._ensure_contextual_collection_job(
+                    owner_id,
+                    direction_id=direction_id,
+                    compass_branch_id=branch_id,
+                    purpose="job_opportunity",
+                    query=query,
+                )
+                self._ensure_draft_journey_branch(
+                    owner_id,
+                    direction_id=direction_id,
+                    compass_branch_id=branch_id,
+                    title="｜".join(
+                        value for value in (company, business) if value
+                    ) or (role or label or "目标分支"),
+                    now=now,
+                )
+        return self._compass_batch_payload(owner_id, batch_id)
+
+    def list_compass_update_batches(self, owner_id: str) -> list[dict[str, object]]:
+        rows = self._connection.execute(
+            """SELECT id FROM compass_update_batches WHERE owner_id = ?
+            ORDER BY created_at DESC""",
+            (owner_id,),
+        ).fetchall()
+        return [self._compass_batch_payload(owner_id, str(row["id"])) for row in rows]
+
+    def undo_compass_update(
+        self, owner_id: str, batch_id: str
+    ) -> dict[str, object] | None:
+        batch = self._connection.execute(
+            "SELECT * FROM compass_update_batches WHERE owner_id = ? AND id = ?",
+            (owner_id, batch_id),
+        ).fetchone()
+        if batch is None:
+            return None
+        if batch["status"] == "undone":
+            return {"status": "undone"}
+        now = datetime.now(UTC).isoformat()
+        with self._connection:
+            self._connection.execute(
+                """UPDATE compass_update_batches
+                SET status = 'undone', undone_at = ? WHERE owner_id = ? AND id = ?""",
+                (now, owner_id, batch_id),
+            )
+            self._connection.execute(
+                """UPDATE compass_update_items SET status = 'undone'
+                WHERE owner_id = ? AND batch_id = ?""",
+                (owner_id, batch_id),
+            )
+            self._connection.execute(
+                """UPDATE career_profile_items SET status = 'archived', updated_at = ?
+                WHERE owner_id = ? AND source_batch_id = ?""",
+                (now, owner_id, batch_id),
+            )
+            reaffirmed = None
+            if batch["branch_id"]:
+                reaffirmed = self._connection.execute(
+                    """SELECT 1 FROM compass_update_batches
+                    WHERE owner_id = ? AND branch_id = ? AND id != ?
+                      AND status = 'committed' LIMIT 1""",
+                    (owner_id, batch["branch_id"], batch_id),
+                ).fetchone()
+            if reaffirmed is None:
+                self._connection.execute(
+                    """UPDATE direction_branches
+                    SET status = 'archived', updated_at = ?
+                    WHERE owner_id = ? AND source_batch_id = ?""",
+                    (now, owner_id, batch_id),
+                )
+                self._connection.execute(
+                    """UPDATE contextual_collection_jobs SET status = 'cancelled',
+                        updated_at = ?
+                    WHERE owner_id = ? AND compass_branch_id = ?
+                      AND status IN ('queued', 'collecting')""",
+                    (now, owner_id, batch["branch_id"]),
+                )
+            if batch["direction_id"]:
+                journey = self._connection.execute(
+                    "SELECT 1 FROM journeys WHERE owner_id = ? AND direction_id = ?",
+                    (owner_id, batch["direction_id"]),
+                ).fetchone()
+                later_batch = self._connection.execute(
+                    """SELECT 1 FROM compass_update_batches
+                    WHERE owner_id = ? AND direction_id = ? AND id != ?
+                      AND status = 'committed' LIMIT 1""",
+                    (owner_id, batch["direction_id"], batch_id),
+                ).fetchone()
+                if journey is None and later_batch is None:
+                    self._connection.execute(
+                        """UPDATE directions SET status = 'archived', updated_at = ?
+                        WHERE owner_id = ? AND id = ? AND source_signal_id IN
+                          (SELECT id FROM direction_signals
+                           WHERE owner_id = ? AND source_run_id = ?)""",
+                        (now, owner_id, batch["direction_id"], owner_id, batch["run_id"]),
+                    )
+        return {"status": "undone"}
+
+    def correct_compass_update_item(
+        self, owner_id: str, batch_id: str, item_id: str, value: str
+    ) -> dict[str, object] | None:
+        normalized_value = " ".join(value.split())
+        if not normalized_value:
+            raise ValueError("value must not be empty")
+        item = self._connection.execute(
+            """SELECT i.*, b.direction_id, b.branch_id
+            FROM compass_update_items i
+            JOIN compass_update_batches b ON b.owner_id = i.owner_id
+                AND b.id = i.batch_id
+            WHERE i.owner_id = ? AND i.batch_id = ? AND i.id = ?
+              AND b.status = 'committed'""",
+            (owner_id, batch_id, item_id),
+        ).fetchone()
+        if item is None:
+            return None
+        now = datetime.now(UTC).isoformat()
+        with self._connection:
+            self._connection.execute(
+                """UPDATE compass_update_items SET value = ?, status = 'applied'
+                WHERE owner_id = ? AND id = ?""",
+                (normalized_value, owner_id, item_id),
+            )
+            if item["kind"] == "direction" and item["direction_id"]:
+                self._connection.execute(
+                    """UPDATE directions SET label = ?, updated_at = ?
+                    WHERE owner_id = ? AND id = ?""",
+                    (normalized_value, now, owner_id, item["direction_id"]),
+                )
+            if item["kind"] in {"company", "business", "role", "location"} and item["branch_id"]:
+                self._connection.execute(
+                    f"UPDATE direction_branches SET {item['kind']} = ?, updated_at = ? "
+                    "WHERE owner_id = ? AND id = ?",
+                    (normalized_value, now, owner_id, item["branch_id"]),
+                )
+                branch = self._connection.execute(
+                    """SELECT company,business,role FROM direction_branches
+                    WHERE owner_id = ? AND id = ?""",
+                    (owner_id, item["branch_id"]),
+                ).fetchone()
+                assert branch is not None
+                key = "|".join(
+                    self._normalize_identity(str(branch[field]))
+                    for field in ("company", "business", "role")
+                )
+                self._connection.execute(
+                    """UPDATE direction_branches SET normalized_key = ?
+                    WHERE owner_id = ? AND id = ?""",
+                    (key, owner_id, item["branch_id"]),
+                )
+        return self._compass_batch_payload(owner_id, batch_id)
+
+    def _compass_batch_payload(self, owner_id: str, batch_id: str) -> dict[str, object]:
+        batch = self._connection.execute(
+            "SELECT * FROM compass_update_batches WHERE owner_id = ? AND id = ?",
+            (owner_id, batch_id),
+        ).fetchone()
+        if batch is None:
+            raise LookupError(batch_id)
+        result = self._decode(batch)
+        result["items"] = [
+            self._decode(row) for row in self._connection.execute(
+                """SELECT * FROM compass_update_items
+                WHERE owner_id = ? AND batch_id = ? ORDER BY rowid""",
+                (owner_id, batch_id),
+            ).fetchall()
+        ]
+        return result
+
+    def _direction_label(self, owner_id: str, direction_id: str) -> str:
+        row = self._connection.execute(
+            "SELECT label FROM directions WHERE owner_id = ? AND id = ?",
+            (owner_id, direction_id),
+        ).fetchone()
+        return str(row["label"]) if row is not None else ""
+
+    @staticmethod
+    def _normalize_identity(value: str) -> str:
+        return "".join(value.lower().split())
+
+    def _ensure_draft_journey_branch(
+        self,
+        owner_id: str,
+        *,
+        direction_id: str,
+        compass_branch_id: str,
+        title: str,
+        now: str,
+    ) -> None:
+        journey = self._connection.execute(
+            "SELECT id FROM journeys WHERE owner_id = ? AND direction_id = ?",
+            (owner_id, direction_id),
+        ).fetchone()
+        if journey is None:
+            return
+        self._connection.execute(
+            """INSERT OR IGNORE INTO journey_branches
+            (owner_id,id,journey_id,compass_branch_id,kind,title,status,priority,
+             rationale,created_at,updated_at)
+            VALUES (?,?,?,?, 'target',?,'draft',0,?,?,?)""",
+            (
+                owner_id,
+                f"jbranch-{uuid.uuid4().hex[:12]}",
+                journey["id"],
+                compass_branch_id,
+                title,
+                "这个目标已在罗盘中，确认开始准备后才生成差异行动。",
+                now,
+                now,
+            ),
+        )
+
     def accept_direction_signal(
         self, owner_id: str, signal_id: str
     ) -> dict[str, object] | None:
@@ -236,7 +728,7 @@ class ProductStore:
             "SELECT * FROM direction_signals WHERE owner_id = ? AND id = ?",
             (owner_id, signal_id),
         ).fetchone()
-        if signal is None:
+        if signal is None or signal["signal_kind"] != "direction":
             return None
         now = datetime.now(UTC).isoformat()
         with self._connection:
@@ -246,16 +738,24 @@ class ProductStore:
                     WHERE owner_id = ? AND id = ?""",
                     (now, owner_id, signal_id),
                 )
-            self._create_direction_from_signal(owner_id, signal_id, now)
+            direction_id = self._create_direction_from_signal(owner_id, signal_id, now)
+        if direction_id is None:
+            return None
         row = self._connection.execute(
-            "SELECT * FROM directions WHERE owner_id = ? AND source_signal_id = ?",
-            (owner_id, signal_id),
+            "SELECT * FROM directions WHERE owner_id = ? AND id = ?",
+            (owner_id, direction_id),
         ).fetchone()
         assert row is not None
         return self._decode(row)
 
     def list_directions(self, owner_id: str) -> list[dict[str, object]]:
-        return self._rows("directions", owner_id, "updated_at DESC")
+        rows = self._connection.execute(
+            """SELECT * FROM directions
+            WHERE owner_id = ? AND status != 'archived'
+            ORDER BY updated_at DESC""",
+            (owner_id,),
+        ).fetchall()
+        return [self._decode(row) for row in rows]
 
     def _create_direction_from_signal(
         self, owner_id: str, signal_id: str, now: str
@@ -281,6 +781,19 @@ class ProductStore:
         ).fetchone()
         if signal is None:
             return None
+        matching = self._connection.execute(
+            """SELECT id FROM directions
+            WHERE owner_id = ? AND status != 'archived'
+              AND lower(trim(label)) = lower(trim(?))
+            ORDER BY updated_at DESC LIMIT 1""",
+            (owner_id, signal["label"]),
+        ).fetchone()
+        if matching is not None:
+            direction_id = str(matching["id"])
+            self._ensure_collection_job(
+                owner_id, direction_id, "job_opportunity", str(signal["label"])
+            )
+            return direction_id
         direction_id = f"direction-{uuid.uuid4().hex[:12]}"
         self._connection.execute(
             """INSERT INTO directions
@@ -323,7 +836,25 @@ class ProductStore:
                 ELSE 4 END, created_at""",
             params,
         ).fetchall()
-        return [self._decode(row) for row in rows]
+        contextual_where = "owner_id = ?"
+        contextual_params: list[object] = [owner_id]
+        if direction_id is not None:
+            contextual_where += " AND direction_id = ?"
+            contextual_params.append(direction_id)
+        contextual = self._connection.execute(
+            f"""SELECT * FROM contextual_collection_jobs
+            WHERE {contextual_where} ORDER BY created_at""",
+            contextual_params,
+        ).fetchall()
+        result = [self._decode(row) for row in (*rows, *contextual)]
+        order = {"job_opportunity": 1, "interview_archive": 2, "learning_resource": 3}
+        return sorted(
+            result,
+            key=lambda item: (
+                order.get(str(item["purpose"]), 4),
+                str(item["created_at"]),
+            ),
+        )
 
     def claim_collection_jobs(
         self,
@@ -361,6 +892,34 @@ class ProductStore:
                     ).fetchone()
                     assert current is not None
                     claimed.append(self._decode(current))
+            remaining = max(0, limit - len(claimed))
+            if remaining:
+                context_where = "owner_id = ? AND status = 'queued'"
+                context_params: list[object] = [owner_id]
+                if purpose is not None:
+                    context_where += " AND purpose = ?"
+                    context_params.append(purpose)
+                context_rows = self._connection.execute(
+                    f"""SELECT * FROM contextual_collection_jobs
+                    WHERE {context_where} ORDER BY created_at LIMIT ?""",
+                    (*context_params, remaining),
+                ).fetchall()
+                for row in context_rows:
+                    changed = self._connection.execute(
+                        """UPDATE contextual_collection_jobs
+                        SET status = 'collecting', attempts = attempts + 1,
+                            updated_at = ?, last_error = NULL
+                        WHERE owner_id = ? AND id = ? AND status = 'queued'""",
+                        (now, owner_id, row["id"]),
+                    )
+                    if changed.rowcount:
+                        current = self._connection.execute(
+                            """SELECT * FROM contextual_collection_jobs
+                            WHERE owner_id = ? AND id = ?""",
+                            (owner_id, row["id"]),
+                        ).fetchone()
+                        assert current is not None
+                        claimed.append(self._decode(current))
         return claimed
 
     def finish_collection_job(
@@ -375,7 +934,7 @@ class ProductStore:
         if status not in {"completed", "partial", "failed"}:
             raise ValueError("invalid terminal collection status")
         with self._connection:
-            self._connection.execute(
+            changed = self._connection.execute(
                 """UPDATE knowledge_collection_jobs
                 SET status = ?, result_count = ?, last_error = ?, updated_at = ?
                 WHERE owner_id = ? AND id = ?""",
@@ -388,11 +947,38 @@ class ProductStore:
                     job_id,
                 ),
             )
+            if not changed.rowcount:
+                self._connection.execute(
+                    """UPDATE contextual_collection_jobs
+                    SET status = ?, result_count = ?, last_error = ?,
+                        last_verified_at = ?, updated_at = ?
+                    WHERE owner_id = ? AND id = ?""",
+                    (
+                        status,
+                        max(0, result_count),
+                        last_error[:200] if last_error else None,
+                        (
+                            datetime.now(UTC).isoformat()
+                            if status in {"completed", "partial"}
+                            else None
+                        ),
+                        datetime.now(UTC).isoformat(),
+                        owner_id,
+                        job_id,
+                    ),
+                )
 
     def queue_collection_refresh(self, owner_id: str, *, purpose: str) -> None:
         with self._connection:
             self._connection.execute(
                 """UPDATE knowledge_collection_jobs
+                SET status = 'queued', updated_at = ?
+                WHERE owner_id = ? AND purpose = ?
+                  AND status IN ('completed', 'partial', 'failed')""",
+                (datetime.now(UTC).isoformat(), owner_id, purpose),
+            )
+            self._connection.execute(
+                """UPDATE contextual_collection_jobs
                 SET status = 'queued', updated_at = ?
                 WHERE owner_id = ? AND purpose = ?
                   AND status IN ('completed', 'partial', 'failed')""",
@@ -426,6 +1012,51 @@ class ProductStore:
         )
         row = self._connection.execute(
             """SELECT * FROM knowledge_collection_jobs
+            WHERE owner_id = ? AND id = ?""",
+            (owner_id, job_id),
+        ).fetchone()
+        assert row is not None
+        return row
+
+    def _ensure_contextual_collection_job(
+        self,
+        owner_id: str,
+        *,
+        direction_id: str,
+        compass_branch_id: str,
+        purpose: str,
+        query: str,
+        journey_id: str | None = None,
+        journey_branch_id: str | None = None,
+    ) -> sqlite3.Row:
+        normalized_query_key = "|".join((
+            direction_id,
+            compass_branch_id,
+            journey_branch_id or "",
+            purpose,
+            self._normalize_identity(query),
+        ))
+        existing = self._connection.execute(
+            """SELECT * FROM contextual_collection_jobs
+            WHERE owner_id = ? AND normalized_query_key = ?""",
+            (owner_id, normalized_query_key),
+        ).fetchone()
+        if existing is not None:
+            return existing
+        now = datetime.now(UTC).isoformat()
+        job_id = f"collect-{uuid.uuid4().hex[:12]}"
+        self._connection.execute(
+            """INSERT INTO contextual_collection_jobs
+            (owner_id,id,direction_id,compass_branch_id,journey_id,journey_branch_id,
+             purpose,query,normalized_query_key,status,attempts,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,'queued',0,?,?)""",
+            (
+                owner_id, job_id, direction_id, compass_branch_id, journey_id,
+                journey_branch_id, purpose, query, normalized_query_key, now, now,
+            ),
+        )
+        row = self._connection.execute(
+            """SELECT * FROM contextual_collection_jobs
             WHERE owner_id = ? AND id = ?""",
             (owner_id, job_id),
         ).fetchone()
@@ -467,6 +1098,49 @@ class ProductStore:
                 )
             else:
                 journey_id = str(journey["id"])
+            now = datetime.now(UTC).isoformat()
+            common = self._connection.execute(
+                """SELECT * FROM journey_branches
+                WHERE owner_id = ? AND journey_id = ? AND kind = 'common'""",
+                (owner_id, journey_id),
+            ).fetchone()
+            if common is None:
+                common_branch_id = f"jbranch-{uuid.uuid4().hex[:12]}"
+                self._connection.execute(
+                    """INSERT INTO journey_branches
+                    (owner_id,id,journey_id,compass_branch_id,kind,title,status,priority,
+                     rationale,created_at,updated_at)
+                    VALUES (?,?,?,NULL,'common',?,'active',0,?,?,?)""",
+                    (
+                        owner_id, common_branch_id, journey_id,
+                        f"{direction['label']} · 通用主线",
+                        "所有目标分支共享且只保留一份的基础行动。", now, now,
+                    ),
+                )
+            else:
+                common_branch_id = str(common["id"])
+            compass_branches = self._connection.execute(
+                """SELECT * FROM direction_branches
+                WHERE owner_id = ? AND direction_id = ? AND status != 'archived'""",
+                (owner_id, direction_id),
+            ).fetchall()
+            for compass_branch in compass_branches:
+                title = "｜".join(
+                    value for value in (
+                        str(compass_branch["company"]), str(compass_branch["business"])
+                    ) if value
+                ) or str(compass_branch["role"])
+                self._connection.execute(
+                    """INSERT OR IGNORE INTO journey_branches
+                    (owner_id,id,journey_id,compass_branch_id,kind,title,status,priority,
+                     rationale,created_at,updated_at)
+                    VALUES (?,?,?,?, 'target',?,'draft',0,?,?,?)""",
+                    (
+                        owner_id, f"jbranch-{uuid.uuid4().hex[:12]}", journey_id,
+                        compass_branch["id"], title,
+                        "这个目标已在罗盘中，确认开始准备后才生成差异行动。", now, now,
+                    ),
+                )
             jobs = {
                 purpose: self._ensure_collection_job(
                     owner_id,
@@ -490,8 +1164,9 @@ class ProductStore:
                 self._connection.execute(
                     """INSERT OR IGNORE INTO journey_tasks
                     (owner_id,id,title,due,state,related,hypothesis_id,why,reflection,
-                     journey_id,direction_id,step_kind,collection_job_id,created_via)
-                    VALUES (?,?,?,?,?,?,NULL,?,NULL,?,?,?,?,'journey')""",
+                     journey_id,direction_id,step_kind,collection_job_id,created_via,
+                     journey_branch_id,scope)
+                    VALUES (?,?,?,?,?,?,NULL,?,NULL,?,?,?,?,'journey',?,'common')""",
                     (
                         owner_id,
                         f"task-{uuid.uuid4().hex[:10]}",
@@ -504,7 +1179,65 @@ class ProductStore:
                         direction_id,
                         step_kind,
                         jobs[purpose]["id"],
+                        common_branch_id,
                     ),
+                )
+        return self._direction_journey_payload(owner_id, journey_id)
+
+    def activate_journey_branch(
+        self, owner_id: str, journey_id: str, branch_id: str
+    ) -> dict[str, object] | None:
+        branch = self._connection.execute(
+            """SELECT jb.*, db.company, db.business, db.role, db.direction_id
+            FROM journey_branches jb
+            JOIN direction_branches db ON db.owner_id = jb.owner_id
+                AND db.id = jb.compass_branch_id
+            WHERE jb.owner_id = ? AND jb.id = ? AND jb.journey_id = ?
+              AND jb.kind = 'target'""",
+            (owner_id, branch_id, journey_id),
+        ).fetchone()
+        if branch is None:
+            return None
+        now = datetime.now(UTC).isoformat()
+        title = str(branch["title"])
+        suffix = branch_id.removeprefix("jbranch-")[:8]
+        with self._connection:
+            if branch["status"] != "active":
+                self._connection.execute(
+                    """UPDATE journey_branches SET status = 'active', updated_at = ?
+                    WHERE owner_id = ? AND id = ?""",
+                    (now, owner_id, branch_id),
+                )
+            steps = (
+                (f"target_research_{suffix}", f"拆解 {title} 的真实岗位与业务差异", "分支第 1 步"),
+                (f"target_prepare_{suffix}", f"准备 {title} 的差异化案例与面试证据", "分支第 2 步"),
+            )
+            for step_kind, task_title, due in steps:
+                self._connection.execute(
+                    """INSERT OR IGNORE INTO journey_tasks
+                    (owner_id,id,title,due,state,related,hypothesis_id,why,reflection,
+                     journey_id,direction_id,step_kind,created_via,journey_branch_id,scope)
+                    VALUES (?,?,?,?,?,?,NULL,?,NULL,?,?,?,'journey',?,'branch_specific')""",
+                    (
+                        owner_id, f"task-{uuid.uuid4().hex[:10]}", task_title, due,
+                        "准备开始", title, "只增加这个目标与通用主线不同的准备。",
+                        journey_id, branch["direction_id"], step_kind, branch_id,
+                    ),
+                )
+            query = " ".join(
+                value for value in (
+                    str(branch["company"]), str(branch["business"]), str(branch["role"])
+                ) if value
+            )
+            for purpose in ("interview_archive", "learning_resource"):
+                self._ensure_contextual_collection_job(
+                    owner_id,
+                    direction_id=str(branch["direction_id"]),
+                    compass_branch_id=str(branch["compass_branch_id"]),
+                    purpose=purpose,
+                    query=query,
+                    journey_id=journey_id,
+                    journey_branch_id=branch_id,
                 )
         return self._direction_journey_payload(owner_id, journey_id)
 
@@ -529,6 +1262,14 @@ class ProductStore:
         return {
             "journey": self._decode(journey),
             "tasks": [self._decode(task) for task in tasks],
+            "branches": [
+                self._decode(branch) for branch in self._connection.execute(
+                    """SELECT * FROM journey_branches
+                    WHERE owner_id = ? AND journey_id = ?
+                    ORDER BY CASE kind WHEN 'common' THEN 0 ELSE 1 END, created_at""",
+                    (owner_id, journey_id),
+                ).fetchall()
+            ],
             "collection_jobs": self.list_collection_jobs(
                 owner_id, str(journey["direction_id"])
             ),
@@ -738,14 +1479,49 @@ class ProductStore:
         return self._decode(existing)
 
     def update_task(self, owner_id: str, task_id: str, state: str, reflection: str | None) -> bool:
-        cursor = self._connection.execute(
-            """UPDATE journey_tasks
-            SET state = ?, reflection = COALESCE(?, reflection)
-            WHERE owner_id = ? AND id = ?""",
-            (state, reflection, owner_id, task_id),
-        )
-        self._connection.commit()
-        return cursor.rowcount > 0
+        task = self._connection.execute(
+            "SELECT * FROM journey_tasks WHERE owner_id = ? AND id = ?",
+            (owner_id, task_id),
+        ).fetchone()
+        if task is None:
+            return False
+        with self._connection:
+            self._connection.execute(
+                """UPDATE journey_tasks
+                SET state = ?, reflection = COALESCE(?, reflection)
+                WHERE owner_id = ? AND id = ?""",
+                (state, reflection, owner_id, task_id),
+            )
+            if state == "已完成" and task["direction_id"]:
+                branch_id = None
+                if task["journey_branch_id"]:
+                    branch = self._connection.execute(
+                        """SELECT compass_branch_id FROM journey_branches
+                        WHERE owner_id = ? AND id = ?""",
+                        (owner_id, task["journey_branch_id"]),
+                    ).fetchone()
+                    if branch is not None:
+                        branch_id = branch["compass_branch_id"]
+                content = str(task["title"])
+                if reflection:
+                    content = f"{content}：{reflection.strip()}"
+                self._connection.execute(
+                    """INSERT OR IGNORE INTO direction_evidence
+                    (owner_id,id,direction_id,branch_id,kind,content,status,source_kind,
+                     source_reference,source_quote,created_at)
+                    VALUES (?,?,?,?,? ,?,'confirmed','journey_task',?,NULL,?)""",
+                    (
+                        owner_id,
+                        f"evidence-{uuid.uuid4().hex[:12]}",
+                        task["direction_id"],
+                        branch_id,
+                        "fact",
+                        content,
+                        task_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+        return True
 
     def create_journey_event(
         self,

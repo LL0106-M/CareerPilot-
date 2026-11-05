@@ -32,6 +32,33 @@ async def test_detector_parses_explicit_direction_signal() -> None:
 
 
 @pytest.mark.asyncio
+async def test_detector_extracts_company_business_role_and_location() -> None:
+    model = FakeMessagesListChatModel(
+        responses=[AIMessage(content=(
+            '{"explicitness":"explicit","signal_kind":"direction",'
+            '"label":"AI 产品经理","company":"腾讯","business":"混元",'
+            '"role":"AI 产品经理","location":"深圳",'
+            '"constraints":["不考虑纯运营岗"],'
+            '"source_quote":"我想看腾讯混元的 AI 产品经理，最好在深圳，不考虑纯运营岗",'
+            '"reason":"用户明确给出了方向和目标",'
+            '"confidence":0.98,"suggested_action":"add_to_compass"}'
+        ))]
+    )
+
+    signal = await JsonDirectionSignalDetector(model).analyze(
+        "我想看腾讯混元的 AI 产品经理，最好在深圳，不考虑纯运营岗",
+        "可以先把目标拆开看。",
+    )
+
+    assert signal.signal_kind == "direction"
+    assert signal.company == "腾讯"
+    assert signal.business == "混元"
+    assert signal.role == "AI 产品经理"
+    assert signal.location == "深圳"
+    assert signal.constraints == ("不考虑纯运营岗",)
+
+
+@pytest.mark.asyncio
 async def test_detector_parses_implicit_direction_signal() -> None:
     model = FakeMessagesListChatModel(
         responses=[AIMessage(content=(

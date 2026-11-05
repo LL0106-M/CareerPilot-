@@ -15,7 +15,6 @@ from careerpilot.product_store import ProductStore
 from careerpilot.support.policy import SupportMode
 from tests.api.auth_helpers import build_auth_service, issue_session
 
-
 OWNER_A = "550e8400-e29b-41d4-a716-446655440010"
 OWNER_B = "550e8400-e29b-41d4-a716-446655440011"
 
@@ -134,6 +133,10 @@ def test_chat_persists_explicit_direction_and_returns_server_signal_id(tmp_path)
     payload = response.json()["direction_signal"]
     assert payload["id"].startswith("signal-")
     assert payload["status"] == "accepted"
+    batch = response.json()["compass_update_batch"]
+    assert batch["conversation_id"] == response.json()["conversation_id"]
+    assert batch["items"][0]["kind"] == "direction"
+    assert batch["items"][0]["status"] == "applied"
     dashboard = client.get("/v1/me/dashboard").json()
     assert [item["label"] for item in dashboard["directions"]] == ["用户明确表达的方向"]
     assert dashboard["journey"] == []

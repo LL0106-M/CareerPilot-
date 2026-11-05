@@ -11,6 +11,7 @@ export function CompassPage() {
   const [mutation, setMutation] = useState('')
   const [journeyConfirmOpen, setJourneyConfirmOpen] = useState(false)
   const [journeyState, setJourneyState] = useState<'idle' | 'saving' | 'error'>('idle')
+  const [compareOpen, setCompareOpen] = useState(false)
   const hypotheses = data?.hypotheses || []
   const directions = data?.directions || []
   const journeys = data?.journeys || []
@@ -27,6 +28,15 @@ export function CompassPage() {
   const currentJourney = current?.kind === 'direction'
     ? journeys.find((journey) => journey.direction_id === current.item.id)
     : undefined
+  const currentBranches = current?.kind === 'direction'
+    ? (data?.direction_branches || []).filter((branch) => branch.direction_id === current.item.id && branch.status !== 'archived')
+    : []
+  const currentSummary = current?.kind === 'direction'
+    ? (data?.direction_summaries || []).find((summary) => summary.direction_id === current.item.id)
+    : undefined
+  const currentEvidence = current?.kind === 'direction'
+    ? (data?.direction_evidence || []).filter((item) => item.direction_id === current.item.id)
+    : []
 
   async function decide(decision: 'confirm' | 'uncertain') {
     if (!current || current.kind !== 'hypothesis') return
@@ -74,9 +84,17 @@ export function CompassPage() {
             <h2>{current.item.label}</h2>
             <p>“{current.item.source_quote}”</p>
             <div className="evidence-strip"><span>{current.item.source_kind === 'conversation' ? '来自对话' : '来自你的想法'}</span><span>{current.item.reason}</span></div>
+            {currentBranches.length > 0 && <div className="target-branches" aria-label="目标分支">{currentBranches.map((branch) => <span key={branch.id}>{[branch.company, branch.business].filter(Boolean).join('｜') || branch.role}</span>)}</div>}
+            {currentSummary && <div className="direction-context-grid">
+              <div><span>为什么在这里</span><strong>{currentSummary.reason}</strong></div>
+              <div><span>最大未知</span><strong>{currentSummary.unknown_question}</strong></div>
+              <div><span>最近变化</span><strong>{currentSummary.recent_change}</strong></div>
+              <div className="next-validation"><span>下一验证点</span><strong>{currentSummary.next_validation}</strong></div>
+            </div>}
+            {currentEvidence.length > 0 && <details className="evidence-drawer"><summary>查看证据与未知项</summary><div>{currentEvidence.map((item) => <article key={item.id}><span>{item.kind === 'support' ? '支持证据' : item.kind === 'counter' ? '反对证据' : '仍未知'}</span><strong>{item.content}</strong>{item.source_quote && <small>“{item.source_quote}”</small>}</article>)}</div></details>}
             {currentJourney
-              ? <div className="direction-actions"><Link className="primary-button" to="/journey">查看航程</Link></div>
-              : <><div className="direction-actions"><button type="button" className="primary-button" onClick={() => { setJourneyState('idle'); setJourneyConfirmOpen(true) }}><Path /> 开始航程</button></div><p className="mutation-note">它在罗盘里，只有你确认后才会开启航程。</p></>}
+              ? <div className="direction-actions"><Link className="primary-button" to="/journey">查看航程</Link>{currentBranches.length > 1 && <button type="button" className="secondary-button" onClick={() => setCompareOpen((value) => !value)}>对比目标</button>}</div>
+              : <><div className="direction-actions"><button type="button" className="primary-button" onClick={() => { setJourneyState('idle'); setJourneyConfirmOpen(true) }}><Path /> 开始航程</button>{currentBranches.length > 1 && <button type="button" className="secondary-button" onClick={() => setCompareOpen((value) => !value)}>对比目标</button>}</div><p className="mutation-note">它在罗盘里，只有你确认后才会开启航程。</p></>}
           </article>}
 
           {current?.kind === 'hypothesis' && <article className="direction-card glass-strong">
@@ -92,6 +110,10 @@ export function CompassPage() {
           {compassItems.length > 1 && <div className="direction-nav"><button type="button" aria-label="上一个方向" onClick={() => setIndex((index - 1 + compassItems.length) % compassItems.length)}><ArrowLeft /></button><button type="button" aria-label="下一个方向" onClick={() => setIndex((index + 1) % compassItems.length)}><ArrowRight /></button></div>}
         </div>
       </section>
+
+      {compareOpen && current?.kind === 'direction' && currentBranches.length > 1 && <section className="branch-comparison glass-card" aria-label="目标分支对比"><header><div><p className="eyebrow">Compare targets</p><h2>同一方向，不同现实路径。</h2></div><button type="button" className="text-button" onClick={() => setCompareOpen(false)}>收起对比</button></header><div className="branch-comparison-grid">{currentBranches.slice(0,3).map((branch) => <article key={branch.id}><h3>{[branch.company,branch.business].filter(Boolean).join('｜') || branch.role}</h3><dl><div><dt>岗位</dt><dd>{branch.role || '还不知道'}</dd></div><div><dt>地点</dt><dd>{branch.location || '还不知道'}</dd></div><div><dt>已有证据</dt><dd>{currentEvidence.find((item) => item.branch_id === branch.id && item.kind === 'support')?.content || '还不知道'}</dd></div><div><dt>最大未知</dt><dd>{currentEvidence.find((item) => item.branch_id === branch.id && item.kind === 'unknown')?.content || currentSummary?.unknown_question || '还不知道'}</dd></div></dl></article>)}</div></section>}
+
+      {(data?.career_profile || []).length > 0 && <section className="career-profile-strip glass-card"><div><p className="eyebrow">Career profile</p><h2>罗盘也在理解你如何工作。</h2></div><div>{(data?.career_profile || []).slice(0,4).map((item) => <span key={item.id}><small>{item.category}</small><strong>{item.value}</strong></span>)}</div></section>}
 
       {journeyConfirmOpen && current?.kind === 'direction' && <div className="modal-backdrop"><div className="modal-panel glass-strong" role="dialog" aria-modal="true" aria-label="确认开始航程"><Path size={28} /><h2>从“{current.item.label}”开始一段航程？</h2><p>确认后会创建一条可编辑的路线，并开始收集岗位信息、往年题目和学习资源。不会替你投递，也不会自动添加日历。</p>{journeyState === 'error' && <p className="chat-error" role="alert">航程没有创建成功，请重试。</p>}<div className="modal-actions"><button type="button" className="text-button" onClick={() => setJourneyConfirmOpen(false)} disabled={journeyState === 'saving'}>取消</button><button type="button" className="primary-button" onClick={() => void startJourney()} disabled={journeyState === 'saving'}>{journeyState === 'saving' ? '正在开始…' : '确认开始'}</button></div></div></div>}
 

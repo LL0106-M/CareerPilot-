@@ -15,6 +15,12 @@ def test_new_owner_starts_with_empty_product_state(tmp_path) -> None:
             "direction_signals": [],
             "journeys": [],
             "collection_jobs": [],
+            "compass_update_batches": [],
+            "direction_branches": [],
+            "career_profile": [],
+            "direction_evidence": [],
+            "direction_summaries": [],
+            "journey_branches": [],
         }
         assert store.decide_hypothesis("owner-1", "hyp-001", "confirm") is False
         assert store.create_verification_task("owner-1", "hyp-001") is None
@@ -144,5 +150,222 @@ def test_start_direction_journey_is_owner_scoped_idempotent_and_enqueues_prepara
         assert len(store.dashboard("owner-1")["journeys"]) == 1
         assert len(store.dashboard("owner-1")["journey"]) == 3
         assert store.dashboard("owner-2")["journeys"] == []
+    finally:
+        store.close()
+
+
+def test_compass_update_batch_creates_one_direction_and_target_branch(tmp_path) -> None:
+    store = ProductStore(tmp_path / "product.db")
+    try:
+        result = store.commit_compass_update(
+            "owner-1",
+            run_id="run-branch-1",
+            conversation_id="thread-1",
+            label="AI 产品经理",
+            explicitness="explicit",
+            source_quote="我想看腾讯混元的 AI 产品经理，最好在深圳",
+            reason="用户明确给出目标",
+            confidence=0.98,
+            signal_kind="direction",
+            company="腾讯",
+            business="混元",
+            role="AI 产品经理",
+            location="深圳",
+            constraints=(),
+        )
+        repeated = store.commit_compass_update(
+            "owner-1",
+            run_id="run-branch-1",
+            conversation_id="thread-1",
+            label="AI 产品经理",
+            explicitness="explicit",
+            source_quote="我想看腾讯混元的 AI 产品经理，最好在深圳",
+            reason="用户明确给出目标",
+            confidence=0.98,
+            signal_kind="direction",
+            company="腾讯",
+            business="混元",
+            role="AI 产品经理",
+            location="深圳",
+            constraints=(),
+        )
+
+        dashboard = store.dashboard("owner-1")
+        assert repeated == result
+        assert len(dashboard["directions"]) == 1
+        assert dashboard["direction_branches"][0]["company"] == "腾讯"
+        assert dashboard["direction_branches"][0]["business"] == "混元"
+        assert dashboard["direction_branches"][0]["location"] == "深圳"
+        assert [item["kind"] for item in result["items"]] == [
+            "direction", "company", "business", "role", "location"
+        ]
+    finally:
+        store.close()
+
+
+def test_target_only_update_uses_conversation_bound_direction(tmp_path) -> None:
+    store = ProductStore(tmp_path / "product.db")
+    try:
+        store.commit_compass_update(
+            "owner-1", run_id="run-direction", conversation_id="thread-1",
+            label="AI 产品经理", explicitness="explicit",
+            source_quote="我想试试 AI 产品经理", reason="明确方向", confidence=0.96,
+            signal_kind="direction", company=None, business=None,
+            role="AI 产品经理", location=None, constraints=(),
+        )
+        update = store.commit_compass_update(
+            "owner-1", run_id="run-target", conversation_id="thread-1",
+            label=None, explicitness="explicit", source_quote="我更想看腾讯混元",
+            reason="明确目标公司和业务", confidence=0.94, signal_kind="target",
+            company="腾讯", business="混元", role=None, location=None, constraints=(),
+        )
+
+        dashboard = store.dashboard("owner-1")
+        assert len(dashboard["directions"]) == 1
+        assert (
+            dashboard["direction_branches"][0]["direction_id"]
+            == dashboard["directions"][0]["id"]
+        )
+        assert update["direction_id"] == dashboard["directions"][0]["id"]
+    finally:
+        store.close()
+
+
+def test_direction_journey_reuses_common_tasks_and_activates_target_branch(tmp_path) -> None:
+    store = ProductStore(tmp_path / "product.db")
+    try:
+        store.commit_compass_update(
+            "owner-1", run_id="run-branch", conversation_id="thread-1",
+            label="AI 产品经理", explicitness="explicit",
+            source_quote="我想看腾讯混元的 AI 产品经理", reason="明确目标",
+            confidence=0.98, signal_kind="direction", company="腾讯",
+            business="混元", role="AI 产品经理", location=None, constraints=(),
+        )
+        direction = store.list_directions("owner-1")[0]
+        branch = store.dashboard("owner-1")["direction_branches"][0]
+
+        started = store.start_direction_journey("owner-1", str(direction["id"]))
+        assert started is not None
+        journey_branches = store.dashboard("owner-1")["journey_branches"]
+        common = next(item for item in journey_branches if item["kind"] == "common")
+        target = next(item for item in journey_branches if item["kind"] == "target")
+        assert target["status"] == "draft"
+        assert target["compass_branch_id"] == branch["id"]
+        assert {task["journey_branch_id"] for task in started["tasks"]} == {common["id"]}
+
+        activated = store.activate_journey_branch(
+            "owner-1", str(started["journey"]["id"]), str(target["id"])
+        )
+        repeated = store.activate_journey_branch(
+            "owner-1", str(started["journey"]["id"]), str(target["id"])
+        )
+        assert activated == repeated
+        branch_tasks = [task for task in activated["tasks"] if task["scope"] == "branch_specific"]
+        assert len(branch_tasks) == 2
+        assert {task["journey_branch_id"] for task in branch_tasks} == {target["id"]}
+        assert len([task for task in activated["tasks"] if task["scope"] == "common"]) == 3
+        branch_jobs = [
+            job
+            for job in activated["collection_jobs"]
+            if job.get("compass_branch_id") == branch["id"]
+        ]
+        assert {job["purpose"] for job in branch_jobs} == {
+            "job_opportunity", "interview_archive", "learning_resource"
+        }
+        assert {
+            job.get("journey_branch_id")
+            for job in branch_jobs
+            if job["purpose"] != "job_opportunity"
+        } == {target["id"]}
+    finally:
+        store.close()
+
+
+def test_new_explicit_target_adds_draft_to_existing_journey(tmp_path) -> None:
+    store = ProductStore(tmp_path / "product.db")
+    try:
+        store.commit_compass_update(
+            "owner-1", run_id="direction", conversation_id="thread-1",
+            label="AI 产品经理", explicitness="explicit",
+            source_quote="我想试试 AI 产品经理", reason="明确方向", confidence=0.96,
+        )
+        direction = store.list_directions("owner-1")[0]
+        started = store.start_direction_journey("owner-1", str(direction["id"]))
+        assert started is not None
+
+        store.commit_compass_update(
+            "owner-1", run_id="target", conversation_id="thread-1",
+            label=None, explicitness="explicit", source_quote="我更想看腾讯混元",
+            reason="明确目标", confidence=0.95, signal_kind="target",
+            company="腾讯", business="混元",
+        )
+
+        targets = [
+            branch for branch in store.dashboard("owner-1")["journey_branches"]
+            if branch["kind"] == "target"
+        ]
+        assert len(targets) == 1
+        assert targets[0]["status"] == "draft"
+        assert not [
+            task for task in store.dashboard("owner-1")["journey"]
+            if task["journey_branch_id"] == targets[0]["id"]
+        ]
+    finally:
+        store.close()
+
+
+def test_implicit_target_stays_candidate_without_collection_job(tmp_path) -> None:
+    store = ProductStore(tmp_path / "product.db")
+    try:
+        store.commit_compass_update(
+            "owner-1", run_id="direction", conversation_id="thread-1",
+            label="AI 产品经理", explicitness="explicit",
+            source_quote="我想试试 AI 产品经理", reason="明确方向", confidence=0.96,
+        )
+        update = store.commit_compass_update(
+            "owner-1", run_id="target", conversation_id="thread-1",
+            label=None, explicitness="implicit", source_quote="最近总看到腾讯混元",
+            reason="可能感兴趣", confidence=0.7, signal_kind="target",
+            company="腾讯", business="混元",
+        )
+
+        dashboard = store.dashboard("owner-1")
+        assert update["items"][0]["status"] == "pending"
+        assert dashboard["direction_branches"][0]["status"] == "candidate"
+        assert not [
+            job for job in dashboard["collection_jobs"]
+            if job.get("compass_branch_id") == update["branch_id"]
+        ]
+    finally:
+        store.close()
+
+
+def test_repeated_direction_reuses_identity_and_later_batch_protects_branch(tmp_path) -> None:
+    store = ProductStore(tmp_path / "product.db")
+    try:
+        first = store.commit_compass_update(
+            "owner-1", run_id="first", conversation_id="thread-1",
+            label="AI 产品经理", explicitness="explicit",
+            source_quote="我想看腾讯混元的 AI 产品经理", reason="明确目标",
+            confidence=0.97, company="腾讯", business="混元", role="AI 产品经理",
+        )
+        second = store.commit_compass_update(
+            "owner-1", run_id="second", conversation_id="thread-1",
+            label="AI 产品经理", explicitness="explicit",
+            source_quote="还是腾讯混元的 AI 产品经理", reason="再次确认",
+            confidence=0.98, company="腾讯", business="混元", role="AI 产品经理",
+        )
+        assert second["direction_id"] == first["direction_id"]
+        assert second["branch_id"] == first["branch_id"]
+
+        store.undo_compass_update("owner-1", str(first["id"]))
+        dashboard = store.dashboard("owner-1")
+        assert len(dashboard["directions"]) == 1
+        branch = next(
+            item
+            for item in dashboard["direction_branches"]
+            if item["id"] == first["branch_id"]
+        )
+        assert branch["status"] == "active"
     finally:
         store.close()

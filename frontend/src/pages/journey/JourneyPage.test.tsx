@@ -34,9 +34,9 @@ describe('Journey', () => {
     await user.click(await screen.findByRole('button',{name:'给未来的我写一句话'}))
 
     expect(await screen.findByRole('heading',{name:'两年后的我，回信了'})).toBeInTheDocument()
-    expect(screen.getByText('完成岗位拆解')).toBeInTheDocument()
+    expect(screen.getAllByText('完成岗位拆解').length).toBeGreaterThan(0)
     expect(document.querySelectorAll('.journey-route li')).toHaveLength(2)
-    await user.click(screen.getByRole('button',{name:'换一条相邻的路'}))
+    await user.click(screen.getByRole('tab',{name:/换一条相邻的路/}))
     expect(screen.getByRole('heading',{name:'相邻转向'})).toBeInTheDocument()
     await user.click(screen.getByRole('button',{name:'带回一个问题'}))
     expect(screen.getByText('只带回这个问题，不会创建任务或记忆。')).toBeInTheDocument()
@@ -74,6 +74,40 @@ describe('Journey', () => {
     expect(route?.querySelectorAll('li')).toHaveLength(3)
     expect(route?.querySelector('[class*="stop-"]')).not.toBeInTheDocument()
     expect(screen.getByRole('button',{name:/添加日程/})).toBeInTheDocument()
+  })
+
+  it('switches between the common route and a draft target branch', async () => {
+    const dashboard = {
+      hypotheses:[], ideas:[], dreaming:[], memories:[], collection_jobs:[],
+      journeys:[{id:'j1',direction_id:'d1',title:'AI 产品经理',status:'active',why:'验证方向'}],
+      journey_branches:[
+        {id:'jb-common',journey_id:'j1',kind:'common',title:'通用主线',status:'active',rationale:'共同基础'},
+        {id:'jb-tencent',journey_id:'j1',compass_branch_id:'b1',kind:'target',title:'腾讯｜混元',status:'draft',rationale:'确认后开始差异准备'},
+      ],
+      journey:[
+        {id:'t1',title:'了解 AI 产品岗位类型',due:'第 1 步',state:'准备开始',related:'AI 产品经理',journey_id:'j1',direction_id:'d1',journey_branch_id:'jb-common',scope:'common'},
+      ],
+    }
+    const activated = {
+      ...dashboard,
+      journey_branches: dashboard.journey_branches.map((item) => item.id === 'jb-tencent' ? {...item,status:'active'} : item),
+      journey:[...dashboard.journey,{id:'t2',title:'拆解腾讯｜混元的真实岗位与业务差异',due:'分支第 1 步',state:'准备开始',related:'腾讯｜混元',journey_id:'j1',direction_id:'d1',journey_branch_id:'jb-tencent',scope:'branch_specific'}],
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(dashboard),{status:200,headers:{'Content-Type':'application/json'}}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({journey:activated.journeys[0],tasks:activated.journey,branches:activated.journey_branches,collection_jobs:[]}),{status:201,headers:{'Content-Type':'application/json'}}))
+      .mockResolvedValueOnce(new Response(JSON.stringify(activated),{status:200,headers:{'Content-Type':'application/json'}}))
+    vi.stubGlobal('fetch',fetchMock)
+    const user = userEvent.setup()
+    render(<MemoryRouter><JourneyPage /></MemoryRouter>)
+
+    await user.click(await screen.findByRole('button',{name:'腾讯｜混元'}))
+    expect(screen.getByText('尚未开始准备')).toBeInTheDocument()
+    await user.click(screen.getByRole('button',{name:'开始准备这个目标'}))
+    expect(screen.getByRole('dialog',{name:'确认开始目标分支'})).toBeInTheDocument()
+    await user.click(screen.getByRole('button',{name:'确认开始准备'}))
+    expect(await screen.findByText('拆解腾讯｜混元的真实岗位与业务差异')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenNthCalledWith(2,'/v1/me/journeys/j1/branches/jb-tencent/activate',expect.objectContaining({method:'POST'}))
   })
 
   it('uses path as the default view and can switch to calendar', async () => {

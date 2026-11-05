@@ -25,14 +25,40 @@ export function JourneyPage() {
   const [createState, setCreateState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [futureLetter, setFutureLetter] = useState<FutureLetter>()
   const [futureState, setFutureState] = useState<'idle' | 'loading' | 'error'>('idle')
-  const groups = useMemo(() => groupJourneys(data?.journey || []), [data])
+  const [branchSelection, setBranchSelection] = useState('all')
+  const [branchConfirm, setBranchConfirm] = useState<string>()
+  const [branchState, setBranchState] = useState<'idle' | 'saving' | 'error'>('idle')
+  const groups = useMemo(() => groupJourneys(data?.journey || [], data?.journeys || []), [data])
   const current = groups[active]
+  const currentBranches = (data?.journey_branches || []).filter((branch) => branch.journey_id === current?.id)
+  const selectedBranch = currentBranches.find((branch) => branch.id === branchSelection)
+  const visibleTasks = !current ? [] : branchSelection === 'all'
+    ? current.tasks
+    : selectedBranch?.kind === 'common'
+      ? current.tasks.filter((task) => task.scope !== 'branch_specific')
+      : current.tasks.filter((task) => task.scope !== 'branch_specific' || task.journey_branch_id === branchSelection)
+  const visibleGroup = current ? { ...current, tasks: visibleTasks } : undefined
   const currentDirectionId = current?.tasks.find((task) => task.direction_id)?.direction_id
   const currentJobs = (data?.collection_jobs || []).filter(
     (job) => job.direction_id === currentDirectionId,
   )
 
   useEffect(() => scheduleBrowserReminders(data?.journey || []), [data?.journey])
+  useEffect(() => { setBranchSelection('all') }, [active])
+
+  async function activateBranch() {
+    if (!current || !branchConfirm) return
+    setBranchState('saving')
+    try {
+      await api.activateJourneyBranch(current.id, branchConfirm)
+      await reload()
+      setBranchSelection(branchConfirm)
+      setBranchConfirm(undefined)
+      setBranchState('idle')
+    } catch {
+      setBranchState('error')
+    }
+  }
 
   async function advance(task: JourneyItem) {
     const next: JourneyItem['state'] = task.state === '准备开始' ? '进行中' : task.state === '进行中' ? '已完成' : task.state
@@ -43,7 +69,7 @@ export function JourneyPage() {
   }
 
   async function generatePreview() {
-    const task = syncTask || current?.tasks.find((item) => item.state !== '已完成') || current?.tasks[0]
+    const task = syncTask || visibleGroup?.tasks.find((item) => item.state !== '已完成') || visibleGroup?.tasks[0]
     if (!task) return
     setActionState('previewing'); setActionError('')
     const start = task.start_at ? new Date(task.start_at) : new Date(Date.now() + 24 * 60 * 60 * 1000)
@@ -125,15 +151,18 @@ export function JourneyPage() {
       {!loading && !error && groups.length === 0 && <div className="state-panel glass-card"><Path size={38} /><h2>路还没有开始画</h2><p>从罗盘里选一条猜想，用一个真实行动去验证。</p><Link className="primary-button" to="/compass">去罗盘看看</Link></div>}
       {groups.length > 0 && <>
         <nav className="journey-selector" aria-label="选择航程">{groups.map((group,index) => <button type="button" className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={group.name}><span>{String(index + 1).padStart(2,'0')}</span>{group.name}</button>)}</nav>
+        {currentBranches.length > 0 && <nav className="journey-branch-selector" aria-label="选择航程分支"><button type="button" className={branchSelection === 'all' ? 'active' : ''} onClick={() => setBranchSelection('all')}>综合路径</button>{currentBranches.map((branch) => <button type="button" aria-label={branch.kind === 'common' ? '通用主线' : branch.title} className={branchSelection === branch.id ? 'active' : ''} onClick={() => setBranchSelection(branch.id)} key={branch.id}>{branch.kind === 'common' ? '通用主线' : branch.title}{branch.status === 'draft' && <small>待开始</small>}</button>)}</nav>}
         {view === 'path' && currentJobs.length > 0 && <CollectionProgress jobs={currentJobs} />}
-        {view === 'path' && current && <PathView group={current} onAdvance={advance} onPreview={openExternalPreview} onFutureLetter={openFutureLetter} futureState={futureState} futureLetter={futureLetter} />}
-        {view === 'calendar' && <CalendarView tasks={data?.journey || []} onSync={openExternalPreview} />}
-        {view === 'footprints' && <FootprintView tasks={data?.journey || []} />}
+        {view === 'path' && selectedBranch?.status === 'draft' && <section className="draft-branch-panel glass-strong"><p className="eyebrow">Target branch</p><h2>{selectedBranch.title}</h2><strong>尚未开始准备</strong><p>{selectedBranch.rationale}</p><p>通用主线会继续复用；确认后只增加这个目标特有的行动。</p><button type="button" className="primary-button" onClick={() => { setBranchState('idle'); setBranchConfirm(selectedBranch.id) }}>开始准备这个目标</button></section>}
+        {view === 'path' && visibleGroup && selectedBranch?.status !== 'draft' && <PathView group={visibleGroup} onAdvance={advance} onPreview={openExternalPreview} onFutureLetter={openFutureLetter} futureState={futureState} futureLetter={futureLetter} />}
+        {view === 'calendar' && <CalendarView tasks={branchSelection === 'all' ? (data?.journey || []) : visibleTasks} onSync={openExternalPreview} />}
+        {view === 'footprints' && <FootprintView tasks={branchSelection === 'all' ? (data?.journey || []) : visibleTasks} />}
         <p className="mutation-note center" aria-live="polite">{status === 'saving' ? '正在推进……' : status === 'saved' ? '航程已更新。' : status === 'error' ? '这次没有更新成功。' : ''}</p>
       </>}
       {createState === 'saved' && <p className="action-success journey-save-message" role="status">日程已保存到 CareerPilot。</p>}
       {createState === 'error' && <p className="chat-error journey-save-message" role="alert">日程没有保存成功，请重试。</p>}
       {createOpen && <CalendarCreateDialog onClose={() => setCreateOpen(false)} onSave={createEvent} saving={createState === 'saving'} />}
+      {branchConfirm && <div className="modal-backdrop"><div className="modal-panel glass-strong" role="dialog" aria-modal="true" aria-label="确认开始目标分支"><Path size={28} /><h2>开始准备这个目标？</h2><p>只会新增目标差异行动，通用主线不会复制。</p>{branchState === 'error' && <p className="chat-error" role="alert">这次没有开始成功，请重试。</p>}<div className="modal-actions"><button type="button" className="text-button" onClick={() => setBranchConfirm(undefined)} disabled={branchState === 'saving'}>取消</button><button type="button" className="primary-button" onClick={() => void activateBranch()} disabled={branchState === 'saving'}>{branchState === 'saving' ? '正在开始…' : '确认开始准备'}</button></div></div></div>}
       {previewOpen && <div className="modal-backdrop"><div className="modal-panel glass-strong" role="dialog" aria-modal="true" aria-label="确认调用外部应用"><CloudArrowUp size={28} /><h2>先预览，再交给其他应用</h2><p>CareerPilot 会先生成操作预览。你确认内容和目标应用后，才会真正执行。</p><div className="preview-row"><span>目标</span><strong>飞书日历</strong></div><div className="preview-row"><span>内容</span><strong>{current?.tasks[0]?.title}</strong></div>{actionPreview && <div className="action-confirmation"><p className="eyebrow">等待你的最终确认</p><small>预览已由后端生成；只有点击确认后才会写入外部应用。</small></div>}{actionState === 'done' && <p className="action-success">已交给飞书日历。</p>}{actionError && <p className="chat-error" role="alert">{actionError}</p>}<div className="modal-actions"><button className="text-button" type="button" onClick={() => { setPreviewOpen(false); setActionPreview(undefined); setActionState('idle'); setActionError('') }}>关闭</button>{!actionPreview && actionState !== 'done' && <button className="primary-button" type="button" onClick={() => void generatePreview()} disabled={actionState === 'previewing'}>{actionState === 'previewing' ? '正在生成…' : '生成预览'}</button>}{actionPreview && actionState !== 'done' && <button className="primary-button" type="button" onClick={() => void confirmAndApply()} disabled={actionState === 'confirming'}>{actionState === 'confirming' ? '正在执行…' : '确认并创建日程'}</button>}</div></div></div>}
     </div>
   )
@@ -155,10 +184,14 @@ function CollectionProgress({ jobs }: { jobs: KnowledgeCollectionJob[] }) {
   return <section className="collection-progress" aria-label="航程资料收集状态">{jobs.map((job) => <article className={`collection-status-card status-${job.status}`} key={job.id}><span>{purpose[job.purpose]} · {status[job.status]}</span></article>)}</section>
 }
 
-function groupJourneys(tasks: JourneyItem[]) {
+function groupJourneys(tasks: JourneyItem[], journeys: Array<{ id: string; title: string }>) {
   const result = new Map<string, JourneyItem[]>()
-  tasks.forEach((task) => { const name = task.related || '未命名航程'; result.set(name, [...(result.get(name) || []), task]) })
-  return Array.from(result, ([name, grouped]) => ({ name, tasks: grouped }))
+  tasks.forEach((task) => { const key = task.journey_id || `legacy:${task.related || '未命名航程'}`; result.set(key, [...(result.get(key) || []), task]) })
+  return Array.from(result, ([id, grouped]) => ({
+    id,
+    name: journeys.find((journey) => journey.id === id)?.title || grouped[0]?.related || '未命名航程',
+    tasks: grouped,
+  }))
 }
 
 function PathView({ group, onAdvance, onPreview, onFutureLetter, futureState, futureLetter }: { group: { name: string; tasks: JourneyItem[] }; onAdvance: (task: JourneyItem) => void; onPreview: (task: JourneyItem) => void; onFutureLetter: (journeyId: string) => void; futureState: 'idle' | 'loading' | 'error'; futureLetter?: FutureLetter }) {
