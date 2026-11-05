@@ -62,6 +62,11 @@ class Settings(BaseSettings):
         default=0.0,
         validation_alias="CAREERPILOT_REASONING_TEMPERATURE",
     )
+    dreaming_model_timeout_seconds: float = Field(
+        default=180.0,
+        gt=0,
+        validation_alias="CAREERPILOT_DREAMING_MODEL_TIMEOUT_SECONDS",
+    )
     embedding_model: str | None = Field(
         default=None,
         validation_alias="CAREERPILOT_EMBEDDING_MODEL",

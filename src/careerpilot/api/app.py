@@ -37,7 +37,7 @@ from careerpilot.actions.service import (
 )
 from careerpilot.actions.store import SqliteActionStore
 from careerpilot.actions.tool import build_action_tools
-from careerpilot.agent.model import create_reasoning_model
+from careerpilot.agent.model import create_dreaming_model, create_reasoning_model
 from careerpilot.agent.service import ChatCommand, ChatResult, ChatStreamEvent
 from careerpilot.api.auth import (
     SESSION_COOKIE_NAME,
@@ -486,7 +486,7 @@ def create_app(
         if manual_dreaming_service is None:
             manual_dreaming_service = ManualDreamingService(
                 resolve_cognitive_store(),
-                JsonDreamingAnalyzer(create_reasoning_model(resolved_settings)),
+                JsonDreamingAnalyzer(create_dreaming_model(resolved_settings)),
                 resolve_memory_service(),
                 lambda owner_id, local_day: collect_recent_evidence(
                     owner_id,
