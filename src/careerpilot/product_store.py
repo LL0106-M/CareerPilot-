@@ -245,6 +245,8 @@ class ProductStore:
             WHERE source_reference IS NOT NULL"""
         )
         self._connection.commit()
+        self._repair_unbound_explicit_targets()
+        self._connection.commit()
 
     def close(self) -> None:
         self._connection.close()
@@ -283,9 +285,7 @@ class ProductStore:
                 }
                 for item in directions
             ],
-            "journey_branches": self._rows(
-                "journey_branches", owner_id, "updated_at DESC"
-            ),
+            "journey_branches": self.list_journey_branches(owner_id),
         }
 
     def record_direction_signal(
@@ -416,6 +416,10 @@ class ProductStore:
             ).fetchone()
             if bound is not None:
                 direction_id = str(bound["id"])
+            else:
+                direction_id = self._find_matching_direction(
+                    owner_id, role, label
+                )
 
         now = datetime.now(UTC).isoformat()
         batch_id = f"compass-{uuid.uuid4().hex[:12]}"
@@ -688,6 +692,130 @@ class ProductStore:
     @staticmethod
     def _normalize_identity(value: str) -> str:
         return "".join(value.lower().split())
+
+    def _find_matching_direction(
+        self, owner_id: str, *candidates: str | None
+    ) -> str | None:
+        normalized = {
+            self._normalize_identity(candidate)
+            for candidate in candidates
+            if candidate and candidate.strip()
+        }
+        if not normalized:
+            return None
+        rows = self._connection.execute(
+            """SELECT id, label FROM directions
+            WHERE owner_id = ? AND status != 'archived'
+            ORDER BY updated_at DESC""",
+            (owner_id,),
+        ).fetchall()
+        for row in rows:
+            if self._normalize_identity(str(row["label"])) in normalized:
+                return str(row["id"])
+        return None
+
+    def list_journey_branches(self, owner_id: str) -> list[dict[str, object]]:
+        rows = self._connection.execute(
+            """SELECT jb.*, COALESCE(db.company, '') AS company,
+                      COALESCE(db.business, '') AS business,
+                      COALESCE(db.role, '') AS role,
+                      COALESCE(db.location, '') AS location
+            FROM journey_branches jb
+            LEFT JOIN direction_branches db
+              ON db.owner_id = jb.owner_id AND db.id = jb.compass_branch_id
+            WHERE jb.owner_id = ?
+            ORDER BY jb.updated_at DESC""",
+            (owner_id,),
+        ).fetchall()
+        return [self._decode(row) for row in rows]
+
+    def _repair_unbound_explicit_targets(self) -> None:
+        rows = self._connection.execute(
+            """SELECT s.*, b.id AS batch_id
+            FROM direction_signals s
+            JOIN compass_update_batches b
+              ON b.owner_id = s.owner_id AND b.run_id = s.source_run_id
+            WHERE s.signal_kind = 'target' AND s.explicitness = 'explicit'
+              AND s.status = 'accepted' AND b.status = 'committed'
+              AND b.direction_id IS NULL"""
+        ).fetchall()
+        for row in rows:
+            try:
+                context = json.loads(str(row["context_json"]))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(context, dict):
+                continue
+            company = context.get("company")
+            business = context.get("business")
+            role = context.get("role")
+            location = context.get("location")
+            if not any(isinstance(value, str) and value.strip() for value in (company, business)):
+                continue
+            direction_id = self._find_matching_direction(
+                str(row["owner_id"]),
+                role if isinstance(role, str) else None,
+                str(row["label"]),
+            )
+            if direction_id is None:
+                continue
+            owner_id = str(row["owner_id"])
+            company_value = company.strip() if isinstance(company, str) else ""
+            business_value = business.strip() if isinstance(business, str) else ""
+            role_value = (
+                role.strip() if isinstance(role, str) and role.strip()
+                else self._direction_label(owner_id, direction_id)
+            )
+            location_value = location.strip() if isinstance(location, str) else ""
+            normalized_key = "|".join(
+                self._normalize_identity(value)
+                for value in (company_value, business_value, role_value)
+            )
+            existing = self._connection.execute(
+                """SELECT id FROM direction_branches
+                WHERE owner_id = ? AND direction_id = ? AND normalized_key = ?""",
+                (owner_id, direction_id, normalized_key),
+            ).fetchone()
+            now = str(row["updated_at"])
+            if existing is None:
+                branch_id = f"branch-{uuid.uuid4().hex[:12]}"
+                self._connection.execute(
+                    """INSERT INTO direction_branches
+                    (owner_id,id,direction_id,company,business,role,location,
+                     normalized_key,status,source_batch_id,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        owner_id, branch_id, direction_id, company_value, business_value,
+                        role_value, location_value, normalized_key, "active",
+                        row["batch_id"], now, now,
+                    ),
+                )
+            else:
+                branch_id = str(existing["id"])
+            self._connection.execute(
+                """UPDATE compass_update_batches
+                SET direction_id = ?, branch_id = ?
+                WHERE owner_id = ? AND id = ? AND direction_id IS NULL""",
+                (direction_id, branch_id, owner_id, row["batch_id"]),
+            )
+            self._ensure_draft_journey_branch(
+                owner_id,
+                direction_id=direction_id,
+                compass_branch_id=branch_id,
+                title="｜".join(
+                    value for value in (company_value, business_value) if value
+                ) or role_value,
+                now=now,
+            )
+            self._ensure_contextual_collection_job(
+                owner_id,
+                direction_id=direction_id,
+                compass_branch_id=branch_id,
+                purpose="job_opportunity",
+                query=" ".join(
+                    value for value in (company_value, business_value, role_value) if value
+                ),
+            )
 
     def _ensure_draft_journey_branch(
         self,

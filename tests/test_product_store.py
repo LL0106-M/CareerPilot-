@@ -1,3 +1,6 @@
+import json
+import sqlite3
+
 from careerpilot.product_store import ProductStore
 
 
@@ -229,6 +232,108 @@ def test_target_only_update_uses_conversation_bound_direction(tmp_path) -> None:
         assert update["direction_id"] == dashboard["directions"][0]["id"]
     finally:
         store.close()
+
+
+def test_target_in_another_conversation_binds_by_role_and_exposes_identity(tmp_path) -> None:
+    store = ProductStore(tmp_path / "product.db")
+    try:
+        store.commit_compass_update(
+            "owner-1", run_id="run-direction", conversation_id="thread-1",
+            label="AI 产品经理", explicitness="explicit",
+            source_quote="我想试试 AI 产品经理", reason="明确方向", confidence=0.96,
+            signal_kind="direction", company=None, business=None,
+            role="AI 产品经理", location=None, constraints=(),
+        )
+        direction = store.list_directions("owner-1")[0]
+        started = store.start_direction_journey("owner-1", str(direction["id"]))
+        assert started is not None
+
+        update = store.commit_compass_update(
+            "owner-1", run_id="run-target", conversation_id="thread-2",
+            label="AI 产品经理", explicitness="explicit",
+            source_quote="我想投递京东零售的 AI 产品经理", reason="明确目标",
+            confidence=0.97, signal_kind="target", company="京东",
+            business="京东零售", role="AI 产品经理", location="北京", constraints=(),
+        )
+
+        dashboard = store.dashboard("owner-1")
+        target = next(
+            branch for branch in dashboard["journey_branches"]
+            if branch["kind"] == "target"
+        )
+        assert update["direction_id"] == direction["id"]
+        assert target["company"] == "京东"
+        assert target["business"] == "京东零售"
+        assert target["role"] == "AI 产品经理"
+        assert target["location"] == "北京"
+    finally:
+        store.close()
+
+
+def test_store_reopen_repairs_historical_unbound_explicit_target(tmp_path) -> None:
+    path = tmp_path / "product.db"
+    store = ProductStore(path)
+    try:
+        store.commit_compass_update(
+            "owner-1", run_id="run-direction", conversation_id="thread-1",
+            label="AI 产品经理", explicitness="explicit",
+            source_quote="我想试试 AI 产品经理", reason="明确方向", confidence=0.96,
+            signal_kind="direction", role="AI 产品经理",
+        )
+        direction = store.list_directions("owner-1")[0]
+        started = store.start_direction_journey("owner-1", str(direction["id"]))
+        assert started is not None
+    finally:
+        store.close()
+
+    connection = sqlite3.connect(path)
+    try:
+        now = "2026-11-05T00:00:00+00:00"
+        connection.execute(
+            """INSERT INTO direction_signals
+            (owner_id,id,source_run_id,label,explicitness,source_quote,reason,
+             confidence,status,conversation_id,signal_kind,context_json,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "owner-1", "signal-target", "run-target", "AI 产品经理", "explicit",
+                "我想投递京东物流的 AI 产品经理", "明确目标", 0.97, "accepted",
+                "thread-2", "target", json.dumps({
+                    "company": "京东", "business": "京东物流",
+                    "role": "AI 产品经理", "location": "北京", "constraints": [],
+                }, ensure_ascii=False), now, now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO compass_update_batches
+            (owner_id,id,run_id,conversation_id,direction_id,branch_id,source_quote,
+             status,created_at)
+            VALUES (?,?,?,?,NULL,NULL,?,'committed',?)""",
+            (
+                "owner-1", "compass-target", "run-target", "thread-2",
+                "我想投递京东物流的 AI 产品经理", now,
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    reopened = ProductStore(path)
+    try:
+        dashboard = reopened.dashboard("owner-1")
+        target = next(
+            branch for branch in dashboard["journey_branches"]
+            if branch["kind"] == "target"
+        )
+        repaired_batch = next(
+            batch for batch in dashboard["compass_update_batches"]
+            if batch["run_id"] == "run-target"
+        )
+        assert repaired_batch["direction_id"] == direction["id"]
+        assert repaired_batch["branch_id"] == target["compass_branch_id"]
+        assert target["company"] == "京东"
+        assert target["business"] == "京东物流"
+    finally:
+        reopened.close()
 
 
 def test_direction_journey_reuses_common_tasks_and_activates_target_branch(tmp_path) -> None:
