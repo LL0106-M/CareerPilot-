@@ -7,6 +7,7 @@ export function InterviewArchivePage() {
   const [items, setItems] = useState<InterviewArchiveResource[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [refreshMessage, setRefreshMessage] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -20,6 +21,20 @@ export function InterviewArchivePage() {
     }
   }, [])
 
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    setRefreshMessage('')
+    try {
+      const result = await api.refreshInterviewArchive()
+      setRefreshMessage(result.saved > 0 ? `新收录 ${result.saved} 条来源` : result.processed > 0 ? '已检查，暂未发现新来源' : '请先从罗盘方向开始航程')
+      await load()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '往年题目更新失败')
+      setLoading(false)
+    }
+  }, [load])
+
   useEffect(() => { void load() }, [load])
 
   return (
@@ -31,9 +46,10 @@ export function InterviewArchivePage() {
             <h2>往年题目与面经</h2>
             <p>这是历史经验，不代表未来一定出现；每条材料都保留来源和可信度。</p>
           </div>
-          <button type="button" className="secondary-button library-refresh" onClick={() => void load()} disabled={loading}>
+          <button type="button" className="secondary-button library-refresh" onClick={() => void refresh()} disabled={loading}>
             <ArrowClockwise aria-hidden="true" /><span>刷新</span>
           </button>
+          {refreshMessage && <small>{refreshMessage}</small>}
         </div>
 
         {loading && <div className="state-panel glass-card">正在检查航程触发的面试资料……</div>}

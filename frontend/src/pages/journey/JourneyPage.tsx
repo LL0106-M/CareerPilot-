@@ -3,10 +3,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { api } from '../../data/api'
-import type { ActionPreview, KnowledgeCollectionJob } from '../../data/api'
+import type { ActionPreview, FutureLetter, KnowledgeCollectionJob } from '../../data/api'
 import type { JourneyItem } from '../../data/types'
 import { useDashboard } from '../../hooks/useDashboard'
 import './journey-calendar.css'
+import { FutureLetterPanel } from './FutureLetterPanel'
 
 type ViewMode = 'path' | 'calendar' | 'footprints'
 
@@ -22,6 +23,8 @@ export function JourneyPage() {
   const [actionError, setActionError] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
   const [createState, setCreateState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [futureLetter, setFutureLetter] = useState<FutureLetter>()
+  const [futureState, setFutureState] = useState<'idle' | 'loading' | 'error'>('idle')
   const groups = useMemo(() => groupJourneys(data?.journey || []), [data])
   const current = groups[active]
   const currentDirectionId = current?.tasks.find((task) => task.direction_id)?.direction_id
@@ -104,6 +107,16 @@ export function JourneyPage() {
     setPreviewOpen(true)
   }
 
+  async function openFutureLetter(journeyId: string) {
+    setFutureState('loading')
+    try {
+      setFutureLetter(await api.generateFutureLetter(journeyId))
+      setFutureState('idle')
+    } catch {
+      setFutureState('error')
+    }
+  }
+
   return (
     <div className="journey-experience">
       <header className="journey-hero"><div><p className="eyebrow">Journey</p><h1>不是更多待办，<br />而是一段正在发生的路。</h1></div><div className="journey-header-actions"><button type="button" className="primary-button" onClick={() => { setCreateOpen(true); setCreateState('idle') }}><Plus /> 添加日程</button><div className="journey-view-switch glass-strong">{([['path','航线',Path],['calendar','日历',CalendarBlank],['footprints','足迹',Footprints]] as const).map(([key,label,Icon]) => <button type="button" key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}><Icon />{label}</button>)}</div></div></header>
@@ -113,7 +126,7 @@ export function JourneyPage() {
       {groups.length > 0 && <>
         <nav className="journey-selector" aria-label="选择航程">{groups.map((group,index) => <button type="button" className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={group.name}><span>{String(index + 1).padStart(2,'0')}</span>{group.name}</button>)}</nav>
         {view === 'path' && currentJobs.length > 0 && <CollectionProgress jobs={currentJobs} />}
-        {view === 'path' && current && <PathView group={current} onAdvance={advance} onPreview={openExternalPreview} />}
+        {view === 'path' && current && <PathView group={current} onAdvance={advance} onPreview={openExternalPreview} onFutureLetter={openFutureLetter} futureState={futureState} futureLetter={futureLetter} />}
         {view === 'calendar' && <CalendarView tasks={data?.journey || []} onSync={openExternalPreview} />}
         {view === 'footprints' && <FootprintView tasks={data?.journey || []} />}
         <p className="mutation-note center" aria-live="polite">{status === 'saving' ? '正在推进……' : status === 'saved' ? '航程已更新。' : status === 'error' ? '这次没有更新成功。' : ''}</p>
@@ -148,9 +161,10 @@ function groupJourneys(tasks: JourneyItem[]) {
   return Array.from(result, ([name, grouped]) => ({ name, tasks: grouped }))
 }
 
-function PathView({ group, onAdvance, onPreview }: { group: { name: string; tasks: JourneyItem[] }; onAdvance: (task: JourneyItem) => void; onPreview: (task: JourneyItem) => void }) {
+function PathView({ group, onAdvance, onPreview, onFutureLetter, futureState, futureLetter }: { group: { name: string; tasks: JourneyItem[] }; onAdvance: (task: JourneyItem) => void; onPreview: (task: JourneyItem) => void; onFutureLetter: (journeyId: string) => void; futureState: 'idle' | 'loading' | 'error'; futureLetter?: FutureLetter }) {
   const focus = group.tasks.find((task) => task.state === '进行中') || group.tasks.find((task) => task.state === '准备开始') || group.tasks[0]
-  return <section className="journey-path"><div className="journey-path-main"><aside className="journey-story glass-card"><p className="eyebrow">Why this journey</p><h2>{group.name}</h2><p>{focus.why || '用一次真实行动补充证据，而不是只靠想象判断方向。'}</p><div className="next-milestone"><Sparkle weight="fill" /><span>下一节点</span><strong>{focus.due}</strong></div></aside><article className="focus-action glass-strong"><span className={`state state-${focus.state}`}>{focus.state}</span><p className="eyebrow">One focus action</p><h2>{focus.title}</h2><p>现在只需要看这一件。其他动作仍在航线上，但不会同时占据你的注意力。</p><div className="focus-actions"><button type="button" className="primary-button" onClick={() => void onAdvance(focus)} disabled={focus.state === '已完成'}>{focus.state === '准备开始' ? '开始这一步' : focus.state === '进行中' ? '完成并留下足迹' : '已经完成'} <ArrowRight /></button><button type="button" className="secondary-button" onClick={() => onPreview(focus)}><CloudArrowUp /> 调用其他 App</button></div></article></div><ol className="journey-route">{group.tasks.map((task,index) => <li className={`route-step state-${task.state}`} key={task.id}><span>{index + 1}</span><div><strong>{task.title}</strong><small>{task.state}</small></div></li>)}</ol></section>
+  const journeyId = focus.journey_id
+  return <section className="journey-path"><div className="journey-path-main"><aside className="journey-story glass-card"><p className="eyebrow">Why this journey</p><h2>{group.name}</h2><p>{focus.why || '用一次真实行动补充证据，而不是只靠想象判断方向。'}</p><div className="next-milestone"><Sparkle weight="fill" /><span>下一节点</span><strong>{focus.due}</strong></div></aside><article className="focus-action glass-strong"><span className={`state state-${focus.state}`}>{focus.state}</span><p className="eyebrow">One focus action</p><h2>{focus.title}</h2><p>现在只需要看这一件。其他动作仍在航线上，但不会同时占据你的注意力。</p><div className="focus-actions"><button type="button" className="primary-button" onClick={() => void onAdvance(focus)} disabled={focus.state === '已完成'}>{focus.state === '准备开始' ? '开始这一步' : focus.state === '进行中' ? '完成并留下足迹' : '已经完成'} <ArrowRight /></button><button type="button" className="secondary-button" onClick={() => onPreview(focus)}><CloudArrowUp /> 调用其他 App</button></div>{journeyId && <button type="button" className="text-button future-letter-trigger" onClick={() => void onFutureLetter(journeyId)} disabled={futureState === 'loading'}>{futureState === 'loading' ? '正在等未来回信…' : '给未来的我写一句话'}</button>}{futureState === 'error' && <p className="chat-error" role="alert">未来回信暂时没有寄到，请稍后再试。</p>}</article></div>{futureLetter && futureLetter.journey_id === journeyId && <FutureLetterPanel letter={futureLetter} />}<ol className="journey-route">{group.tasks.map((task,index) => <li className={`route-step state-${task.state}`} key={task.id}><span>{index + 1}</span><div><strong>{task.title}</strong><small>{task.state}</small></div></li>)}</ol></section>
 }
 
 function CalendarView({ tasks, onSync }: { tasks: JourneyItem[]; onSync: (task: JourneyItem) => void }) {

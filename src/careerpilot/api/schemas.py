@@ -123,6 +123,20 @@ class JourneyUpdateRequest(BaseModel):
     reflection: str | None = Field(default=None, max_length=2_000)
 
 
+class FutureLetterCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    message: str = Field(default="两年后的我会怎样？", min_length=1, max_length=1_000)
+
+
+class FutureTakeawayCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    letter_id: str = Field(min_length=1, max_length=128)
+    path_kind: Literal["continue", "adjacent", "unexpected"]
+    question: str = Field(min_length=1, max_length=500)
+
+
 class JourneyCreateRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 

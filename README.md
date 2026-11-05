@@ -2,216 +2,164 @@
 
 # CareerPilot
 
-### 把零散的想法，慢慢走成自己的职业方向。
+### 把模糊的职业想法，变成可以验证、可以复盘的下一步。
 
-**一个为高校学生与毕业早期青年设计的长期就业陪伴 Agent。**<br>
-它不急着替你选答案，而是陪你理解自己、验证方向，并迈出下一小步。
+**一个会记住你、会查证据，也知道什么时候不该替你做决定的长期职业陪伴 Agent。**
 
 [![status](https://img.shields.io/badge/status-MVP-3f7562?style=flat-square)](https://careerpilot.pages.dev)
 [![frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite-7899ae?style=flat-square)](./frontend)
 [![backend](https://img.shields.io/badge/backend-FastAPI-d4a85f?style=flat-square)](./src/careerpilot)
-[![agent](https://img.shields.io/badge/agent-CareerPilot-795f52?style=flat-square)](./docs/architecture/careerpilot-harness.md)
+[![benchmark](https://img.shields.io/badge/memory%20benchmark-10%2F10-795f52?style=flat-square)](./docs/evaluation/README.md)
 
 ### [打开 CareerPilot 在线体验 →](https://careerpilot.pages.dev)
 
-[产品介绍](#为什么是-careerpilot) · [核心体验](#核心体验) · [工作方式](#它如何陪你向前) · [本地运行](#本地运行)
+[产品与使用方式](#careerpilot-如何工作) · [完整产品拆解](docs/product/careerpilot-product-teardown.md) · [技术架构](docs/architecture/README.md) · [评测报告](docs/evaluation/README.md) · [本地运行](#本地运行)
 
 </div>
 
 [![CareerPilot 产品首页：泊泊在山林湖泊前陪伴用户探索职业方向](docs/assets/careerpilot-product-home.png)](https://careerpilot.pages.dev)
 
-> **You don't choose a future. You learn your way into one.**<br>
-> 想法可以先不完整，方向也可以边走边调整。CareerPilot 会记住真正重要的线索，把对话、现实证据与小行动连接成一条持续生长的路。
+> **You don't choose a future. You learn your way into one.**
+>
+> CareerPilot 不急着给你一个职业答案。它把对话里真正重要的线索、外部职业证据和现实行动连起来，让方向在一次次验证中逐渐清晰。
 
----
+## CareerPilot 如何工作
 
-## 为什么是 CareerPilot
+CareerPilot 不是一个“问完即走”的职业问答机器人。它通过三条彼此连接的链路，让一次聊天能够沉淀为长期理解，让一个想法能够走到现实行动，再让行动结果反过来修正方向。
 
-很多职业产品从“你要找什么工作”开始，CareerPilot 从“你最近在想什么”开始。
+### 1️⃣ 对话理解链：先理解你，再决定要不要推进
 
-当职业方向还没有收敛时，真正困难的往往不是缺少岗位列表，而是：不知道自己适合什么、分不清焦虑和真实偏好、收藏了很多信息却迈不出下一步。CareerPilot 希望成为这段不确定时期里的安静陪伴者，帮助你完成两件长期发生、彼此影响的事：
+```text
+你说出困惑或经历
+→ Agent 判断此刻更需要倾听、梳理、探索还是行动
+→ 召回与当前问题真正相关的历史
+→ 回应当前问题
+→ 提炼值得长期保留的记忆候选
+→ 由写入策略和用户控制决定是否保留
+```
 
-- **慢慢看清自己**：把零散想法、现实体验、偏好、顾虑和尝试结果，整理成可以持续修正的职业认知。
-- **继续向前行动**：先接住情绪，再把模糊念头变成一个低压力、可验证的小行动，根据真实反馈调整方向。
+你可以说：“我好像喜欢 AI 产品，但也可能只是害怕错过。”CareerPilot 不会立刻给你贴上“适合产品经理”的标签。它会先区分兴趣、焦虑、已有经历和现实约束；一次性的自责不会被固化成性格，稳定偏好和明确目标才有机会进入长期记忆。
 
-CareerPilot 不是替你做职业决定的“答案机器”，也不以尽快推荐更多岗位为第一目标。它更像一个了解上下文、尊重节奏、会和你一起复盘的长期伙伴。
+记忆不是模型可以随意改写的黑箱。后端提供查看、纠正、暂停和删除能力；当前产品界面主要通过对话与 Dreaming 暴露候选洞察，独立记忆管理入口仍在完善。当前表达与旧记忆冲突时，以当前表达为准。
 
-## 核心体验
+[了解完整产品使用方式 →](docs/product/README.md#1-从一句真实想法开始)
 
-| 页面 | 你可以做什么 |
+### 2️⃣ 方向验证链：用证据养大一个职业猜想
+
+```text
+模糊想法
+→ 候选方向信号
+→ 用户确认后进入「罗盘」
+→ 组织支持证据、反证和未知项
+→ 从个人资料与职业知识库检索依据
+→ 资料不足或要求时效性时再受控联网
+→ 形成可验证的方向判断
+```
+
+CareerPilot 把职业方向当成“可以被证伪的假设”，而不是一次测评得出的永久结论。罗盘会同时保留支持证据、反例、未知问题和信心变化；RAG 为岗位能力、招聘规则和学习资源提供可回源依据，并把个人记忆与公共知识分开管理。
+
+例如，比起回答“你适合做 AI 产品经理”，它更关心：“哪些经历支持这个判断？哪些只是想象？下一次需要验证什么？”
+
+[查看 Memory 与 RAG 如何协作 →](docs/architecture/README.md#3-memory--rag同一套上下文系统)
+
+### 3️⃣ 行动反馈链：每次只迈一小步，再让结果改变判断
+
+```text
+已确认的方向
+→ 生成一个 15—30 分钟、完成标准明确的小行动
+→ 用户确认外部写操作
+→ 同步到任务、日历或连接器
+→ 记录完成、延期、取消和现实反馈
+→ Dreaming 整理跨会话变化与冲突
+→ 更新记忆、罗盘和下一段航程
+```
+
+真正让 Agent 变得“长期”的不是多聊几轮，而是能接住现实反馈。一次访谈、一次项目体验或一次被拒绝，都可以成为新的证据。后台 Dreaming 只基于已有事件提出可审查的总结和假设，不会凭空给用户创建方向，也不会越过确认替用户发送消息或修改日历。
+
+它的自主性体现在整理、召回和提出候选；它的克制体现在高影响判断与外部动作始终把控制权留给用户。
+
+## 用户怎么使用
+
+1. **从当下开始**：在对话中说出最近的困惑、经历或想尝试的方向，不需要先整理好问题。
+2. **确认值得探索的方向**：Agent 识别到方向信号后，由你决定是否加入罗盘。
+3. **查看证据而不是结论**：在罗盘和知识库中比较个人经历、反证、岗位资料与待验证问题。
+4. **开启一段航程**：把方向拆成一个低压力的小行动；涉及日历、邮件等外部写入时先预览、再确认。
+5. **带着结果回来**：记录完成、延期、取消和真实感受，让新的证据更新后续判断。
+
+| 入口 | 你可以做什么 |
 |---|---|
-| **首页** | 从一句当下的想法开始，看到今天值得关注的小行动与进展。 |
-| **对话** | 在倾听、整理、探索和行动四种模式间自然切换；情绪需要被接住时，不会被强行推向任务。 |
-| **罗盘** | 把职业猜想、支持证据、反例与信心变化放在一起，方向不再只是一个模糊标签。 |
-| **航程** | 将想法推进为实验、任务和现实反馈，留下真正走过的足迹。 |
-| **知识库** | 聚合岗位、学习资料与个人材料，让建议有来源，也与你本人有关。 |
+| **今日** | 查看今天值得关注的线索、行动与进展。 |
+| **对话** | 在倾听、整理、探索、行动四种支持模式间自然切换。 |
+| **Dreaming** | 回看跨会话变化，确认或拒绝系统提出的候选洞察。 |
+| **罗盘** | 管理候选方向、支持证据、反证、未知项与信心。 |
+| **航程** | 把方向推进为小行动，并记录现实反馈。 |
+| **知识库** | 查看岗位、面试经验、学习资料与个人文档。 |
 
-## 它如何陪你向前
+更完整的场景示例、页面说明和能力边界见 [产品指南](docs/product/README.md)；如果想快速理解产品定位、三大核心机制与适用人群，可阅读 [CareerPilot 产品拆解](docs/product/careerpilot-product-teardown.md)。
 
-```text
-随手表达
-   ↓
-被理解与整理
-   ↓
-形成一个可验证的职业猜想
-   ↓
-在你确认后，生成一个足够小的行动
-   ↓
-记录现实反馈，更新记忆与方向
-   ↓
-在每日回顾中看见变化
-```
+## 它特别在哪里
 
-这条闭环背后有四个产品原则：
+| 常见职业助手 | CareerPilot |
+|---|---|
+| 用一次测评或一轮对话给出推荐 | 把方向表示成可持续修正的假设 |
+| 把聊天记录直接当作“记忆” | 区分事件、稳定记忆、职业认知和产品状态 |
+| 有资料就全部塞进上下文 | 先判断意图，再按用途和预算检索 Memory/RAG |
+| 用更多建议制造推进感 | 每轮默认只推进一个可承受的小行动 |
+| 工具调用即执行 | 外部写操作遵循预览、确认、执行、验证 |
+| 只看回答是否像样 | 同时评测回复、运行轨迹、状态变化与安全硬失败 |
 
-1. **情绪优先于效率**：难受时先陪你停一下，不把“能行动”误判成“应该立刻行动”。
-2. **证据优先于标签**：方向来自经历、偏好与现实反馈，而不是一次测试给出的固定结论。
-3. **记忆服务于成长**：只保留稳定偏好、长期约束和明确值得记住的内容；一次性的自责不会成为永久标签。
-4. **行动始终由你确认**：外部写操作遵循预览、确认、执行、验证的边界，Agent 不替你偷偷做决定。
+## 技术框架
 
-## 泊泊：不催促你的同行者
-
-泊泊是 CareerPilot 里的陪伴角色。它会根据情境倾听、整理、探索或行动，但始终保持同一种态度：允许不确定，尊重你的选择，并把复杂问题收束成一个可以开始的小步骤。
-
-你可以这样开始：
-
-> “我好像对 AI 产品有兴趣，但不知道是喜欢这个方向，还是只是害怕错过。”
-
-CareerPilot 不会直接给出一个职业结论，而会先帮你区分兴趣、能力、现实约束与焦虑，再提出可以被现实验证的下一步。
-
-## 当前版本
-
-CareerPilot 目前处于 **MVP 阶段**，已经打通从表达、理解、职业假设、行动到回顾的核心体验。
-
-- 四种支持模式：`listen` / `organize` / `explore` / `act`
-- 基于上下文的长期记忆、Idea 生命周期与每日回顾
-- 岗位、学习资料和个人文档组成的统一知识入口
-- 本地证据不足时的受控联网检索
-- 飞书、WPS 与网易邮箱连接能力及人工确认边界
-- React 产品前台与 FastAPI Agent 服务
-
-> 当前版本已使用注册账户隔离个人数据。邮箱验证依赖部署方配置的 SMTP 服务；MVP 仍建议只在可信环境中使用，不要上传不必要的敏感材料。
-
-<details>
-<summary><strong>技术架构</strong></summary>
-
-CareerPilot 是一个单前台 Agent、Memory/RAG-native 的自有 Harness。模型负责语义理解与工具选择，权限、最大步数、Session、记忆准入、检索边界和外部动作确认由确定性代码控制。
+CareerPilot 是一个单前台 Agent、Memory/RAG-native 的自有 Harness。模型负责语义理解与工具选择；Runtime 负责会话、步数、事件和故障边界；确定性策略负责记忆准入、检索范围、工具权限和外部动作确认。
 
 ```text
-React / Vite 产品前台
-          │
-          ▼
-FastAPI ── AgentService
-             ├─ CareerContextCompiler
-             ├─ CareerPilotHarness（model → tool → model）
-             ├─ MCP Tool Platform（discover → policy → select → call）
-             ├─ Unified Memory / Idea / Dreaming
-             ├─ Agentic RAG（local → turbo → max）
-             └─ Action Service（preview → confirm → apply → verify）
+React / Vite
+      │
+      ▼
+FastAPI / AgentService
+      │
+      ├─ Intent + Context Compiler
+      ├─ CareerPilot Runtime（model ⇄ tool）
+      ├─ Memory + Cognitive State + Dreaming
+      ├─ Governed RAG（private / career / jobs / web）
+      ├─ MCP Tool Platform（discover → select → policy → call）
+      └─ Action Service（preview → confirm → apply → verify）
 ```
 
-主要目录：
+主文档入口：
 
-```text
-frontend/                React 产品前台
-src/careerpilot/
-├── agent/               Agent 定义、Prompt 与 Turn 编排
-├── context/             意图识别与检索路由
-├── harness/             模型/工具循环、Session 与工具策略
-├── mcp/                 MCP 配置、发现、安全策略与工具适配
-├── memory/              长期记忆、Idea 与每日回顾
-├── rag/                 统一证据索引与混合召回
-├── actions/             授权、预览、确认、执行与验证
-├── connectors/          飞书、WPS、网易邮箱适配器
-└── api/                 FastAPI 路由与 Schema
-```
+- [产品拆解：产品定位、三大核心机制、一句话总结与使用建议](docs/product/careerpilot-product-teardown.md)
+- [整体技术架构：组件边界、数据流、Runtime 与 MCP](docs/architecture/README.md)
+- [Memory + RAG：记忆、认知状态、知识与检索如何协作](docs/architecture/README.md#3-memory--rag同一套上下文系统)
+- [Agent Memory 开发手册：数据类型、写入、冲突、Dreaming](docs/architecture/agent-memory-handbook.md)
+- [评测中心：最新报告、数据集与复现方式](docs/evaluation/README.md)
+- [完整文档地图：当前文档与历史设计稿的边界](docs/README.md)
 
-</details>
+## 评测基线
+
+当前公开基线使用冻结语料、独立数据库和生产代码运行，不调用外部模型或网络；安全硬失败单独报告，不用平均分掩盖。
+
+| 系统 | Case | Pass Rate | 关键结果 |
+|---|---:|---:|---|
+| Memory | 10 | **100.0%** | 召回、用户隔离、敏感信息门控、纠正与去重全部通过 |
+| RAG | 8 | **87.5%** | 7/8 通过；待改进项为过期资料抑制 |
+| 安全硬失败 | — | **0** | 未发现跨用户泄漏、敏感信息越权暴露或运行异常 |
+
+这里展示的是 2026-11-05 的 MVP 离线基线，不代表真实用户分布，也不等于端到端 Agent 已达到生产标准。查看 [完整评测报告与适用边界](docs/evaluation/README.md)。
 
 ## 本地运行
 
-本地模型默认使用完全开源的 `Qwen3-4B GGUF Q4_K_M`，由 `llama.cpp` 在 CPU 上运行，不需要付费模型 API。首次启动需要下载约 2.5 GB 模型权重，并额外下载 Docker 镜像；建议至少准备 8 GB 内存，16 GB 体验更稳定。
-
-### 1. 准备 Docker
-
-安装并启动 Docker Desktop，确认以下命令均能输出版本信息：
-
-```powershell
-docker version
-docker compose version
-```
-
-### 2. 启动本地模型
+本地模型默认使用 `Qwen3-4B GGUF Q4_K_M`，由 `llama.cpp` 在 CPU 上运行，不需要付费模型 API。首次启动需下载约 2.5 GB 模型权重，并额外下载 Docker 镜像；建议至少 8 GB 内存，16 GB 更稳定。
 
 ```powershell
 docker compose up -d local-llm
-docker compose logs -f local-llm
-```
-
-模型下载和加载完成后按 `Ctrl+C` 退出日志查看，容器仍会继续运行。模型调试接口只绑定本机：
-
-```text
-http://127.0.0.1:8081/v1
-```
-
-运行真实健康、模型列表和对话冒烟测试：
-
-```powershell
 .venv\Scripts\python.exe scripts\smoke_local_model.py
-```
 
-模型权重保存在 `local-llm-cache` 命名卷中，普通停止和重启不会重复下载：
-
-```powershell
-docker compose stop local-llm
-docker compose start local-llm
-```
-
-### 3. 启动完整 CareerPilot
-
-完整生产容器仍需要在 `.env.production` 中配置应用自身的 Cookie 和邮件验证等设置，但不需要付费模型密钥。Compose 会让 CareerPilot 通过私有地址 `http://local-llm:8080/v1` 调用模型。
-
-```powershell
 docker compose up -d
 .venv\Scripts\python.exe scripts\smoke_deployment.py --base-url http://127.0.0.1:8080
 ```
 
-查看状态或停止服务：
-
-```powershell
-docker compose ps
-docker compose down
-```
-
-当前保守配置使用 4096 上下文和单请求并发。确认内存余量和推理速度后再提高 `compose.yaml` 中的 `-c` 或 `-np`；过大的上下文会显著增加内存占用。不要把 `8081` 改为公网绑定，llama.cpp 的本地接口默认不提供应用级鉴权。
-
-### 4. 配置 MCP 工具服务器（可选）
-
-Tool calling 是模型请求调用某个工具的方式；MCP 是 Agent 发现和连接外部工具服务器的标准协议。CareerPilot 仍由自有 Harness 掌控工具循环，MCP 只是可插拔工具来源，不会把 Agent 控制权交给外部服务。
-
-复制样例配置，然后只启用你信任的服务器和工具：
-
-```powershell
-Copy-Item config\mcp.servers.example.json config\mcp.servers.json
-$env:CAREERPILOT_MCP_CONFIG_PATH = "config/mcp.servers.json"
-.venv\Scripts\python.exe scripts\inspect_mcp_tools.py --config config\mcp.servers.json
-```
-
-支持两种连接方式：
-
-- `stdio`：CareerPilot 在本机启动一个 MCP 子进程，适合访问本地简历、SQLite 求职记录或本地搜索服务。只会传入配置文件 `env` 中明确声明的环境变量。
-- `streamable_http`：连接已运行的 MCP HTTP 服务。非本机地址必须使用 HTTPS；本机 `127.0.0.1` / `localhost` 可用 HTTP。
-
-安全默认值是“不暴露”：服务端必须将工具标记为 `readOnlyHint=true` 且不能标记 `destructiveHint=true`；配置中建议再用 `allowed_tools` 做明确白名单。未标注风险、写入型、破坏性或指纹过期的工具都会被拒绝。每轮根据当前问题最多选择 8 个工具，工具描述会缓存，返回内容会限长并标记为不可信数据。
-
-`scripts/inspect_mcp_tools.py` 只读取工具描述，不会调用工具。联网搜索可以后续作为独立开源 MCP Server（例如接入自建 SearXNG）加入；当前样例只预留连接位，不会自动部署搜索引擎。
-
-## 延伸阅读
-
-- [产品需求：CareerPilot MVP](PRD/CareerPilot-MVP-PRD-v1.0.md)
-- [意图与任务拆解](PRD/CareerPilot-Intent-and-Task-Decomposition-PRD-v0.1.md)
-- [Memory 与 RAG 技术设计](PRD/CareerPilot-Memory-RAG-Technical-Design.md)
-- [CareerPilot Harness 架构](docs/architecture/careerpilot-harness.md)
+完整环境变量、服务检查、停止方式与 MCP 配置见 [本地开发与部署指南](docs/development.md)。
 
 ---
 

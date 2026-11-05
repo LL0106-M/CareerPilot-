@@ -13,16 +13,27 @@ function json(value: unknown) { return new Response(JSON.stringify(value), { sta
 
 describe('knowledge pages', () => {
   it('labels interview experiences separately from learning resources', async () => {
-    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(json({items:[{
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({items:[{
       id:'i1',title:'产品经理一面面经',publisher:'候选人经验',year:'2025',round:'一面',trust:'experience',
       url:'https://example.com/interview',excerpt:'候选人回忆的一面问题。',updated_at:'2026-11-04',source_type:'experience_report',
-    }]})))
+      }]}))
+      .mockResolvedValueOnce(json({processed:1,saved:1,collection_jobs:[]}))
+      .mockResolvedValueOnce(json({items:[{
+        id:'i2',title:'Agent 二面面经',publisher:'候选人经验',year:'2026',round:'二面',trust:'experience',
+        url:'https://example.com/interview-2',excerpt:'新收录的二面问题。',updated_at:'2026-11-05',source_type:'experience_report',
+      }]}))
+    vi.stubGlobal('fetch',fetchMock)
+    const user = userEvent.setup()
     render(<MemoryRouter><InterviewArchivePage /></MemoryRouter>)
     expect(await screen.findByText('产品经理一面面经')).toBeInTheDocument()
     expect(screen.getByText('经验帖 · 待交叉验证')).toBeInTheDocument()
     expect(screen.getByText(/不代表未来一定出现/)).toBeInTheDocument()
     expect(screen.getByRole('button',{name:'刷新'})).toHaveClass('library-refresh')
     expect(screen.getByRole('heading',{name:'往年题目与面经'}).closest('.library-dashboard')).toHaveClass('library-dashboard--single')
+    await user.click(screen.getByRole('button',{name:'刷新'}))
+    expect(await screen.findByText('Agent 二面面经')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/knowledge/interview-archive/refresh', expect.objectContaining({method:'POST'}))
   })
   it('loads jobs from the backend and filters by company type', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ items: [
@@ -72,9 +83,30 @@ describe('knowledge pages', () => {
     expect(screen.getByText('还没有保存的岗位。')).toBeInTheDocument()
   })
 
+  it('runs the job collection pipeline before reloading on refresh', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({items: [], collected_sources: []}))
+      .mockResolvedValueOnce(json({processed: 1, saved: 1, collection_jobs: []}))
+      .mockResolvedValueOnce(json({items: [{
+        id:'fresh-job', company_type:'民营企业', company:'Example', role:'Agent 产品经理',
+        role_family:'ai_product', location:'北京', deadline:null, deadline_status:'时间未知',
+        source:'官网', source_url:'https://careers.example.com/agent-pm',
+      }], collected_sources: []}))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<MemoryRouter><JobsPage /></MemoryRouter>)
+
+    await user.click(await screen.findByRole('button',{name:'刷新岗位知识库'}))
+
+    expect(await screen.findAllByText('Agent 产品经理')).not.toHaveLength(0)
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/knowledge/jobs/refresh', expect.objectContaining({method:'POST'}))
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/v1/knowledge/jobs', expect.any(Object))
+  })
+
   it('lets the user refresh the library and see newly collected material', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ items: [] }))
+      .mockResolvedValueOnce(json({processed:1,saved:1,collection_jobs:[]}))
       .mockResolvedValueOnce(json({ items: [{
         id:'live-2', title:'刚收录的 Agent 指南', publisher:'Example Lab', category:'工程实践',
         format:'网页', url:'https://example.com/agent', description:'来自刚才的对话收集。',
@@ -88,6 +120,7 @@ describe('knowledge pages', () => {
 
     expect(await screen.findAllByText('刚收录的 Agent 指南')).not.toHaveLength(0)
     expect(screen.getByText(/最近检查/)).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/knowledge/learning/refresh', expect.objectContaining({method:'POST'}))
   })
 
   it('does not fabricate personal documents when the backend is empty', async () => {

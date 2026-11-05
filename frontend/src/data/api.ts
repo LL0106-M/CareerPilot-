@@ -78,6 +78,25 @@ export interface DirectionJourneyStart {
   collection_jobs: KnowledgeCollectionJob[]
 }
 
+export interface FuturePath {
+  kind: 'continue' | 'adjacent' | 'unexpected'
+  label: string
+  title: string
+  summary: string
+  signals: string[]
+  tension: string
+  question: string
+}
+
+export interface FutureLetter {
+  id: string
+  journey_id: string
+  message: string
+  paths: FuturePath[]
+  created_at: string
+  takeaway?: { path_kind: FuturePath['kind']; question: string; created_at: string } | null
+}
+
 export interface ConversationSummary {
   id: string
   title: string
@@ -485,6 +504,18 @@ export const api = {
       body: JSON.stringify({ state, reflection: reflection || null }),
     })
   },
+  generateFutureLetter(journeyId: string, message = '两年后的我会怎样？') {
+    return request<FutureLetter>(`/v1/me/journeys/${encodeURIComponent(journeyId)}/future-letter`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    })
+  },
+  confirmFutureTakeaway(journeyId: string, letterId: string, path: FuturePath) {
+    return request<{ path_kind: FuturePath['kind']; question: string; created_at: string }>(
+      `/v1/me/journeys/${encodeURIComponent(journeyId)}/future-letter/takeaway`,
+      { method: 'POST', body: JSON.stringify({ letter_id: letterId, path_kind: path.kind, question: path.question }) },
+    )
+  },
   getJobs(filters: { companyType?: string; company?: string } = {}) {
     const query = toQuery({ company_type: filters.companyType, company: filters.company })
     return request<{ items: ApiJob[]; collected_sources?: CollectedJobSource[] }>(`/v1/knowledge/jobs${query}`)
@@ -492,11 +523,26 @@ export const api = {
   getPreparation() {
     return request<{ items: PreparationResource[] }>('/v1/knowledge/preparation')
   },
+  refreshJobs() {
+    return request<{ processed: number; saved: number; collection_jobs: KnowledgeCollectionJob[] }>(
+      '/v1/knowledge/jobs/refresh', { method: 'POST' },
+    )
+  },
   getLearningResources() {
     return request<{ items: PreparationResource[] }>('/v1/knowledge/learning')
   },
+  refreshLearningResources() {
+    return request<{ processed: number; saved: number; collection_jobs: KnowledgeCollectionJob[] }>(
+      '/v1/knowledge/learning/refresh', { method: 'POST' },
+    )
+  },
   getInterviewArchive() {
     return request<{ items: InterviewArchiveResource[] }>('/v1/knowledge/interview-archive')
+  },
+  refreshInterviewArchive() {
+    return request<{ processed: number; saved: number; collection_jobs: KnowledgeCollectionJob[] }>(
+      '/v1/knowledge/interview-archive/refresh', { method: 'POST' },
+    )
   },
   getDocuments() {
     return request<{ items: ApiDocument[] }>('/v1/me/documents')

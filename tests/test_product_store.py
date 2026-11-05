@@ -74,7 +74,42 @@ def test_confirmed_direction_queues_jobs_but_waits_for_user_to_start_journey(tmp
         store.close()
 
 
-def test_start_direction_journey_is_owner_scoped_idempotent_and_enqueues_preparation(tmp_path) -> None:
+def test_collection_jobs_can_be_claimed_and_completed_without_crossing_owners(tmp_path) -> None:
+    store = ProductStore(tmp_path / "product.db")
+    try:
+        for owner in ("owner-1", "owner-2"):
+            store.record_direction_signal(
+                owner,
+                source_run_id=f"run-{owner}",
+                label="AI 产品经理",
+                explicitness="explicit",
+                source_quote="我想申请 AI 产品经理",
+                reason="用户明确表达申请意图",
+                confidence=0.95,
+            )
+
+        claimed = store.claim_collection_jobs("owner-1", purpose="job_opportunity")
+
+        assert len(claimed) == 1
+        assert claimed[0]["status"] == "collecting"
+        assert claimed[0]["attempts"] == 1
+        assert store.claim_collection_jobs("owner-1", purpose="job_opportunity") == []
+        assert store.list_collection_jobs("owner-2")[0]["status"] == "queued"
+
+        store.finish_collection_job(
+            "owner-1", str(claimed[0]["id"]), status="completed", result_count=3
+        )
+        completed = store.list_collection_jobs("owner-1")[0]
+        assert completed["status"] == "completed"
+        assert completed["result_count"] == 3
+        assert completed["last_error"] is None
+    finally:
+        store.close()
+
+
+def test_start_direction_journey_is_owner_scoped_idempotent_and_enqueues_preparation(
+    tmp_path,
+) -> None:
     store = ProductStore(tmp_path / "product.db")
     try:
         store.record_direction_signal(

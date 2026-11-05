@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -50,6 +51,8 @@ from careerpilot.api.schemas import (
     AgentRunResponse,
     ChatRequest,
     ChatResponse,
+    FutureLetterCreateRequest,
+    FutureTakeawayCreateRequest,
     HypothesisDecisionRequest,
     IdeaActionLinkRequest,
     IdeaCreateRequest,
@@ -84,10 +87,18 @@ from careerpilot.connectors.feishu_cli import FeishuCliConnector
 from careerpilot.connectors.netease_mail import NeteaseMailConnector
 from careerpilot.connectors.wps import WpsConnector
 from careerpilot.context.contracts import TaskIntent
+from careerpilot.harness.model import LangChainModelGateway
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import RunCancellationRequested
 from careerpilot.harness.session import SqliteSessionStore
 from careerpilot.journey.chat_parser import parse_calendar_request
+from careerpilot.journey.future_letter import (
+    FutureLetterService,
+    FuturePathValidationError,
+    JourneyNotFoundError,
+    ModelFuturePathGenerator,
+)
+from careerpilot.knowledge.collection import KnowledgeCollectionProcessor
 from careerpilot.memory.base import MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.daily_review import DailyReview
@@ -181,6 +192,8 @@ def create_app(
     run_store: SqliteAgentRunStore | None = None,
     auth_service: AuthService | None = None,
     manual_dreaming_service: ManualDreamingService | None = None,
+    knowledge_collection_processor: KnowledgeCollectionProcessor | None = None,
+    future_letter_service: FutureLetterService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     owned_memory_store: MemoryStore | None = None
@@ -357,6 +370,30 @@ def create_app(
         if owned_product_store is None:
             owned_product_store = ProductStore(resolved_settings.product_db_path)
         return owned_product_store
+
+    def resolve_future_letter_service() -> FutureLetterService:
+        nonlocal future_letter_service
+        if future_letter_service is None:
+            try:
+                future_letter_service = FutureLetterService(
+                    resolve_product_store(),
+                    ModelFuturePathGenerator(
+                        LangChainModelGateway(create_reasoning_model(resolved_settings))
+                    ),
+                )
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return future_letter_service
+
+    def resolve_knowledge_collection_processor() -> KnowledgeCollectionProcessor:
+        nonlocal knowledge_collection_processor
+        if knowledge_collection_processor is None:
+            knowledge_collection_processor = KnowledgeCollectionProcessor(
+                resolve_product_store(),
+                resolve_rag_store(),
+                build_search_provider(resolved_settings),
+            )
+        return knowledge_collection_processor
 
     def resolve_action_store() -> SqliteActionStore:
         nonlocal owned_action_store
@@ -811,6 +848,21 @@ def create_app(
 
     # ----- Jobs (public, owner_id = None) ----------------------------------
 
+    @app.post("/v1/knowledge/jobs/refresh")
+    async def refresh_jobs(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        product = resolve_product_store()
+        product.queue_collection_refresh(identity.owner_id, purpose="job_opportunity")
+        result = await resolve_knowledge_collection_processor().process_for_owner(
+            identity.owner_id, purpose="job_opportunity"
+        )
+        return {
+            "processed": result.processed,
+            "saved": result.saved,
+            "collection_jobs": product.list_collection_jobs(identity.owner_id),
+        }
+
     @app.get("/v1/knowledge/jobs")
     async def list_jobs(
         company_type: str | None = Query(default=None),
@@ -823,6 +875,11 @@ def create_app(
         rows = store.list_jobs(
             company_type=company_type, company=company, user_id=None, limit=limit
         )
+        items = [_row_to_job(row) for row in rows]
+        structured_ids = {str(item["id"]) for item in items}
+        for row in store.list_documents_for_domains(("job_opportunity",), limit=limit):
+            if str(row["id"]) not in structured_ids:
+                items.append(_job_document_payload(row))
         collected_sources: list[dict[str, object]] = []
         for row in store.list_documents_for_domains(("job_source",), limit=limit):
             metadata = json.loads(str(row["metadata_json"] or "{}"))
@@ -838,7 +895,7 @@ def create_app(
                 }
             )
         return {
-            "items": [_row_to_job(row) for row in rows],
+            "items": items,
             "collected_sources": collected_sources,
         }
 
@@ -878,6 +935,21 @@ def create_app(
             )
         return {"items": items}
 
+    @app.post("/v1/knowledge/interview-archive/refresh")
+    async def refresh_interview_archive(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        product = resolve_product_store()
+        product.queue_collection_refresh(identity.owner_id, purpose="interview_archive")
+        result = await resolve_knowledge_collection_processor().process_for_owner(
+            identity.owner_id, purpose="interview_archive"
+        )
+        return {
+            "processed": result.processed,
+            "saved": result.saved,
+            "collection_jobs": product.list_collection_jobs(identity.owner_id),
+        }
+
     @app.get("/v1/knowledge/learning")
     async def list_learning_resources(
         limit: int = Query(default=200, ge=1, le=1000),
@@ -899,7 +971,11 @@ def create_app(
                 {
                     "id": row["id"],
                     "title": row["title"],
-                    "publisher": metadata.get("publisher") or metadata.get("site_name") or "来源网页",
+                    "publisher": (
+                        metadata.get("publisher")
+                        or metadata.get("site_name")
+                        or "来源网页"
+                    ),
                     "category": metadata.get("category") or "其他",
                     "format": metadata.get("format") or "网页",
                     "url": row["source_uri"],
@@ -909,6 +985,21 @@ def create_app(
                 }
             )
         return {"items": items}
+
+    @app.post("/v1/knowledge/learning/refresh")
+    async def refresh_learning_resources(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        product = resolve_product_store()
+        product.queue_collection_refresh(identity.owner_id, purpose="learning_resource")
+        result = await resolve_knowledge_collection_processor().process_for_owner(
+            identity.owner_id, purpose="learning_resource"
+        )
+        return {
+            "processed": result.processed,
+            "saved": result.saved,
+            "collection_jobs": product.list_collection_jobs(identity.owner_id),
+        }
 
     @app.get("/v1/knowledge/preparation")
     async def list_preparation(
@@ -1418,6 +1509,53 @@ def create_app(
             raise HTTPException(status_code=404, detail="task not found")
         return {"status": "ok"}
 
+    @app.post("/v1/me/journeys/{journey_id}/future-letter", status_code=201)
+    async def create_future_letter(
+        journey_id: str,
+        body: FutureLetterCreateRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            letter = await resolve_future_letter_service().generate(
+                identity.owner_id, journey_id, body.message
+            )
+        except JourneyNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="journey not found") from exc
+        except FuturePathValidationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail="future letter unavailable") from exc
+        return letter.to_dict()
+
+    @app.get("/v1/me/journeys/{journey_id}/future-letter")
+    async def get_future_letter(
+        journey_id: str,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        letter = resolve_future_letter_service().get(identity.owner_id, journey_id)
+        if letter is None:
+            raise HTTPException(status_code=404, detail="future letter not found")
+        return letter.to_dict()
+
+    @app.post(
+        "/v1/me/journeys/{journey_id}/future-letter/takeaway", status_code=201
+    )
+    async def confirm_future_takeaway(
+        journey_id: str,
+        body: FutureTakeawayCreateRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            return resolve_future_letter_service().confirm_takeaway(
+                identity.owner_id,
+                journey_id,
+                body.letter_id,
+                body.path_kind,
+                body.question,
+            )
+        except JourneyNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="future letter not found") from exc
+
     # ----- Governed external integrations and actions --------------------
 
     @app.get("/v1/me/integrations")
@@ -1637,6 +1775,55 @@ def _row_to_job(row) -> dict[str, object]:
         "updated_at": row["verified_at"],
         "description": row["job_description"],
         "requirements": row["requirements"],
+    }
+
+
+def _job_document_payload(row) -> dict[str, object]:
+    metadata = json.loads(str(row["metadata_json"] or "{}"))
+    title = str(row["title"] or "未命名岗位").strip()
+    company = str(metadata.get("organization") or metadata.get("company_name") or "").strip()
+    role = title
+    if company and title.startswith(company):
+        role = title[len(company) :].lstrip("｜|-— ") or title
+    location = str(metadata.get("location") or "未注明").strip()
+    locations = [item for item in re.split(r"[/、,，]", location) if item] or ["未注明"]
+    compact_role = role.casefold().replace(" ", "")
+    role_family = (
+        "ai_product"
+        if any(term in compact_role for term in ("ai产品", "agent产品", "大模型产品"))
+        or ("agent" in compact_role and "产品" in compact_role)
+        else "product" if "产品" in compact_role else "other"
+    )
+    text = str(row["text"] or "")
+    paragraphs = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "-"))
+    ]
+    description = paragraphs[0] if paragraphs else ""
+    source_type = str(row["source_type"] or "")
+    official = source_type in {"web_job", "official_job_page"}
+    return {
+        "id": row["id"],
+        "company_type": "未知",
+        "organization_type": "unknown",
+        "company": company or "未命名企业",
+        "role": role,
+        "role_family": role_family,
+        "recruiting_type": "unknown",
+        "locations": locations,
+        "location": locations[0],
+        "posted_at": row["published_at"],
+        "deadline": None,
+        "deadline_status": "时间未知",
+        "status": "unknown",
+        "source": "官方招聘页" if official else "来源网页",
+        "source_level": "S" if official else "B",
+        "source_url": row["source_uri"],
+        "apply_url": row["source_uri"],
+        "updated_at": row["fetched_at"] or row["published_at"] or "",
+        "description": description,
+        "requirements": "",
     }
 
 

@@ -8,6 +8,44 @@ import { JourneyPage } from './JourneyPage'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Journey', () => {
+  it('opens a three-path future letter without replacing the current route', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        hypotheses:[], ideas:[], dreaming:[], memories:[],
+        journeys:[{id:'j1',direction_id:'d1',title:'AI 产品经理',status:'active',why:'验证真实匹配'}],
+        journey:[
+          {id:'t1',title:'完成岗位拆解',due:'第 1 步',state:'进行中',related:'AI 产品经理',journey_id:'j1',direction_id:'d1',why:'验证岗位匹配'},
+          {id:'t2',title:'联系一位从业者',due:'第 2 步',state:'准备开始',related:'AI 产品经理',journey_id:'j1',direction_id:'d1'},
+        ],
+      }), { status:200,headers:{'Content-Type':'application/json'} }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id:'letter-1',journey_id:'j1',message:'两年后的我会怎样？',created_at:'2026-11-05T00:00:00Z',
+        paths:[
+          {kind:'continue',label:'沿着这条路',title:'继续走深',summary:'主线逐渐清晰',signals:['完成岗位拆解'],tension:'选择变窄',question:'还想继续吗？'},
+          {kind:'adjacent',label:'换一条相邻的路',title:'相邻转向',summary:'已有能力换了场景',signals:['联系一位从业者'],tension:'重新证明',question:'什么能力可以带过去？'},
+          {kind:'unexpected',label:'意外的第三条路',title:'作品打开入口',summary:'一次公开输出带来连接',signals:[],tension:'更不可控',question:'先公开什么？'},
+        ],
+      }), { status:201,headers:{'Content-Type':'application/json'} }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({path_kind:'adjacent',question:'什么能力可以带过去？',created_at:'2026-11-05T00:01:00Z'}), {status:201,headers:{'Content-Type':'application/json'}}))
+    vi.stubGlobal('fetch',fetchMock)
+    const user = userEvent.setup()
+    render(<MemoryRouter><JourneyPage /></MemoryRouter>)
+
+    await user.click(await screen.findByRole('button',{name:'给未来的我写一句话'}))
+
+    expect(await screen.findByRole('heading',{name:'两年后的我，回信了'})).toBeInTheDocument()
+    expect(screen.getByText('完成岗位拆解')).toBeInTheDocument()
+    expect(document.querySelectorAll('.journey-route li')).toHaveLength(2)
+    await user.click(screen.getByRole('button',{name:'换一条相邻的路'}))
+    expect(screen.getByRole('heading',{name:'相邻转向'})).toBeInTheDocument()
+    await user.click(screen.getByRole('button',{name:'带回一个问题'}))
+    expect(screen.getByText('只带回这个问题，不会创建任务或记忆。')).toBeInTheDocument()
+    await user.click(screen.getByRole('button',{name:/确认带回/}))
+    expect(await screen.findByRole('button',{name:/已带回航程/})).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenNthCalledWith(2,'/v1/me/journeys/j1/future-letter',expect.objectContaining({method:'POST'}))
+    expect(fetchMock).toHaveBeenNthCalledWith(3,'/v1/me/journeys/j1/future-letter/takeaway',expect.objectContaining({method:'POST'}))
+  })
+
   it('renders a direction journey and its three collection states from dashboard data', async () => {
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({
       hypotheses:[], ideas:[], dreaming:[], memories:[],
