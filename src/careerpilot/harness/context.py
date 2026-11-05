@@ -21,6 +21,7 @@ from careerpilot.memory.dreaming import CognitiveStore
 from careerpilot.memory.models import MemoryType
 from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
 from careerpilot.support.policy import SupportDecision, SupportMode, SupportPolicy
+from careerpilot.support.response_strategy import ResponseContract, ResponseStrategyEngine
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +41,7 @@ class CompiledContext:
     memories: MemoryContext
     memory_read_status: str
     allowed_tool_names: frozenset[str]
+    response_contract: ResponseContract
 
 
 class CareerContextCompiler:
@@ -72,6 +74,7 @@ class CareerContextCompiler:
         intent_interpreter: IntentInterpreter | None = None,
         retrieval_router: RetrievalRouter | None = None,
         unified_memory_service: MemoryService | None = None,
+        response_strategy: ResponseStrategyEngine | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._prompt_composer = prompt_composer or PromptComposer()
@@ -81,12 +84,18 @@ class CareerContextCompiler:
         )
         self._retrieval_router = retrieval_router or IntentAwareRetrievalRouter()
         self._unified_memory_service = unified_memory_service
+        self._response_strategy = response_strategy or ResponseStrategyEngine()
 
     async def compile(self, request: ContextRequest) -> CompiledContext:
         intent = await self._intent_interpreter.interpret(
             request.message, request.requested_mode
         )
         decision = intent.support
+        response_contract = self._response_strategy.derive(
+            request.message,
+            decision,
+            intent.primary_intent,
+        )
         retrieval_plan = self._retrieval_router.plan(intent, request.message)
         memory_read_status = "skipped"
         memories = MemoryContext()
@@ -170,6 +179,7 @@ class CareerContextCompiler:
                 hypotheses,
                 intent,
                 retrieval_plan,
+                response_contract,
             ),
             decision=decision,
             intent=intent,
@@ -177,4 +187,5 @@ class CareerContextCompiler:
             memories=memories,
             memory_read_status=memory_read_status,
             allowed_tool_names=retrieval_plan.allowed_tool_names,
+            response_contract=response_contract,
         )

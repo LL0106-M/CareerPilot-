@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 
 import { Bobo } from '../../components/bobo/Bobo'
+import { MessageContent } from '../../components/chat/MessageContent'
 import { api, type ConversationSummary, type DashboardResponse, type DirectionSignal } from '../../data/api'
 
 interface ChatMessage { role: 'user' | 'agent'; content: string }
@@ -175,7 +176,7 @@ export function ChatPage() {
         <div className="chat-stream" aria-live="polite">
           {messages.map((message, index) => (
             <div key={`${message.role}-${index}`} className={`chat-message ${message.role}${!message.content ? ' typing' : ''}`}>
-              {message.content ? <span>{message.content}</span> : <><i /><i /><i /></>}
+              {message.content ? <MessageContent content={message.content} /> : <><i /><i /><i /></>}
             </div>
           ))}
           {directionSignal && <div className="direction-signal-prompt glass-card" role="status">
