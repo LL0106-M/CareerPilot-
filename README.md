@@ -6,18 +6,18 @@
 
 **一个会记住你、会查证据，也知道什么时候不该替你做决定的长期职业陪伴 Agent。**
 
-[![status](https://img.shields.io/badge/status-MVP-3f7562?style=flat-square)](https://careerpilot.pages.dev)
+[![status](https://img.shields.io/badge/status-MVP-3f7562?style=flat-square)](https://palace-marbles-whoever.ngrok-free.dev)
 [![frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite-7899ae?style=flat-square)](./frontend)
 [![backend](https://img.shields.io/badge/backend-FastAPI-d4a85f?style=flat-square)](./src/careerpilot)
 [![benchmark](https://img.shields.io/badge/memory%20benchmark-10%2F10-795f52?style=flat-square)](./docs/evaluation/README.md)
 
-### [打开 CareerPilot 在线体验 →](https://careerpilot.pages.dev)
+### [打开 CareerPilot 在线体验 →](https://palace-marbles-whoever.ngrok-free.dev)
 
 [产品与使用方式](#careerpilot-如何工作) · [完整产品拆解](docs/product/careerpilot-product-teardown.md) · [技术架构](docs/architecture/README.md) · [评测报告](docs/evaluation/README.md) · [本地运行](#本地运行)
 
 </div>
 
-[![CareerPilot 产品首页：泊泊在山林湖泊前陪伴用户探索职业方向](docs/assets/careerpilot-product-home.png)](https://careerpilot.pages.dev)
+[![CareerPilot 产品首页：泊泊在山林湖泊前陪伴用户探索职业方向](docs/assets/careerpilot-product-home.png)](https://palace-marbles-whoever.ngrok-free.dev)
 
 > **You don't choose a future. You learn your way into one.**
 >
@@ -167,6 +167,6 @@ docker compose up -d
 
 **方向不是一次选出来的，而是在一次次真实尝试中长出来的。**
 
-[现在就和泊泊聊聊 →](https://careerpilot.pages.dev)
+[现在就和泊泊聊聊 →](https://palace-marbles-whoever.ngrok-free.dev)
 
 </div>
