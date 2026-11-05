@@ -149,6 +149,7 @@ src/careerpilot/
 | 主题 | 文档 | 用途 |
 |---|---|---|
 | 整体 Harness | [CareerPilot Harness Architecture](careerpilot-harness.md) | Runtime、上下文计划、事件协议和故障边界 |
+| 情绪识别与回应控制 | [Emotion Recognition](emotion-recognition.md) | 当前规则、支持模式、回答契约、安全覆盖和记忆边界 |
 | Memory | [Agent Memory Handbook](agent-memory-handbook.md) | 记忆类型、写入、召回、冲突、Dreaming 与上线条件 |
 | 产品与权限 | [CareerPilot MVP PRD](../../PRD/CareerPilot-MVP-PRD-v1.0.md) | 产品目标、支持模式、自治等级与上线门槛 |
 | Memory/RAG 详细设计 | [Memory + RAG Technical Design](../../PRD/CareerPilot-Memory-RAG-Technical-Design.md) | 完整数据模型、接口、检索与安全设计 |

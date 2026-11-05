@@ -15,6 +15,7 @@
 
 - [Agent Memory Handbook](architecture/agent-memory-handbook.md)：Memory 类型、生命周期、Dreaming、冲突与隐私控制。
 - [CareerPilot Harness Architecture](architecture/careerpilot-harness.md)：运行协议、上下文计划、事件与失败语义。
+- [情绪识别与回应控制](architecture/emotion-recognition.md)：当前规则式情绪信号识别、支持模式、回答控制、安全覆盖与局限。
 - [CareerPilot MVP PRD](../PRD/CareerPilot-MVP-PRD-v1.0.md)：产品目标、支持模式、自治等级与上线门槛。
 - [Memory + RAG Technical Design](../PRD/CareerPilot-Memory-RAG-Technical-Design.md)：详细数据模型、接口和检索设计。
 - [Intent and Task Decomposition](../PRD/CareerPilot-Intent-and-Task-Decomposition-PRD-v0.1.md)：意图、槽位和能力路由。

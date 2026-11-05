@@ -13,7 +13,7 @@
 
 ### [打开 CareerPilot 在线体验 →](https://palace-marbles-whoever.ngrok-free.dev)
 
-[产品与使用方式](#careerpilot-如何工作) · [完整产品拆解](docs/product/careerpilot-product-teardown.md) · [技术架构](docs/architecture/README.md) · [评测报告](docs/evaluation/README.md) · [本地运行](#本地运行)
+[产品与使用方式](#careerpilot-如何工作) · [完整产品拆解](docs/product/careerpilot-product-teardown.md) · [技术架构](docs/architecture/README.md) · [情绪识别](docs/architecture/emotion-recognition.md) · [评测报告](docs/evaluation/README.md) · [本地运行](#本地运行)
 
 </div>
 
@@ -130,6 +130,7 @@ FastAPI / AgentService
 
 - [产品拆解：产品定位、三大核心机制、一句话总结与使用建议](docs/product/careerpilot-product-teardown.md)
 - [整体技术架构：组件边界、数据流、Runtime 与 MCP](docs/architecture/README.md)
+- [情绪识别与回应控制：当前规则、优先级、安全边界与已知限制](docs/architecture/emotion-recognition.md)
 - [Memory + RAG：记忆、认知状态、知识与检索如何协作](docs/architecture/README.md#3-memory--rag同一套上下文系统)
 - [Agent Memory 开发手册：数据类型、写入、冲突、Dreaming](docs/architecture/agent-memory-handbook.md)
 - [评测中心：最新报告、数据集与复现方式](docs/evaluation/README.md)
