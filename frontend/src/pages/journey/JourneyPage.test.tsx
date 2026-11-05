@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -76,22 +76,31 @@ describe('Journey', () => {
     expect(screen.getByRole('button',{name:/添加日程/})).toBeInTheDocument()
   })
 
-  it('switches between the common route and a draft target branch', async () => {
+  it('navigates one job direction by company and business line', async () => {
     const dashboard = {
       hypotheses:[], ideas:[], dreaming:[], memories:[], collection_jobs:[],
-      journeys:[{id:'j1',direction_id:'d1',title:'AI 产品经理',status:'active',why:'验证方向'}],
+      journeys:[
+        {id:'j-current',direction_id:'d-current',title:'AI 产品经理',status:'active',why:'验证方向'},
+        {id:'j-old',direction_id:'d-old',title:'AI 产品经理',status:'active',why:'历史同名方向'},
+      ],
       journey_branches:[
-        {id:'jb-common',journey_id:'j1',kind:'common',title:'通用主线',status:'active',rationale:'共同基础'},
-        {id:'jb-tencent',journey_id:'j1',compass_branch_id:'b1',kind:'target',title:'腾讯｜混元',status:'draft',rationale:'确认后开始差异准备'},
+        {id:'jb-current-common',journey_id:'j-current',kind:'common',title:'通用主线',status:'active',rationale:'共同基础',company:'',business:'',role:'',location:''},
+        {id:'jb-old-common',journey_id:'j-old',kind:'common',title:'通用主线',status:'active',rationale:'共同基础',company:'',business:'',role:'',location:''},
+        {id:'jb-jd-retail',journey_id:'j-current',compass_branch_id:'b1',kind:'target',title:'京东｜京东零售',status:'draft',rationale:'确认后开始差异准备',company:'京东',business:'京东零售',role:'AI 产品经理',location:'北京'},
+        {id:'jb-jd-logistics',journey_id:'j-current',compass_branch_id:'b2',kind:'target',title:'京东｜京东物流',status:'active',rationale:'物流业务准备',company:'京东',business:'京东物流',role:'AI 产品经理',location:'北京'},
+        {id:'jb-tencent',journey_id:'j-old',compass_branch_id:'b3',kind:'target',title:'腾讯｜混元',status:'active',rationale:'混元业务准备',company:'腾讯',business:'混元',role:'AI 产品经理',location:'深圳'},
       ],
       journey:[
-        {id:'t1',title:'了解 AI 产品岗位类型',due:'第 1 步',state:'准备开始',related:'AI 产品经理',journey_id:'j1',direction_id:'d1',journey_branch_id:'jb-common',scope:'common'},
+        {id:'t-current',title:'准备 AI 产品项目案例',due:'第 1 步',state:'准备开始',related:'AI 产品经理',journey_id:'j-current',direction_id:'d-current',journey_branch_id:'jb-current-common',scope:'common',step_kind:'role_profile'},
+        {id:'t-old',title:'旧的通用任务',due:'第 1 步',state:'准备开始',related:'AI 产品经理',journey_id:'j-old',direction_id:'d-old',journey_branch_id:'jb-old-common',scope:'common',step_kind:'role_profile'},
+        {id:'t-logistics',title:'拆解京东物流业务',due:'目标第 1 步',state:'准备开始',related:'京东物流',journey_id:'j-current',direction_id:'d-current',journey_branch_id:'jb-jd-logistics',scope:'branch_specific'},
+        {id:'t-tencent',title:'拆解混元业务',due:'目标第 1 步',state:'准备开始',related:'混元',journey_id:'j-old',direction_id:'d-old',journey_branch_id:'jb-tencent',scope:'branch_specific'},
       ],
     }
     const activated = {
       ...dashboard,
-      journey_branches: dashboard.journey_branches.map((item) => item.id === 'jb-tencent' ? {...item,status:'active'} : item),
-      journey:[...dashboard.journey,{id:'t2',title:'拆解腾讯｜混元的真实岗位与业务差异',due:'分支第 1 步',state:'准备开始',related:'腾讯｜混元',journey_id:'j1',direction_id:'d1',journey_branch_id:'jb-tencent',scope:'branch_specific'}],
+      journey_branches: dashboard.journey_branches.map((item) => item.id === 'jb-jd-retail' ? {...item,status:'active'} : item),
+      journey:[...dashboard.journey,{id:'t-retail',title:'拆解京东零售的真实业务差异',due:'目标第 1 步',state:'准备开始',related:'京东零售',journey_id:'j-current',direction_id:'d-current',journey_branch_id:'jb-jd-retail',scope:'branch_specific'}],
     }
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(dashboard),{status:200,headers:{'Content-Type':'application/json'}}))
@@ -101,13 +110,25 @@ describe('Journey', () => {
     const user = userEvent.setup()
     render(<MemoryRouter><JourneyPage /></MemoryRouter>)
 
-    await user.click(await screen.findByRole('button',{name:'腾讯｜混元'}))
+    const directionNavigation = await screen.findByRole('navigation',{name:'选择岗位方向'})
+    expect(within(directionNavigation).getAllByRole('button')).toHaveLength(1)
+    expect(within(directionNavigation).getByRole('button',{name:/01.*AI 产品经理/})).toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'综合路径'})).not.toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'通用主线'})).not.toBeInTheDocument()
+
+    const companyNavigation = screen.getByRole('navigation',{name:'选择目标公司'})
+    expect(within(companyNavigation).getByRole('button',{name:'京东'})).toBeInTheDocument()
+    expect(within(companyNavigation).getByRole('button',{name:'腾讯'})).toBeInTheDocument()
+    const businessNavigation = screen.getByRole('navigation',{name:'选择业务线'})
+    expect(within(businessNavigation).getByRole('button',{name:/京东零售/})).toBeInTheDocument()
+    expect(within(businessNavigation).getByRole('button',{name:/京东物流/})).toBeInTheDocument()
+    expect(screen.getByLabelText('当前航程目标')).toHaveTextContent('AI 产品经理/京东/京东零售')
     expect(screen.getByText('尚未开始准备')).toBeInTheDocument()
     await user.click(screen.getByRole('button',{name:'开始准备这个目标'}))
     expect(screen.getByRole('dialog',{name:'确认开始目标分支'})).toBeInTheDocument()
     await user.click(screen.getByRole('button',{name:'确认开始准备'}))
-    expect(await screen.findByText('拆解腾讯｜混元的真实岗位与业务差异')).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenNthCalledWith(2,'/v1/me/journeys/j1/branches/jb-tencent/activate',expect.objectContaining({method:'POST'}))
+    expect(await screen.findByText('拆解京东零售的真实业务差异')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenNthCalledWith(2,'/v1/me/journeys/j-current/branches/jb-jd-retail/activate',expect.objectContaining({method:'POST'}))
   })
 
   it('uses path as the default view and can switch to calendar', async () => {

@@ -92,6 +92,10 @@ export interface JourneyBranch {
   title: string
   status: 'draft' | 'active' | 'paused' | 'completed' | 'archived'
   rationale: string
+  company?: string
+  business?: string
+  role?: string
+  location?: string
 }
 
 export interface DirectionSummary {

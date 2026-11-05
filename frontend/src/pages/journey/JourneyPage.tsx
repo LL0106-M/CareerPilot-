@@ -25,32 +25,42 @@ export function JourneyPage() {
   const [createState, setCreateState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [futureLetter, setFutureLetter] = useState<FutureLetter>()
   const [futureState, setFutureState] = useState<'idle' | 'loading' | 'error'>('idle')
-  const [branchSelection, setBranchSelection] = useState('all')
+  const [companySelection, setCompanySelection] = useState('')
+  const [branchSelection, setBranchSelection] = useState('')
   const [branchConfirm, setBranchConfirm] = useState<string>()
   const [branchState, setBranchState] = useState<'idle' | 'saving' | 'error'>('idle')
   const groups = useMemo(() => groupJourneys(data?.journey || [], data?.journeys || []), [data])
   const current = groups[active]
-  const currentBranches = (data?.journey_branches || []).filter((branch) => branch.journey_id === current?.id)
-  const selectedBranch = currentBranches.find((branch) => branch.id === branchSelection)
-  const visibleTasks = !current ? [] : branchSelection === 'all'
-    ? current.tasks
-    : selectedBranch?.kind === 'common'
-      ? current.tasks.filter((task) => task.scope !== 'branch_specific')
-      : current.tasks.filter((task) => task.scope !== 'branch_specific' || task.journey_branch_id === branchSelection)
+  const currentBranches = (data?.journey_branches || []).filter(
+    (branch) => current?.journeyIds.includes(branch.journey_id),
+  )
+  const targetBranches = currentBranches.filter((branch) => branch.kind === 'target')
+  const companies = unique(targetBranches.map(branchCompany))
+  const activeCompany = companies.includes(companySelection) ? companySelection : companies[0] || ''
+  const companyBranches = targetBranches.filter((branch) => branchCompany(branch) === activeCompany)
+  const activeBranchId = companyBranches.some((branch) => branch.id === branchSelection)
+    ? branchSelection
+    : companyBranches[0]?.id || ''
+  const selectedBranch = companyBranches.find((branch) => branch.id === activeBranchId)
+  const visibleTasks = !current ? [] : selectedBranch
+    ? current.tasks.filter((task) => task.scope !== 'branch_specific' || task.journey_branch_id === selectedBranch.id)
+    : current.tasks.filter((task) => task.scope !== 'branch_specific')
   const visibleGroup = current ? { ...current, tasks: visibleTasks } : undefined
-  const currentDirectionId = current?.tasks.find((task) => task.direction_id)?.direction_id
   const currentJobs = (data?.collection_jobs || []).filter(
-    (job) => job.direction_id === currentDirectionId,
+    (job) => current?.directionIds.includes(job.direction_id),
   )
 
   useEffect(() => scheduleBrowserReminders(data?.journey || []), [data?.journey])
-  useEffect(() => { setBranchSelection('all') }, [active])
+  useEffect(() => {
+    setCompanySelection('')
+    setBranchSelection('')
+  }, [active])
 
   async function activateBranch() {
-    if (!current || !branchConfirm) return
+    if (!selectedBranch || !branchConfirm) return
     setBranchState('saving')
     try {
-      await api.activateJourneyBranch(current.id, branchConfirm)
+      await api.activateJourneyBranch(selectedBranch.journey_id, branchConfirm)
       await reload()
       setBranchSelection(branchConfirm)
       setBranchConfirm(undefined)
@@ -150,13 +160,17 @@ export function JourneyPage() {
       {error && <div className="state-panel glass-card error">{error}<button type="button" onClick={() => void reload()}>重试</button></div>}
       {!loading && !error && groups.length === 0 && <div className="state-panel glass-card"><Path size={38} /><h2>路还没有开始画</h2><p>从罗盘里选一条猜想，用一个真实行动去验证。</p><Link className="primary-button" to="/compass">去罗盘看看</Link></div>}
       {groups.length > 0 && <>
-        <nav className="journey-selector" aria-label="选择航程">{groups.map((group,index) => <button type="button" className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={group.name}><span>{String(index + 1).padStart(2,'0')}</span>{group.name}</button>)}</nav>
-        {currentBranches.length > 0 && <nav className="journey-branch-selector" aria-label="选择航程分支"><button type="button" className={branchSelection === 'all' ? 'active' : ''} onClick={() => setBranchSelection('all')}>综合路径</button>{currentBranches.map((branch) => <button type="button" aria-label={branch.kind === 'common' ? '通用主线' : branch.title} className={branchSelection === branch.id ? 'active' : ''} onClick={() => setBranchSelection(branch.id)} key={branch.id}>{branch.kind === 'common' ? '通用主线' : branch.title}{branch.status === 'draft' && <small>待开始</small>}</button>)}</nav>}
+        <nav className="journey-selector" aria-label="选择岗位方向">{groups.map((group,index) => <button type="button" className={active === index ? 'active' : ''} onClick={() => setActive(index)} key={group.id}><span>{String(index + 1).padStart(2,'0')}</span>{group.name}</button>)}</nav>
+        {targetBranches.length > 0 && <section className="journey-target-navigation" aria-label="航程目标层级">
+          <nav className="journey-company-selector" aria-label="选择目标公司">{companies.map((company) => <button type="button" className={activeCompany === company ? 'active' : ''} onClick={() => { setCompanySelection(company); setBranchSelection(targetBranches.find((branch) => branchCompany(branch) === company)?.id || '') }} key={company}>{company}</button>)}</nav>
+          <nav className="journey-business-selector" aria-label="选择业务线">{companyBranches.map((branch) => <button type="button" aria-label={branchBusiness(branch)} className={activeBranchId === branch.id ? 'active' : ''} onClick={() => setBranchSelection(branch.id)} key={branch.id}>{branchBusiness(branch)}{branch.status === 'draft' && <small>待开始</small>}</button>)}</nav>
+          {selectedBranch && <p className="journey-context" aria-label="当前航程目标"><strong>{current?.name}</strong><span>/</span><strong>{activeCompany}</strong><span>/</span><strong>{branchBusiness(selectedBranch)}</strong></p>}
+        </section>}
         {view === 'path' && currentJobs.length > 0 && <CollectionProgress jobs={currentJobs} />}
-        {view === 'path' && selectedBranch?.status === 'draft' && <section className="draft-branch-panel glass-strong"><p className="eyebrow">Target branch</p><h2>{selectedBranch.title}</h2><strong>尚未开始准备</strong><p>{selectedBranch.rationale}</p><p>通用主线会继续复用；确认后只增加这个目标特有的行动。</p><button type="button" className="primary-button" onClick={() => { setBranchState('idle'); setBranchConfirm(selectedBranch.id) }}>开始准备这个目标</button></section>}
+        {view === 'path' && selectedBranch?.status === 'draft' && <section className="draft-branch-panel glass-strong"><p className="eyebrow">Target branch</p><h2>{activeCompany} · {branchBusiness(selectedBranch)}</h2><strong>尚未开始准备</strong><p>{selectedBranch.rationale}</p><p>岗位方向的基础行动会自动复用；确认后只增加这个目标特有的行动。</p><button type="button" className="primary-button" onClick={() => { setBranchState('idle'); setBranchConfirm(selectedBranch.id) }}>开始准备这个目标</button></section>}
         {view === 'path' && visibleGroup && selectedBranch?.status !== 'draft' && <PathView group={visibleGroup} onAdvance={advance} onPreview={openExternalPreview} onFutureLetter={openFutureLetter} futureState={futureState} futureLetter={futureLetter} />}
-        {view === 'calendar' && <CalendarView tasks={branchSelection === 'all' ? (data?.journey || []) : visibleTasks} onSync={openExternalPreview} />}
-        {view === 'footprints' && <FootprintView tasks={branchSelection === 'all' ? (data?.journey || []) : visibleTasks} />}
+        {view === 'calendar' && <CalendarView tasks={visibleTasks} onSync={openExternalPreview} />}
+        {view === 'footprints' && <FootprintView tasks={visibleTasks} />}
         <p className="mutation-note center" aria-live="polite">{status === 'saving' ? '正在推进……' : status === 'saved' ? '航程已更新。' : status === 'error' ? '这次没有更新成功。' : ''}</p>
       </>}
       {createState === 'saved' && <p className="action-success journey-save-message" role="status">日程已保存到 CareerPilot。</p>}
@@ -184,14 +198,61 @@ function CollectionProgress({ jobs }: { jobs: KnowledgeCollectionJob[] }) {
   return <section className="collection-progress" aria-label="航程资料收集状态">{jobs.map((job) => <article className={`collection-status-card status-${job.status}`} key={job.id}><span>{purpose[job.purpose]} · {status[job.status]}</span></article>)}</section>
 }
 
-function groupJourneys(tasks: JourneyItem[], journeys: Array<{ id: string; title: string }>) {
-  const result = new Map<string, JourneyItem[]>()
-  tasks.forEach((task) => { const key = task.journey_id || `legacy:${task.related || '未命名航程'}`; result.set(key, [...(result.get(key) || []), task]) })
-  return Array.from(result, ([id, grouped]) => ({
-    id,
-    name: journeys.find((journey) => journey.id === id)?.title || grouped[0]?.related || '未命名航程',
-    tasks: grouped,
-  }))
+function groupJourneys(tasks: JourneyItem[], journeys: Array<{ id: string; direction_id?: string; title: string }>) {
+  type Group = { id: string; name: string; journeyIds: string[]; directionIds: string[]; tasks: JourneyItem[] }
+  const result = new Map<string, Group>()
+  const journeyById = new Map(journeys.map((journey) => [journey.id, journey]))
+  journeys.forEach((journey) => {
+    const key = normalizeJourneyName(journey.title)
+    const group = result.get(key)
+    if (group) {
+      group.journeyIds.push(journey.id)
+      if (journey.direction_id && !group.directionIds.includes(journey.direction_id)) group.directionIds.push(journey.direction_id)
+    } else {
+      result.set(key, {
+        id: journey.id,
+        name: journey.title,
+        journeyIds: [journey.id],
+        directionIds: journey.direction_id ? [journey.direction_id] : [],
+        tasks: [],
+      })
+    }
+  })
+  tasks.forEach((task) => {
+    const journey = task.journey_id ? journeyById.get(task.journey_id) : undefined
+    const name = journey?.title || task.related || '未命名航程'
+    const key = normalizeJourneyName(name)
+    let group = result.get(key)
+    if (!group) {
+      const id = task.journey_id || `legacy:${name}`
+      group = { id, name, journeyIds: [id], directionIds: [], tasks: [] }
+      result.set(key, group)
+    }
+    if (task.journey_id && !group.journeyIds.includes(task.journey_id)) group.journeyIds.push(task.journey_id)
+    if (task.direction_id && !group.directionIds.includes(task.direction_id)) group.directionIds.push(task.direction_id)
+    const duplicateIndex = task.scope !== 'branch_specific' && task.step_kind
+      ? group.tasks.findIndex((item) => item.scope !== 'branch_specific' && item.step_kind === task.step_kind)
+      : -1
+    if (duplicateIndex < 0) group.tasks.push(task)
+    else if (task.journey_id === group.id) group.tasks[duplicateIndex] = task
+  })
+  return Array.from(result.values()).filter((group) => group.tasks.length > 0)
+}
+
+function normalizeJourneyName(value: string) {
+  return value.toLocaleLowerCase('zh-CN').replace(/\s+/g, '')
+}
+
+function unique(values: string[]) {
+  return values.filter((value, index) => value && values.indexOf(value) === index)
+}
+
+function branchCompany(branch: { company?: string; title: string }) {
+  return branch.company?.trim() || branch.title.split('｜')[0]?.trim() || '目标公司待确认'
+}
+
+function branchBusiness(branch: { business?: string; role?: string; title: string }) {
+  return branch.business?.trim() || branch.title.split('｜')[1]?.trim() || branch.role?.trim() || '业务线待确认'
 }
 
 function PathView({ group, onAdvance, onPreview, onFutureLetter, futureState, futureLetter }: { group: { name: string; tasks: JourneyItem[] }; onAdvance: (task: JourneyItem) => void; onPreview: (task: JourneyItem) => void; onFutureLetter: (journeyId: string) => void; futureState: 'idle' | 'loading' | 'error'; futureLetter?: FutureLetter }) {
