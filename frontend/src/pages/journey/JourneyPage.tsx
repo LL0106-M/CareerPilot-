@@ -45,6 +45,11 @@ export function JourneyPage() {
   const visibleTasks = !current ? [] : selectedBranch
     ? current.tasks.filter((task) => task.scope !== 'branch_specific' || task.journey_branch_id === selectedBranch.id)
     : current.tasks.filter((task) => task.scope !== 'branch_specific')
+  const futureJourneyId = (
+    visibleTasks.find((task) => task.state === '进行中')
+    || visibleTasks.find((task) => task.state === '准备开始')
+    || visibleTasks[0]
+  )?.journey_id
   const visibleGroup = current ? { ...current, tasks: visibleTasks } : undefined
   const selectedJourney = (data?.journeys || []).find(
     (journey) => journey.id === (selectedBranch?.journey_id || current?.id),
@@ -58,6 +63,15 @@ export function JourneyPage() {
     setCompanySelection('')
     setBranchSelection('')
   }, [active])
+  useEffect(() => {
+    let cancelled = false
+    setFutureLetter(undefined)
+    if (!futureJourneyId) return () => { cancelled = true }
+    void api.getFutureLetter(futureJourneyId)
+      .then((letter) => { if (!cancelled) setFutureLetter(letter) })
+      .catch(() => { /* Restoring a saved letter must not block the journey. */ })
+    return () => { cancelled = true }
+  }, [futureJourneyId])
 
   async function activateBranch() {
     if (!selectedBranch || !branchConfirm) return

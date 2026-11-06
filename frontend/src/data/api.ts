@@ -589,6 +589,14 @@ export const api = {
       body: JSON.stringify({ message }),
     })
   },
+  async getFutureLetter(journeyId: string) {
+    try {
+      return await request<FutureLetter>(`/v1/me/journeys/${encodeURIComponent(journeyId)}/future-letter`)
+    } catch (reason) {
+      if (reason instanceof ApiError && reason.status === 404) return undefined
+      throw reason
+    }
+  },
   confirmFutureTakeaway(journeyId: string, letterId: string, path: FuturePath) {
     return request<{ path_kind: FuturePath['kind']; question: string; created_at: string }>(
       `/v1/me/journeys/${encodeURIComponent(journeyId)}/future-letter/takeaway`,

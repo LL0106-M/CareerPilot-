@@ -8,6 +8,49 @@ import { JourneyPage } from './JourneyPage'
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Journey', () => {
+  it('restores the saved future letter after re-entering and refreshes it only on click', async () => {
+    const dashboard = {
+      hypotheses:[], ideas:[], dreaming:[], memories:[],
+      journeys:[{id:'j1',direction_id:'d1',title:'AI 产品经理',status:'active',why:'验证真实匹配'}],
+      journey:[{id:'t1',title:'完成岗位拆解',due:'第 1 步',state:'进行中',related:'AI 产品经理',journey_id:'j1',direction_id:'d1',why:'验证岗位匹配'}],
+    }
+    const savedLetter = {
+      id:'letter-saved',journey_id:'j1',message:'两年后的我会怎样？',created_at:'2026-11-05T00:00:00Z',
+      paths:[
+        {kind:'continue',label:'沿着这条路',title:'保存的回信',summary:'这封回信来自上次访问',signals:['完成岗位拆解'],tension:'选择变窄',question:'还想继续吗？'},
+        {kind:'adjacent',label:'换一条相邻的路',title:'相邻转向',summary:'已有能力换了场景',signals:[],tension:'重新证明',question:'什么能力可以带过去？'},
+        {kind:'unexpected',label:'意外的第三条路',title:'作品打开入口',summary:'一次公开输出带来连接',signals:[],tension:'更不可控',question:'先公开什么？'},
+      ],
+    }
+    const refreshedLetter = {
+      ...savedLetter,
+      id:'letter-refreshed',
+      paths:savedLetter.paths.map((path,index) => index === 0 ? {...path,title:'再次点击后的新回信'} : path),
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path === '/v1/me/dashboard') return new Response(JSON.stringify(dashboard),{status:200,headers:{'Content-Type':'application/json'}})
+      if (path === '/v1/me/journeys/j1/future-letter' && init?.method === 'POST') return new Response(JSON.stringify(refreshedLetter),{status:201,headers:{'Content-Type':'application/json'}})
+      if (path === '/v1/me/journeys/j1/future-letter') return new Response(JSON.stringify(savedLetter),{status:200,headers:{'Content-Type':'application/json'}})
+      return new Response(JSON.stringify({detail:'not found'}),{status:404,headers:{'Content-Type':'application/json'}})
+    })
+    vi.stubGlobal('fetch',fetchMock)
+    const user = userEvent.setup()
+
+    const firstVisit = render(<MemoryRouter><JourneyPage /></MemoryRouter>)
+    expect(await screen.findByRole('heading',{name:'保存的回信'})).toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([,init]) => init?.method === 'POST')).toHaveLength(0)
+    firstVisit.unmount()
+
+    render(<MemoryRouter><JourneyPage /></MemoryRouter>)
+    expect(await screen.findByRole('heading',{name:'保存的回信'})).toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([,init]) => init?.method === 'POST')).toHaveLength(0)
+
+    await user.click(screen.getByRole('button',{name:'给未来的我写一句话'}))
+    expect(await screen.findByRole('heading',{name:'再次点击后的新回信'})).toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([,init]) => init?.method === 'POST')).toHaveLength(1)
+  })
+
   it('opens a three-path future letter without replacing the current route', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -18,6 +61,7 @@ describe('Journey', () => {
           {id:'t2',title:'联系一位从业者',due:'第 2 步',state:'准备开始',related:'AI 产品经理',journey_id:'j1',direction_id:'d1'},
         ],
       }), { status:200,headers:{'Content-Type':'application/json'} }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({detail:'future letter not found'}), {status:404,headers:{'Content-Type':'application/json'}}))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         id:'letter-1',journey_id:'j1',message:'两年后的我会怎样？',created_at:'2026-11-05T00:00:00Z',
         paths:[
@@ -42,8 +86,8 @@ describe('Journey', () => {
     expect(screen.getByText('只带回这个问题，不会创建任务或记忆。')).toBeInTheDocument()
     await user.click(screen.getByRole('button',{name:/确认带回/}))
     expect(await screen.findByRole('button',{name:/已带回航程/})).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenNthCalledWith(2,'/v1/me/journeys/j1/future-letter',expect.objectContaining({method:'POST'}))
-    expect(fetchMock).toHaveBeenNthCalledWith(3,'/v1/me/journeys/j1/future-letter/takeaway',expect.objectContaining({method:'POST'}))
+    expect(fetchMock).toHaveBeenNthCalledWith(3,'/v1/me/journeys/j1/future-letter',expect.objectContaining({method:'POST'}))
+    expect(fetchMock).toHaveBeenNthCalledWith(4,'/v1/me/journeys/j1/future-letter/takeaway',expect.objectContaining({method:'POST'}))
   })
 
   it('renders a direction journey and its three collection states from dashboard data', async () => {
@@ -104,6 +148,7 @@ describe('Journey', () => {
     }
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(dashboard),{status:200,headers:{'Content-Type':'application/json'}}))
+      .mockResolvedValueOnce(new Response(JSON.stringify({detail:'future letter not found'}),{status:404,headers:{'Content-Type':'application/json'}}))
       .mockResolvedValueOnce(new Response(JSON.stringify({journey:activated.journeys[0],tasks:activated.journey,branches:activated.journey_branches,collection_jobs:[]}),{status:201,headers:{'Content-Type':'application/json'}}))
       .mockResolvedValueOnce(new Response(JSON.stringify(activated),{status:200,headers:{'Content-Type':'application/json'}}))
     vi.stubGlobal('fetch',fetchMock)
@@ -128,7 +173,7 @@ describe('Journey', () => {
     expect(screen.getByRole('dialog',{name:'确认开始目标分支'})).toBeInTheDocument()
     await user.click(screen.getByRole('button',{name:'确认开始准备'}))
     expect(await screen.findByText('拆解京东零售的真实业务差异')).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenNthCalledWith(2,'/v1/me/journeys/j-current/branches/jb-jd-retail/activate',expect.objectContaining({method:'POST'}))
+    expect(fetchMock).toHaveBeenNthCalledWith(3,'/v1/me/journeys/j-current/branches/jb-jd-retail/activate',expect.objectContaining({method:'POST'}))
   })
 
   it('shows one collection status per purpose for the selected target journey', async () => {
