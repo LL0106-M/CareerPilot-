@@ -9,10 +9,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from careerpilot.memory.contracts import AdmissionDecision, PatchOperation
 from careerpilot.memory.models import (
     MemoryConfidence,
     MemoryEvidence,
     MemoryOrigin,
+    MemoryProviderSync,
     MemoryRecord,
     MemoryRevision,
     MemorySensitivity,
@@ -21,7 +23,31 @@ from careerpilot.memory.models import (
     MemoryType,
     MemoryUsage,
     MemoryUsageType,
+    ProviderSyncState,
 )
+
+
+class MemoryPatchAuditRecord:
+    def __init__(
+        self,
+        *,
+        audit_id: str,
+        owner_id: str,
+        source_turn_id: str,
+        operation: PatchOperation,
+        decision: AdmissionDecision,
+        reason_code: str,
+        result_memory_id: str | None,
+        created_at: datetime,
+    ) -> None:
+        self.id = audit_id
+        self.owner_id = owner_id
+        self.source_turn_id = source_turn_id
+        self.operation = operation
+        self.decision = decision
+        self.reason_code = reason_code
+        self.result_memory_id = result_memory_id
+        self.created_at = created_at
 
 
 class MemoryNotFoundError(LookupError):
@@ -64,14 +90,27 @@ def _datetime(value: str | None) -> datetime | None:
 class SqliteUnifiedMemoryStore:
     """Owner-scoped authoritative memory state with revisions and audit."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
         self._path = Path(path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self._path, check_same_thread=False)
+        if read_only:
+            if not self._path.is_file():
+                raise FileNotFoundError(self._path)
+            uri = f"{self._path.resolve().as_uri()}?mode=ro"
+            self._connection = sqlite3.connect(
+                uri,
+                uri=True,
+                check_same_thread=False,
+            )
+        else:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._connection = sqlite3.connect(self._path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._transaction_depth = 0
         self._connection.execute("PRAGMA foreign_keys=ON")
-        self._create_schema()
+        if read_only:
+            self._connection.execute("PRAGMA query_only=ON")
+        else:
+            self._create_schema()
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -200,6 +239,37 @@ class SqliteUnifiedMemoryStore:
                 FOREIGN KEY(owner_id, memory_id)
                     REFERENCES memory_records(owner_id, id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS memory_provider_sync (
+                owner_id TEXT NOT NULL,
+                memory_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                provider_memory_id TEXT,
+                state TEXT NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                error_code TEXT,
+                content_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, memory_id, provider),
+                FOREIGN KEY(owner_id, memory_id)
+                    REFERENCES memory_records(owner_id, id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS provider_sync_owner_state_idx
+                ON memory_provider_sync(owner_id, provider, state, updated_at);
+
+            CREATE TABLE IF NOT EXISTS memory_patch_audit (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                source_turn_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                reason_code TEXT NOT NULL,
+                result_memory_id TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS patch_audit_owner_turn_idx
+                ON memory_patch_audit(owner_id, source_turn_id, created_at);
             """
         )
         self._connection.commit()
@@ -695,6 +765,163 @@ class SqliteUnifiedMemoryStore:
                 _datetime(row["created_at"]),
             )
             for row in rows
+        )
+
+    def upsert_provider_sync(
+        self,
+        owner_id: str,
+        memory_id: str,
+        *,
+        state: ProviderSyncState,
+        provider: str = "memos",
+        provider_memory_id: str | None = None,
+        content_hash: str = "",
+        error_code: str | None = None,
+        increment_attempt: bool = False,
+    ) -> MemoryProviderSync:
+        self.get_memory(owner_id, memory_id, include_deleted=True)
+        now = _now()
+        with self.transaction():
+            self._connection.execute(
+                """INSERT INTO memory_provider_sync(
+                    owner_id, memory_id, provider, provider_memory_id, state,
+                    attempt_count, error_code, content_hash, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(owner_id, memory_id, provider) DO UPDATE SET
+                    provider_memory_id=COALESCE(excluded.provider_memory_id,
+                        memory_provider_sync.provider_memory_id),
+                    state=excluded.state,
+                    attempt_count=memory_provider_sync.attempt_count + ?,
+                    error_code=excluded.error_code,
+                    content_hash=CASE WHEN excluded.content_hash = ''
+                        THEN memory_provider_sync.content_hash ELSE excluded.content_hash END,
+                    updated_at=excluded.updated_at""",
+                (
+                    owner_id,
+                    memory_id,
+                    provider,
+                    provider_memory_id,
+                    state.value,
+                    1 if increment_attempt else 0,
+                    error_code[:120] if error_code else None,
+                    content_hash,
+                    _iso(now),
+                    _iso(now),
+                    1 if increment_attempt else 0,
+                ),
+            )
+        result = self.get_provider_sync(owner_id, memory_id, provider=provider)
+        if result is None:
+            raise RuntimeError("Provider sync row was not persisted")
+        return result
+
+    def get_provider_sync(
+        self, owner_id: str, memory_id: str, *, provider: str = "memos"
+    ) -> MemoryProviderSync | None:
+        row = self._connection.execute(
+            """SELECT * FROM memory_provider_sync
+            WHERE owner_id=? AND memory_id=? AND provider=?""",
+            (owner_id, memory_id, provider),
+        ).fetchone()
+        if row is None:
+            return None
+        return MemoryProviderSync(
+            owner_id=row["owner_id"],
+            memory_id=row["memory_id"],
+            provider=row["provider"],
+            provider_memory_id=row["provider_memory_id"],
+            state=ProviderSyncState(row["state"]),
+            attempt_count=row["attempt_count"],
+            error_code=row["error_code"],
+            content_hash=row["content_hash"],
+            created_at=_datetime(row["created_at"]),
+            updated_at=_datetime(row["updated_at"]),
+        )
+
+    def list_provider_sync(
+        self,
+        owner_id: str,
+        *,
+        provider: str = "memos",
+        states: tuple[ProviderSyncState, ...] | None = None,
+        limit: int = 100,
+    ) -> tuple[MemoryProviderSync, ...]:
+        clauses = ["owner_id=?", "provider=?"]
+        params: list[object] = [owner_id, provider]
+        if states:
+            clauses.append(f"state IN ({','.join('?' for _ in states)})")
+            params.extend(state.value for state in states)
+        params.append(max(1, min(limit, 500)))
+        rows = self._connection.execute(
+            f"""SELECT memory_id FROM memory_provider_sync
+            WHERE {' AND '.join(clauses)} ORDER BY updated_at, rowid LIMIT ?""",
+            params,
+        ).fetchall()
+        return tuple(
+            sync
+            for row in rows
+            if (sync := self.get_provider_sync(owner_id, row["memory_id"], provider=provider))
+            is not None
+        )
+
+    def record_patch_audit(
+        self,
+        *,
+        owner_id: str,
+        source_turn_id: str,
+        operation: PatchOperation,
+        decision: AdmissionDecision,
+        reason_code: str,
+        result_memory_id: str | None,
+    ) -> None:
+        with self.transaction():
+            self._connection.execute(
+                """INSERT INTO memory_patch_audit(
+                    id, owner_id, source_turn_id, operation, decision,
+                    reason_code, result_memory_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    str(uuid4()),
+                    owner_id,
+                    source_turn_id,
+                    operation.value,
+                    decision.value,
+                    reason_code,
+                    result_memory_id,
+                    _iso(_now()),
+                ),
+            )
+
+    def list_patch_audits(
+        self, owner_id: str, source_turn_id: str
+    ) -> tuple[MemoryPatchAuditRecord, ...]:
+        rows = self._connection.execute(
+            """SELECT * FROM memory_patch_audit
+            WHERE owner_id=? AND source_turn_id=? ORDER BY created_at, rowid""",
+            (owner_id, source_turn_id),
+        ).fetchall()
+        return tuple(
+            MemoryPatchAuditRecord(
+                audit_id=row["id"],
+                owner_id=row["owner_id"],
+                source_turn_id=row["source_turn_id"],
+                operation=PatchOperation(row["operation"]),
+                decision=AdmissionDecision(row["decision"]),
+                reason_code=row["reason_code"],
+                result_memory_id=row["result_memory_id"],
+                created_at=_datetime(row["created_at"]),
+            )
+            for row in rows
+        )
+
+    def has_patch_audit(self, owner_id: str, source_turn_id: str) -> bool:
+        return (
+            self._connection.execute(
+                """SELECT 1 FROM memory_patch_audit
+                WHERE owner_id=? AND source_turn_id=? LIMIT 1""",
+                (owner_id, source_turn_id),
+            ).fetchone()
+            is not None
         )
 
     def close(self) -> None:

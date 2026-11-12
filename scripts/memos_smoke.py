@@ -23,11 +23,12 @@ async def main() -> None:
         ),
     )
     try:
-        await store.add_turn(
-            user_id,
-            conversation_id,
-            f"CareerPilot 代码链路测试：记忆代号是{marker}。",
-            "已收到这条合成测试信息。",
+        await store.write_claim(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            local_memory_id=f"smoke-{suffix}",
+            content=f"CareerPilot 代码链路测试的记忆代号是{marker}",
+            memory_type="fact",
         )
         for _ in range(6):
             await asyncio.sleep(5)

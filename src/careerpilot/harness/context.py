@@ -12,13 +12,12 @@ from careerpilot.context.intent import RuleBasedIntentInterpreter
 from careerpilot.context.router import IntentAwareRetrievalRouter
 from careerpilot.memory.base import (
     MemoryContext,
-    MemoryItem,
     MemoryRetrievalMode,
     MemoryStore,
     MemoryStoreError,
 )
 from careerpilot.memory.dreaming import CognitiveStore
-from careerpilot.memory.models import MemoryType
+from careerpilot.memory.provider_service import GovernedMemoryProviderService
 from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
 from careerpilot.support.policy import SupportDecision, SupportMode, SupportPolicy
 from careerpilot.support.response_strategy import ResponseContract, ResponseStrategyEngine
@@ -75,6 +74,7 @@ class CareerContextCompiler:
         retrieval_router: RetrievalRouter | None = None,
         unified_memory_service: MemoryService | None = None,
         response_strategy: ResponseStrategyEngine | None = None,
+        provider_service: GovernedMemoryProviderService | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._prompt_composer = prompt_composer or PromptComposer()
@@ -85,6 +85,11 @@ class CareerContextCompiler:
         self._retrieval_router = retrieval_router or IntentAwareRetrievalRouter()
         self._unified_memory_service = unified_memory_service
         self._response_strategy = response_strategy or ResponseStrategyEngine()
+        self._provider_service = provider_service
+        if provider_service is None and unified_memory_service is not None:
+            self._provider_service = GovernedMemoryProviderService(
+                unified_memory_service, memory_store
+            )
 
     async def compile(self, request: ContextRequest) -> CompiledContext:
         intent = await self._intent_interpreter.interpret(
@@ -108,45 +113,18 @@ class CareerContextCompiler:
                         if decision.mode is SupportMode.LISTEN
                         else MemoryQueryPurpose.PLANNING
                     )
-                    bundle = self._unified_memory_service.search_context(
-                        owner_id=request.user_id,
-                        query=request.message,
+                    if self._provider_service is None:
+                        raise RuntimeError("governed memory provider is not configured")
+                    memories = await self._provider_service.search(
+                        request.user_id,
+                        request.conversation_id,
+                        request.message,
                         purpose=memory_purpose,
                         explicit_personal_recall=any(
-                            marker in request.message
-                            for marker in self._sensitive_memory_markers
+                            marker in request.message for marker in self._sensitive_memory_markers
                         ),
                         broad_recall=any(
-                            marker in request.message
-                            for marker in self._broad_memory_markers
-                        ),
-                    )
-                    memories = MemoryContext(
-                        facts=tuple(
-                            MemoryItem(
-                                item.id,
-                                item.content,
-                                item.type.value,
-                                bundle.relevance.get(item.id),
-                                item.confidence.value,
-                                item.origin.value,
-                                item.updated_at.isoformat(),
-                            )
-                            for item in bundle.records
-                            if item.type is not MemoryType.PREFERENCE
-                        ),
-                        preferences=tuple(
-                            MemoryItem(
-                                item.id,
-                                item.content,
-                                item.type.value,
-                                bundle.relevance.get(item.id),
-                                item.confidence.value,
-                                item.origin.value,
-                                item.updated_at.isoformat(),
-                            )
-                            for item in bundle.records
-                            if item.type is MemoryType.PREFERENCE
+                            marker in request.message for marker in self._broad_memory_markers
                         ),
                     )
                 else:

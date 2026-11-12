@@ -145,30 +145,38 @@ none      -> 不触发
 - 想法保留首页输入和罗盘中的散落卡片形式。
 - 不建设独立记忆管理页；纠正、删除和拒绝发生在对话及具体对象上。
 
-## 10. MemOS
+## 10. MemOS 与本地治理账本
 
-MemOS Cloud 是服务端辅助记忆层，不是业务真相源，也不替代本地统一记忆库。
+MemOS Cloud 是长期记忆的语义数据平面；本地 SQLite 是轻量治理账本，不再承担权威语义检索。SQLite 只保留 owner、状态、敏感性、证据、版本、审计、云端映射，以及管理界面所需的有界内容投影。
 
 ```text
-successful turn
-  -> local admission policy
-  -> canonical SQLite transaction
-  -> MemOS addMessage (private, async, best effort)
+successful persisted turn
+  -> deterministic safety prefilter
+  -> schema claim extraction
+  -> patch plan + admission decision
+  -> local governance transaction
+  -> committed canonical claims only to MemOS
 
 new turn
-  -> canonical active-memory retrieval
-  -> optional MemOS semantic candidate retrieval
-  -> local status/deletion/conflict gate
+  -> MemOS semantic retrieval
+  -> local owner/status/provider-mapping gate
+  -> safe local fallback during provider outage
   -> prompt budget
 ```
 
 - `user_id` 使用登录用户的稳定 `owner_id`；`conversation_id` 使用稳定会话 ID。
 - Key 只存在服务端 `MEMOS_API_KEY`，禁止进入浏览器包、日志或数据库。
 - 写入使用 `POST /add/message`，检索使用 `POST /search/memory`。
-- 仅通过本地写入政策、且回复验证成功的轮次可以写入 MemOS。
+- 原始用户消息和助手回复永不整轮写入 MemOS；只写 `commit` 的规范化声明。
+- `pending | ignore | reject` 不进入 MemOS；敏感信息与 AI 推断必须先由用户确认。
+- MemOS 返回但没有本地 active 映射的结果一律不能进入 Prompt。
 - MemOS 超时或 5xx 只把 `memory_provider_status` 标为 `unavailable`；本地成功写入和回复不回滚。
 - 本地的 `active/paused/superseded/deleted`、敏感性与 owner 授权始终覆盖云端结果。
 - 删除必须先在本地生效；在云端 ID 映射和删除回执完成前，云端结果不能绕过本地状态重新进入 Prompt。
+
+### 10.1 既有记忆迁移
+
+`scripts/migrate_governed_memory.py --db <path>` 默认只生成报告，不修改数据库。确认报告后显式加 `--apply`，才会把注入或凭据内容改为 paused、把同 owner/type 的精确重复 active 记录标为 superseded，并把安全 active 记录加入 MemOS 同步队列。迁移有逐条回执，可重复运行；不硬删除旧记录，也不会自动执行远端删除。
 
 ## 11. Dreaming 子系统
 

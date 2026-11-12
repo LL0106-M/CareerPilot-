@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 
+from careerpilot.memory.admission_policy import MemorySafetyPrefilter
 from careerpilot.memory.models import MemorySensitivity, MemoryType
 
 
@@ -76,7 +77,22 @@ class MemoryWritePolicy:
 
     _correction_markers = ("更正一下", "不再", "现在改为", "以前", "之前说错了")
 
+    _transient_markers = ("今天", "现在", "刚才", "这次", "此刻")
+    _distress_markers = ("焦虑", "难受", "心情很差", "崩溃", "做不好")
+    _third_party_markers = ("小王", "小李", "同事", "朋友", "室友", "他长期", "她长期")
+
+    def __init__(self, prefilter: MemorySafetyPrefilter | None = None) -> None:
+        self._prefilter = prefilter or MemorySafetyPrefilter()
+
     def should_write(self, user_message: str) -> bool:
+        if not self._prefilter.inspect(user_message).safe:
+            return False
+        if any(marker in user_message for marker in self._third_party_markers):
+            return False
+        if any(marker in user_message for marker in self._transient_markers) and any(
+            marker in user_message for marker in self._distress_markers
+        ):
+            return False
         return any(marker in user_message for marker in self._durable_markers)
 
     def extract(self, user_message: str) -> tuple[MemoryWriteCandidate, ...]:

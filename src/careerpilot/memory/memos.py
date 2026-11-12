@@ -74,12 +74,14 @@ class MemosCloudMemoryStore:
         preferences = tuple(self._parse_preferences(data.get("preference_detail_list")))
         return MemoryContext(facts=facts, preferences=preferences)
 
-    async def add_turn(
+    async def write_claim(
         self,
+        *,
         user_id: str,
         conversation_id: str,
-        user_message: str,
-        assistant_message: str,
+        local_memory_id: str,
+        content: str,
+        memory_type: str,
     ) -> None:
         payload = {
             "user_id": user_id,
@@ -89,18 +91,52 @@ class MemosCloudMemoryStore:
             "source": "careerpilot_web",
             "allow_public": False,
             "async_mode": True,
-            "tags": ["careerpilot", "candidate"],
+            "tags": ["careerpilot", "active"],
             "info": {
                 "scene": "career_companion",
-                "memory_status": "candidate",
-                "memory_authority": "auxiliary",
+                "memory_status": "active",
+                "memory_authority": "careerpilot_governed",
+                "local_memory_id": local_memory_id,
+                "memory_type": memory_type,
+                "schema_version": 1,
             },
             "messages": [
-                {"role": "user", "content": user_message},
-                {"role": "assistant", "content": assistant_message},
+                {"role": "user", "content": content},
+                {"role": "assistant", "content": "已记录这条经确认的长期记忆。"},
             ],
         }
         await self._post("/add/message", payload, operation="write")
+
+    async def list_memories(
+        self, user_id: str, *, local_memory_id: str | None = None
+    ) -> MemoryContext:
+        filters: list[dict[str, object]] = [
+            {"tags": {"contains": "careerpilot"}},
+            {"scene": "career_companion"},
+        ]
+        if local_memory_id:
+            filters.append({"local_memory_id": local_memory_id})
+        result = await self._post(
+            "/get/memory",
+            {"user_id": user_id, "filter": {"user": {"and": filters}}},
+            operation="list",
+        )
+        data = result.get("data")
+        if not isinstance(data, Mapping):
+            return MemoryContext()
+        return MemoryContext(
+            facts=tuple(self._parse_facts(data.get("memory_detail_list"))),
+            preferences=tuple(self._parse_preferences(data.get("preference_detail_list"))),
+        )
+
+    async def delete_memories(self, user_id: str, memory_ids: tuple[str, ...]) -> None:
+        if not memory_ids:
+            return
+        await self._post(
+            "/delete/memory",
+            {"user_id": user_id, "memory_ids": list(memory_ids)},
+            operation="delete",
+        )
 
     async def aclose(self) -> None:
         if self._owns_client:

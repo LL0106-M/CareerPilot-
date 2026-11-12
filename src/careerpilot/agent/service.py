@@ -25,6 +25,7 @@ from careerpilot.memory.dreaming import (
     CognitiveStore,
     DreamingTriggerPolicy,
 )
+from careerpilot.memory.extractor import MemoryClaimExtractor
 from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
 from careerpilot.memory.write_policy import MemoryWritePolicy
 from careerpilot.support.policy import SupportMode, SupportPolicy
@@ -84,6 +85,7 @@ class AgentService:
         verifier: AgentVerifier | None = None,
         mcp_tool_factory: McpToolFactory | None = None,
         direction_signal_detector: DirectionSignalDetector | None = None,
+        memory_claim_extractor: MemoryClaimExtractor | None = None,
     ) -> None:
         self._agent = agent
         self._rag_tool_factory = rag_tool_factory
@@ -106,6 +108,7 @@ class AgentService:
             cognitive_store,
             dreaming_trigger_policy or DreamingTriggerPolicy(),
             unified_memory_service=unified_memory_service,
+            claim_extractor=memory_claim_extractor,
         )
 
     async def chat(self, command: ChatCommand) -> ChatResult:

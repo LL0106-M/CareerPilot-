@@ -82,31 +82,51 @@ async def test_companion_search_broadens_recall_for_context_and_support_preferen
 
 
 @pytest.mark.asyncio
-async def test_add_turn_uses_private_user_scoped_payload() -> None:
+async def test_write_claim_sends_only_canonical_claim_with_local_mapping_metadata() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         assert payload["user_id"] == "user-1"
         assert payload["conversation_id"] == "thread-1"
         assert payload["agent_id"] == "careerpilot"
         assert payload["app_id"] == "careerpilot-web"
-        assert payload["tags"] == ["careerpilot", "candidate"]
+        assert payload["tags"] == ["careerpilot", "active"]
         assert payload["info"]["scene"] == "career_companion"
-        assert payload["info"]["memory_authority"] == "auxiliary"
+        assert payload["info"]["memory_authority"] == "careerpilot_governed"
+        assert payload["info"]["local_memory_id"] == "local-1"
+        assert payload["info"]["schema_version"] == 1
         assert payload["allow_public"] is False
         assert payload["messages"] == [
-            {"role": "user", "content": "我希望先被理解"},
-            {"role": "assistant", "content": "我先陪你把难受放下来。"},
+            {"role": "user", "content": "偏好：受挫时先倾听"},
+            {"role": "assistant", "content": "已记录这条经确认的长期记忆。"},
         ]
+        assert "我今天被拒了" not in request.content.decode()
+        assert "原始助手回复" not in request.content.decode()
         return httpx.Response(200, json={"code": 0, "message": "ok", "data": {}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         store = MemosCloudMemoryStore("test-secret", http_client=client)
-        await store.add_turn(
+        await store.write_claim(
             user_id="user-1",
             conversation_id="thread-1",
-            user_message="我希望先被理解",
-            assistant_message="我先陪你把难受放下来。",
+            local_memory_id="local-1",
+            content="偏好：受挫时先倾听",
+            memory_type="preference",
         )
+
+
+@pytest.mark.asyncio
+async def test_delete_memories_targets_exact_provider_ids() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/delete/memory")
+        assert json.loads(request.content) == {
+            "user_id": "user-1",
+            "memory_ids": ["provider-1", "provider-2"],
+        }
+        return httpx.Response(200, json={"code": 0, "message": "ok", "data": {}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        store = MemosCloudMemoryStore("test-secret", http_client=client)
+        await store.delete_memories("user-1", ("provider-1", "provider-2"))
 
 
 @pytest.mark.asyncio

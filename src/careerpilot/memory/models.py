@@ -52,6 +52,14 @@ class MemoryConfidence(StrEnum):
     HIGH = "high"
 
 
+class ProviderSyncState(StrEnum):
+    PENDING = "pending"
+    SYNCED = "synced"
+    FAILED = "failed"
+    DELETE_PENDING = "delete_pending"
+    DELETED = "deleted"
+
+
 class MemoryUsageType(StrEnum):
     ANSWER_CONTEXT = "answer_context"
     RETRIEVAL_FILTER = "retrieval_filter"
@@ -115,3 +123,17 @@ class MemoryRevision:
     before: dict[str, Any]
     after: dict[str, Any]
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryProviderSync:
+    owner_id: str
+    memory_id: str
+    provider: str
+    provider_memory_id: str | None
+    state: ProviderSyncState
+    attempt_count: int
+    error_code: str | None
+    content_hash: str
+    created_at: datetime
+    updated_at: datetime

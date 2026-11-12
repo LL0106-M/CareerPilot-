@@ -62,16 +62,22 @@ class RecordingMemoryStore:
             raise MemoryStoreError("offline")
         return self.context
 
-    async def add_turn(
-        self,
-        user_id: str,
-        conversation_id: str,
-        user_message: str,
-        assistant_message: str,
-    ) -> None:
+    async def write_claim(self, **values: str) -> None:
+        del values
         self.events.append("add")
         if self.write_error:
             raise MemoryStoreError("offline")
+
+    async def list_memories(
+        self, user_id: str, *, local_memory_id: str | None = None
+    ) -> MemoryContext:
+        del user_id, local_memory_id
+        return MemoryContext()
+
+    async def delete_memories(
+        self, user_id: str, memory_ids: tuple[str, ...]
+    ) -> None:
+        del user_id, memory_ids
 
 
 @dataclass
@@ -301,11 +307,11 @@ async def test_service_searches_then_responds_then_writes_completed_turn() -> No
         )
     )
 
-    assert events == ["search:companion", "agent", "add"]
+    assert events == ["search:companion", "agent"]
     assert result.support_mode is SupportMode.LISTEN
     assert result.memory_read_status == "available"
-    assert result.memory_write_status == "accepted"
-    assert result.memory_provider_status == "synced"
+    assert result.memory_write_status == "skipped"
+    assert result.memory_provider_status == "skipped"
     assert result.dreaming_status == "unavailable"
     assert "用户正在探索国央企产品岗" in agent.system_context
     assert "受挫时先倾听" in agent.system_context
@@ -327,9 +333,9 @@ async def test_service_degrades_when_memory_search_is_unavailable() -> None:
 
     assert result.reply.startswith("先不用逼自己")
     assert result.memory_read_status == "unavailable"
-    assert result.memory_write_status == "accepted"
+    assert result.memory_write_status == "skipped"
     assert result.dreaming_status == "skipped"
-    assert events == ["search:planning", "agent", "add"]
+    assert events == ["search:planning", "agent"]
     assert "没有可用的长期记忆" in agent.system_context
 
 
@@ -554,8 +560,8 @@ async def test_service_returns_reply_when_memory_write_fails() -> None:
         ChatCommand("user-1", "thread-1", "我长期更看重稳定，帮我梳理一下今天的想法")
     )
 
-    assert result.memory_write_status == "unavailable"
-    assert events == ["search:planning", "agent", "add"]
+    assert result.memory_write_status == "skipped"
+    assert events == ["search:planning", "agent"]
 
 
 @pytest.mark.asyncio

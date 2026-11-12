@@ -7,6 +7,7 @@ from enum import StrEnum
 from math import sqrt
 from typing import Protocol
 
+from careerpilot.memory.contracts import AdmissionDecision, MemoryPatch, PatchOperation
 from careerpilot.memory.models import (
     MemoryConfidence,
     MemoryOrigin,
@@ -16,6 +17,7 @@ from careerpilot.memory.models import (
     MemoryStatus,
     MemoryType,
     MemoryUsageType,
+    ProviderSyncState,
 )
 from careerpilot.memory.unified_store import MemoryVersionConflictError, SqliteUnifiedMemoryStore
 from careerpilot.memory.write_policy import (
@@ -304,12 +306,166 @@ class MemoryService:
         )
 
     def delete(self, owner_id: str, memory_id: str, *, expected_version: int) -> MemoryRecord:
-        return self.store.transition_memory(
-            owner_id,
-            memory_id,
-            expected_version=expected_version,
-            target=MemoryStatus.DELETED,
-            actor_kind="user",
+        with self.store.transaction():
+            deleted = self.store.transition_memory(
+                owner_id,
+                memory_id,
+                expected_version=expected_version,
+                target=MemoryStatus.DELETED,
+                actor_kind="user",
+            )
+            self.store.upsert_provider_sync(
+                owner_id,
+                memory_id,
+                state=ProviderSyncState.DELETE_PENDING,
+            )
+        return deleted
+
+    def apply_patch_plan(
+        self,
+        *,
+        owner_id: str,
+        source_turn_id: str,
+        patches: tuple[MemoryPatch, ...],
+    ) -> tuple[MemoryRecord, ...]:
+        """Apply one governed turn atomically and audit every proposal."""
+
+        results: list[MemoryRecord] = []
+        with self.store.transaction():
+            for patch in patches:
+                result: MemoryRecord | None = None
+                decision = patch.admission.decision
+                if decision in {AdmissionDecision.IGNORE, AdmissionDecision.REJECT}:
+                    self._record_patch_audit(owner_id, source_turn_id, patch, None)
+                    continue
+                if patch.operation is PatchOperation.NOOP:
+                    if patch.target_memory_id is not None:
+                        result = self.store.get_memory(owner_id, patch.target_memory_id)
+                elif patch.operation is PatchOperation.DELETE:
+                    target = self.store.get_memory(owner_id, str(patch.target_memory_id))
+                    if decision is AdmissionDecision.COMMIT:
+                        result = self.store.transition_memory(
+                            owner_id,
+                            target.id,
+                            expected_version=target.version,
+                            target=MemoryStatus.DELETED,
+                            actor_kind="memory_pipeline",
+                        )
+                        self.store.upsert_provider_sync(
+                            owner_id,
+                            target.id,
+                            state=ProviderSyncState.DELETE_PENDING,
+                        )
+                elif patch.operation is PatchOperation.UPDATE:
+                    target = self.store.get_memory(owner_id, str(patch.target_memory_id))
+                    if decision is AdmissionDecision.COMMIT:
+                        result = self.store.update_memory(
+                            owner_id,
+                            target.id,
+                            expected_version=target.version,
+                            actor_kind="memory_pipeline",
+                            content=patch.claim.content[:1000],
+                            sensitivity=patch.claim.sensitivity,
+                            confidence=patch.claim.confidence,
+                        )
+                        self._queue_provider_sync(result)
+                else:
+                    result = self._create_from_patch(
+                        owner_id=owner_id,
+                        source_turn_id=source_turn_id,
+                        patch=patch,
+                    )
+                    if (
+                        patch.operation is PatchOperation.SUPERSEDE
+                        and decision is AdmissionDecision.COMMIT
+                    ):
+                        target = self.store.get_memory(owner_id, str(patch.target_memory_id))
+                        self.store.transition_memory(
+                            owner_id,
+                            target.id,
+                            expected_version=target.version,
+                            target=MemoryStatus.SUPERSEDED,
+                            actor_kind="memory_pipeline",
+                        )
+                        self.store.add_relation(owner_id, result.id, target.id, "supersedes")
+                    if decision is AdmissionDecision.COMMIT:
+                        self._queue_provider_sync(result)
+                if result is not None:
+                    results.append(result)
+                self._record_patch_audit(owner_id, source_turn_id, patch, result)
+        return tuple(results)
+
+    def _create_from_patch(
+        self,
+        *,
+        owner_id: str,
+        source_turn_id: str,
+        patch: MemoryPatch,
+    ) -> MemoryRecord:
+        claim = patch.claim
+        status = (
+            MemoryStatus.ACTIVE
+            if patch.admission.decision is AdmissionDecision.COMMIT
+            else MemoryStatus.CANDIDATE
+        )
+        record = self.store.create_memory(
+            owner_id=owner_id,
+            memory_type=claim.memory_type,
+            content=claim.content[:1000],
+            status=status,
+            sensitivity=claim.sensitivity,
+            origin=(
+                MemoryOrigin.AGENT_EXTRACTED
+                if claim.authorship.value in {"agent_inferred", "system_observed"}
+                else MemoryOrigin.USER_EXPLICIT
+            ),
+            source_type=MemorySourceType.CONVERSATION,
+            source_reference=source_turn_id,
+            confidence=claim.confidence,
+            importance=3,
+            metadata={
+                "cognitive_class": claim.cognitive_class.value,
+                "authorship": claim.authorship.value,
+                "durability": claim.durability.value,
+                "admission_reason": patch.admission.reason_code,
+            },
+            actor_kind="memory_pipeline",
+        )
+        for evidence in claim.evidence:
+            self.store.add_evidence(
+                owner_id,
+                record.id,
+                kind="claim_source",
+                source_reference=evidence.message_id,
+                excerpt=evidence.excerpt,
+            )
+        self._index(record)
+        return record
+
+    def _queue_provider_sync(self, record: MemoryRecord) -> None:
+        from hashlib import sha256
+
+        self.store.upsert_provider_sync(
+            record.owner_id,
+            record.id,
+            state=ProviderSyncState.PENDING,
+            content_hash=sha256(record.content.encode("utf-8")).hexdigest(),
+        )
+
+    def _record_patch_audit(
+        self,
+        owner_id: str,
+        source_turn_id: str,
+        patch: MemoryPatch,
+        result: MemoryRecord | None,
+    ) -> None:
+        self.store.record_patch_audit(
+            owner_id=owner_id,
+            source_turn_id=source_turn_id,
+            operation=patch.operation,
+            decision=patch.admission.decision,
+            reason_code=patch.admission.reason_code,
+            result_memory_id=result.id if result is not None else None,
         )
 
     def search_context(

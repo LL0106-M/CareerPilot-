@@ -12,6 +12,7 @@ from careerpilot.mcp.platform import McpToolPlatform
 from careerpilot.memory.base import DisabledMemoryStore, MemoryStore
 from careerpilot.memory.cognitive_store import SqliteCognitiveStore
 from careerpilot.memory.direction_signals import JsonDirectionSignalDetector
+from careerpilot.memory.extractor import ModelMemoryClaimExtractor
 from careerpilot.memory.memos import MemosCloudMemoryStore
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
@@ -53,6 +54,7 @@ def build_agent_service(
     session_store = SqliteSessionStore(settings.session_db_path)
     run_store = SqliteAgentRunStore(settings.session_db_path)
     model = create_qwen_model(settings)
+    reasoning_model = create_reasoning_model(settings)
     provider = build_search_provider(settings)
     mcp_tool_factory = build_mcp_tool_factory(settings)
     agent = CareerPilotResponder(
@@ -74,8 +76,9 @@ def build_agent_service(
             run_store=run_store,
             mcp_tool_factory=mcp_tool_factory,
             direction_signal_detector=JsonDirectionSignalDetector(
-                create_reasoning_model(settings)
+                reasoning_model
             ),
+            memory_claim_extractor=ModelMemoryClaimExtractor(reasoning_model),
         ),
         memory_store,
         rag_store,

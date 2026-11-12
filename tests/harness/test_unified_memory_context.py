@@ -11,7 +11,13 @@ class LegacyMemoryMustNotRun:
     async def search(self, *args, **kwargs):
         raise AssertionError("legacy memory search must not run when unified memory is configured")
 
-    async def add_turn(self, *args, **kwargs):
+    async def write_claim(self, *args, **kwargs):
+        raise AssertionError("not used")
+
+    async def list_memories(self, *args, **kwargs):
+        raise AssertionError("not used")
+
+    async def delete_memories(self, *args, **kwargs):
         raise AssertionError("not used")
 
 

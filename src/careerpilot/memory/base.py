@@ -41,13 +41,21 @@ class MemoryStore(Protocol):
         mode: MemoryRetrievalMode = MemoryRetrievalMode.PLANNING,
     ) -> MemoryContext: ...
 
-    async def add_turn(
+    async def write_claim(
         self,
+        *,
         user_id: str,
         conversation_id: str,
-        user_message: str,
-        assistant_message: str,
+        local_memory_id: str,
+        content: str,
+        memory_type: str,
     ) -> None: ...
+
+    async def list_memories(
+        self, user_id: str, *, local_memory_id: str | None = None
+    ) -> MemoryContext: ...
+
+    async def delete_memories(self, user_id: str, memory_ids: tuple[str, ...]) -> None: ...
 
 
 class DisabledMemoryStore:
@@ -63,14 +71,25 @@ class DisabledMemoryStore:
         del user_id, conversation_id, query, mode
         return MemoryContext()
 
-    async def add_turn(
+    async def write_claim(
         self,
+        *,
         user_id: str,
         conversation_id: str,
-        user_message: str,
-        assistant_message: str,
+        local_memory_id: str,
+        content: str,
+        memory_type: str,
     ) -> None:
-        del user_id, conversation_id, user_message, assistant_message
+        del user_id, conversation_id, local_memory_id, content, memory_type
+
+    async def list_memories(
+        self, user_id: str, *, local_memory_id: str | None = None
+    ) -> MemoryContext:
+        del user_id, local_memory_id
+        return MemoryContext()
+
+    async def delete_memories(self, user_id: str, memory_ids: tuple[str, ...]) -> None:
+        del user_id, memory_ids
 
     async def aclose(self) -> None:
         return None

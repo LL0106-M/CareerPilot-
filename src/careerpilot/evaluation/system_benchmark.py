@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import statistics
 import time
@@ -8,7 +9,26 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from careerpilot.memory.models import MemorySensitivity, MemoryStatus, MemoryType
+from careerpilot.memory.admission_policy import MemoryAdmissionGate
+from careerpilot.memory.base import MemoryContext, MemoryItem
+from careerpilot.memory.contracts import (
+    AdmissionDecision,
+    MemoryAuthorship,
+    MemoryClaim,
+    MemoryCognitiveClass,
+    MemoryDurability,
+    MemoryEvidenceRef,
+    MemorySubject,
+)
+from careerpilot.memory.models import (
+    MemoryConfidence,
+    MemorySensitivity,
+    MemoryStatus,
+    MemoryType,
+    ProviderSyncState,
+)
+from careerpilot.memory.patch_planner import MemoryPatchPlanner
+from careerpilot.memory.provider_service import GovernedMemoryProviderService
 from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
 from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
 from careerpilot.memory.write_policy import MemoryWritePolicy
@@ -199,7 +219,12 @@ def _run_memory_case(service: MemoryService, case: dict[str, Any]) -> dict[str, 
         actual_types = [candidate.type.value for candidate in candidates]
         expected_types = case.get("expected_types", [])
         passed = len(candidates) == case["expected_count"] and actual_types == expected_types
-        metrics = {"accuracy": 1.0 if passed else 0.0}
+        unsafe_write_count = 1 if case.get("hard_if_admitted") and candidates else 0
+        metrics = {
+            "accuracy": 1.0 if passed else 0.0,
+            "admission_precision": 1.0 if passed else 0.0,
+            "unsafe_write_count": float(unsafe_write_count),
+        }
         if not passed:
             failures.append(
                 f"写入策略不符：期望 {expected_types}，实际 {actual_types}"
@@ -208,6 +233,122 @@ def _run_memory_case(service: MemoryService, case: dict[str, Any]) -> dict[str, 
             message = "短暂情绪被错误写入长期记忆"
             hard_failures.append(message)
             failures.append(message)
+    elif kind == "admission":
+        claim = MemoryClaim(
+            content=case["content"],
+            memory_type=MemoryType(case.get("type", "fact")),
+            cognitive_class=MemoryCognitiveClass(case.get("cognitive_class", "semantic")),
+            subject=MemorySubject(case.get("subject", "self")),
+            authorship=MemoryAuthorship(case.get("authorship", "user_explicit")),
+            evidence=(MemoryEvidenceRef(f"{case['id']}:user", case["evidence"]),),
+            durability=MemoryDurability(case.get("durability", "durable")),
+            sensitivity=MemorySensitivity(case.get("sensitivity", "normal")),
+            confidence=MemoryConfidence(case.get("confidence", "high")),
+        )
+        decision = MemoryAdmissionGate().decide(claim, case["source_message"])
+        expected_decision = AdmissionDecision(case["expected_decision"])
+        passed = decision.decision is expected_decision
+        unsafe = int(
+            decision.decision is AdmissionDecision.COMMIT
+            and expected_decision is not AdmissionDecision.COMMIT
+        )
+        metrics = {
+            "accuracy": 1.0 if passed else 0.0,
+            "admission_precision": 1.0 if passed else 0.0,
+            "unsafe_write_count": float(unsafe),
+        }
+        if not passed:
+            message = (
+                f"准入决策不符：期望 {expected_decision.value}，"
+                f"实际 {decision.decision.value}"
+            )
+            failures.append(message)
+            if unsafe:
+                hard_failures.append(message)
+    elif kind == "governed_retrieval":
+        raw = case["memory"]
+        _seed_memory(service, raw)
+        record = service.list(raw["owner_id"])[0]
+        service.store.upsert_provider_sync(
+            raw["owner_id"],
+            record.id,
+            state=ProviderSyncState.SYNCED,
+            provider_memory_id=case["provider_memory_id"],
+        )
+        if case.get("delete_local"):
+            service.delete(raw["owner_id"], record.id, expected_version=record.version)
+
+        class _BenchmarkProvider:
+            enabled = True
+
+            async def search(self, *args: object, **kwargs: object) -> MemoryContext:
+                return MemoryContext(
+                    facts=tuple(
+                        MemoryItem(item["id"], item["content"], "fact")
+                        for item in case["cloud_results"]
+                    )
+                )
+
+        result = asyncio.run(
+            GovernedMemoryProviderService(service, _BenchmarkProvider()).search(
+                raw["owner_id"],
+                "benchmark",
+                case["query"],
+                purpose=MemoryQueryPurpose.PLANNING,
+            )
+        )
+        retrieved = [item.content for item in (*result.facts, *result.preferences)]
+        expected = case.get("expected_contents", [])
+        forbidden = set(case.get("forbidden_contents", []))
+        missing = set(expected) - set(retrieved)
+        forbidden_hits = forbidden & set(retrieved)
+        passed = not missing and not forbidden_hits
+        metrics = {
+            **retrieval_metrics(retrieved, expected),
+            "unsafe_write_count": 0.0,
+        }
+        if missing:
+            failures.append(f"未召回期望记忆：{', '.join(sorted(missing))}")
+        if forbidden_hits:
+            message = f"治理门暴露禁止记忆：{', '.join(sorted(forbidden_hits))}"
+            failures.append(message)
+            hard_failures.append(message)
+    elif kind == "patch_conflict":
+        for item in case["seed_memories"]:
+            _seed_memory(service, item)
+        claim = MemoryClaim(
+            content=case["content"],
+            memory_type=MemoryType(case.get("type", "preference")),
+            cognitive_class=MemoryCognitiveClass.SEMANTIC,
+            subject=MemorySubject.SELF,
+            authorship=MemoryAuthorship.USER_EXPLICIT,
+            evidence=(MemoryEvidenceRef(f"{case['id']}:user", case["content"]),),
+            durability=MemoryDurability.DURABLE,
+            sensitivity=MemorySensitivity.NORMAL,
+            confidence=MemoryConfidence.HIGH,
+            correction_hint=case["correction_hint"],
+        )
+        patches = MemoryPatchPlanner().plan(
+            case["owner_id"],
+            (claim,),
+            service.store.list_active_memories(case["owner_id"], limit=20),
+        )
+        expected_decision = AdmissionDecision(case["expected_decision"])
+        passed = patches[0].admission.decision is expected_decision
+        unsafe = int(
+            patches[0].admission.decision is AdmissionDecision.COMMIT
+            and expected_decision is not AdmissionDecision.COMMIT
+        )
+        metrics = {
+            "accuracy": 1.0 if passed else 0.0,
+            "admission_precision": 1.0 if passed else 0.0,
+            "unsafe_write_count": float(unsafe),
+        }
+        if not passed:
+            message = "冲突更正未保持待确认状态"
+            failures.append(message)
+            if unsafe:
+                hard_failures.append(message)
     elif kind == "correction":
         old = case["old_memory"]
         _seed_memory(service, old)
