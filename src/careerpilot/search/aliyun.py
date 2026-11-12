@@ -1,6 +1,6 @@
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -21,12 +21,14 @@ class AliyunWebSearchProvider:
         api_key: str,
         base_url: str,
         model: str,
+        api_mode: Literal["dashscope", "openai"] = "dashscope",
         timeout_seconds: float = 45.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._api_mode = api_mode
         self._timeout_seconds = timeout_seconds
         self._client = client
 
@@ -43,15 +45,63 @@ class AliyunWebSearchProvider:
         }
         try:
             if self._client is not None:
-                return await self._stream_search(self._client, payload, headers, strategy)
+                return await self._execute_search(
+                    self._client, query, payload, headers, strategy
+                )
             async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-                return await self._stream_search(client, payload, headers, strategy)
+                return await self._execute_search(client, query, payload, headers, strategy)
         except httpx.HTTPStatusError as exc:
             raise AliyunWebSearchError(
                 f"Alibaba Cloud web search failed with status {exc.response.status_code}"
             ) from exc
         except httpx.RequestError as exc:
             raise AliyunWebSearchError("Alibaba Cloud web search is unavailable") from exc
+
+    async def _execute_search(
+        self,
+        client: httpx.AsyncClient,
+        query: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        strategy: SearchStrategy,
+    ) -> WebSearchResponse:
+        if self._api_mode == "openai":
+            return await self._openai_search(client, query, strategy)
+        return await self._stream_search(client, payload, headers, strategy)
+
+    async def _openai_search(
+        self,
+        client: httpx.AsyncClient,
+        query: str,
+        strategy: SearchStrategy,
+    ) -> WebSearchResponse:
+        response = await client.post(
+            f"{self._base_url}/chat/completions",
+            json={
+                "model": self._model,
+                "messages": [{"role": "user", "content": query}],
+                "enable_search": True,
+                "search_options": {
+                    "enable_source": True,
+                    "forced_search": True,
+                    "search_strategy": strategy.value,
+                },
+            },
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=self._timeout_seconds,
+        )
+        response.raise_for_status()
+        body = response.json()
+        return WebSearchResponse(
+            answer=_choice_text(body).strip() if isinstance(body, dict) else "",
+            sources=(),
+            strategy=strategy,
+            request_id=(body.get("id") if isinstance(body, dict) else None),
+            partial=True,
+        )
 
     def _request_payload(self, query: str, strategy: SearchStrategy) -> dict[str, Any]:
         return {

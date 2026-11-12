@@ -4,33 +4,32 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
-from langchain_core.tools import BaseTool
-
 from careerpilot.agent.base import AgentResponder, AgentResponse
 from careerpilot.agent.orchestration import AgentPlan, AgentStage, AgentVerifier
 from careerpilot.agent.prompt import PromptComposer
 from careerpilot.context.contracts import RetrievalSource, TaskIntent
 from careerpilot.harness.context import CareerContextCompiler, ContextRequest
+from careerpilot.harness.contracts import HarnessTool
 from careerpilot.harness.events import HarnessEventType
 from careerpilot.harness.memory import MemoryCommitResult, MemoryLifecycle
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import RunCancellationRequested
 from careerpilot.mcp.platform import McpDiscoveryError
 from careerpilot.memory.base import MemoryStore
-from careerpilot.memory.dreaming import (
-    CognitiveStore,
-    DreamingTriggerPolicy,
-)
 from careerpilot.memory.direction_signals import (
     DirectionExplicitness,
     DirectionSignal,
     DirectionSignalDetector,
 )
+from careerpilot.memory.dreaming import (
+    CognitiveStore,
+    DreamingTriggerPolicy,
+)
 from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
 from careerpilot.memory.write_policy import MemoryWritePolicy
 from careerpilot.support.policy import SupportMode, SupportPolicy
 
-McpToolFactory = Callable[[str, str], Awaitable[tuple[BaseTool, ...]]]
+McpToolFactory = Callable[[str, str], Awaitable[tuple[HarnessTool, ...]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,8 +75,8 @@ class AgentService:
         support_policy: SupportPolicy,
         prompt_composer: PromptComposer | None = None,
         memory_write_policy: MemoryWritePolicy | None = None,
-        rag_tool_factory: Callable[[str], BaseTool] | None = None,
-        action_tool_factory: Callable[[str], tuple[BaseTool, ...]] | None = None,
+        rag_tool_factory: Callable[[str], HarnessTool] | None = None,
+        action_tool_factory: Callable[[str], tuple[HarnessTool, ...]] | None = None,
         cognitive_store: CognitiveStore | None = None,
         dreaming_trigger_policy: DreamingTriggerPolicy | None = None,
         unified_memory_service: MemoryService | None = None,
@@ -146,7 +145,7 @@ class AgentService:
             )
             await self._transition(run_id, AgentStage.PLAN, plan.as_dict())
             allowed_tool_names = set(context.allowed_tool_names)
-            runtime_tools: list[BaseTool] = []
+            runtime_tools: list[HarnessTool] = []
             if (
                 "search_career_knowledge" in allowed_tool_names
                 and self._rag_tool_factory is not None
@@ -158,7 +157,7 @@ class AgentService:
             ):
                 action_tools = self._action_tool_factory(command.user_id)
                 runtime_tools.extend(action_tools)
-                allowed_tool_names.update(tool.name for tool in action_tools)
+                allowed_tool_names.update(tool.schema.name for tool in action_tools)
             if (
                 context.decision.mode is not SupportMode.LISTEN
                 and not context.decision.safety_risk_detected
@@ -171,7 +170,7 @@ class AgentService:
                 except McpDiscoveryError:
                     mcp_tools = ()
                 runtime_tools.extend(mcp_tools)
-                allowed_tool_names.update(tool.name for tool in mcp_tools)
+                allowed_tool_names.update(tool.schema.name for tool in mcp_tools)
             await self._raise_if_cancelled(run_id)
             await self._transition(run_id, AgentStage.EXECUTE)
             stream = getattr(self._agent, "stream", None)

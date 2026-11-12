@@ -3,6 +3,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from careerpilot.harness.structured import StructuredGenerator
 from careerpilot.rag.models import ChunkLevel, DocumentChunk, SourceDocument
 
 
@@ -28,12 +29,12 @@ class LlmGraphExtractor:
 
     def __init__(
         self,
-        model: Any,
+        model: StructuredGenerator,
         *,
         max_relations_per_chunk: int = 12,
         max_chunks: int | None = None,
     ) -> None:
-        self._structured_model = model.with_structured_output(GraphExtractionResult)
+        self._model = model
         self._max_relations = max_relations_per_chunk
         self._max_chunks = max_chunks
 
@@ -49,9 +50,7 @@ class LlmGraphExtractor:
                 f"最多输出 {self._max_relations} 条。\n\n"
                 f"文档：{document.title}\n章节：{chunk.heading}\n原文：\n{chunk.content}"
             )
-            parsed = self._structured_model.invoke(prompt)
-            if isinstance(parsed, Mapping):
-                parsed = GraphExtractionResult.model_validate(parsed)
+            parsed = self._model.generate(prompt, GraphExtractionResult)
             for relation in parsed.relations[: self._max_relations]:
                 subject = relation.subject.strip()
                 predicate = relation.predicate.strip()

@@ -1,9 +1,9 @@
 import re
-from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from careerpilot.harness.structured import StructuredGenerator
 from careerpilot.ingestion.jobs import JobRecord, normalize_job_record
 
 
@@ -30,7 +30,7 @@ def extract_job_record(
     verified_at: str,
     source_level: str = "S",
     source_name: str = "",
-    model: Any | None = None,
+    model: StructuredGenerator | None = None,
 ) -> JobRecord:
     """Extract a validated JobRecord from raw page text; LLM is optional, schema is not."""
     values = _extract_with_model(text, model) if model is not None else _extract_labels(text)
@@ -46,8 +46,7 @@ def extract_job_record(
     return normalize_job_record(values, verified_at=verified_at)
 
 
-def _extract_with_model(text: str, model: Any) -> dict[str, Any]:
-    structured = model.with_structured_output(ExtractedJobFields)
+def _extract_with_model(text: str, model: StructuredGenerator) -> dict[str, Any]:
     prompt = (
         "从招聘原文抽取岗位字段。只填写原文明示的信息；不确定时使用 unknown、空列表或 null。"
         "organization_type 只能是 private/central_soe/local_soe/government/"
@@ -55,10 +54,7 @@ def _extract_with_model(text: str, model: Any) -> dict[str, Any]:
         "public_institution_establishment/enterprise_contract/labor_dispatch/internship/unknown。"
         "截止时间和发布日期尽可能规范为 ISO 日期。\n\n招聘原文：\n" + text[:30000]
     )
-    parsed = structured.invoke(prompt)
-    if isinstance(parsed, Mapping):
-        return dict(parsed)
-    return parsed.model_dump()
+    return model.generate(prompt, ExtractedJobFields).model_dump()
 
 
 def _extract_labels(text: str) -> dict[str, Any]:

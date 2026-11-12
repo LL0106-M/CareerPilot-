@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from careerpilot.ingestion.job_extraction import extract_job_record
+from careerpilot.ingestion.job_extraction import ExtractedJobFields, extract_job_record
 from careerpilot.ingestion.jobs import job_to_document, normalize_job_record
 
 
@@ -123,3 +123,27 @@ def test_extracts_job_record_from_labeled_raw_text_without_model() -> None:
     assert job.role_family == "ai_product"
     assert job.locations == ("北京", "上海")
     assert job.deadline == "2026-11-30"
+
+
+def test_extracts_job_record_with_native_structured_generator() -> None:
+    class Generator:
+        def generate(self, prompt, response_model):
+            assert "招聘原文" in prompt
+            assert response_model is ExtractedJobFields
+            return ExtractedJobFields(
+                company_name="示例公司",
+                role_title="AI 产品经理",
+                locations=["深圳"],
+                requirements="熟悉 Agent",
+            )
+
+    job = extract_job_record(
+        "示例招聘原文",
+        source_url="https://jobs.example.cn/2",
+        verified_at="2026-11-12",
+        model=Generator(),
+    )
+
+    assert job.company_name == "示例公司"
+    assert job.role_title == "AI 产品经理"
+    assert job.locations == ("深圳",)

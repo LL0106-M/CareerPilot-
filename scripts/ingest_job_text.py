@@ -4,7 +4,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from careerpilot.agent.model import create_reasoning_model
+from careerpilot.agent.model import create_structured_generator
 from careerpilot.config import Settings
 from careerpilot.ingestion.job_extraction import extract_job_record
 from careerpilot.ingestion.pipeline import JobIngestionPipeline
@@ -25,7 +25,7 @@ def main() -> None:
 
     settings = Settings()
     now = datetime.now(UTC)
-    model = create_reasoning_model(settings) if args.use_model else None
+    model = create_structured_generator(settings) if args.use_model else None
     job = extract_job_record(
         args.path.read_text(encoding="utf-8"),
         source_url=args.source_url,

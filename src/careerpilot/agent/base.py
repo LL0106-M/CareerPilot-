@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from langchain_core.tools import BaseTool
+from careerpilot.harness.contracts import HarnessTool
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +19,6 @@ class AgentResponder(Protocol):
         system_context: str,
         thread_id: str,
         allowed_tool_names: frozenset[str] | None = None,
-        runtime_tools: tuple[BaseTool, ...] = (),
+        runtime_tools: tuple[HarnessTool, ...] = (),
         run_id: str | None = None,
     ) -> AgentResponse: ...

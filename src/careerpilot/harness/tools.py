@@ -1,8 +1,8 @@
+import inspect
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-
-from langchain_core.tools import BaseTool
 
 from careerpilot.harness.contracts import HarnessTool, ToolSchema
 
@@ -19,22 +19,16 @@ class ToolPolicy:
         return self.allowed_names is None or name in self.allowed_names
 
 
-class LangChainToolAdapter(HarnessTool):
-    """Keep existing RAG tools usable without giving LangChain control of the loop."""
+class FunctionHarnessTool(HarnessTool):
+    """A small native tool wrapper for synchronous or asynchronous handlers."""
 
-    def __init__(self, tool: BaseTool) -> None:
-        self._tool = tool
-        input_schema = tool.args_schema
-        parameters = (
-            input_schema
-            if isinstance(input_schema, dict)
-            else tool.get_input_schema().model_json_schema()
-        )
-        self._schema = ToolSchema(
-            name=tool.name,
-            description=tool.description,
-            parameters=parameters,
-        )
+    def __init__(
+        self,
+        schema: ToolSchema,
+        handler: Callable[..., object],
+    ) -> None:
+        self._schema = schema
+        self._handler = handler
 
     @property
     def schema(self) -> ToolSchema:
@@ -42,7 +36,9 @@ class LangChainToolAdapter(HarnessTool):
 
     async def execute(self, arguments: dict[str, Any]) -> str:
         try:
-            result = await self._tool.ainvoke(arguments)
+            result = self._handler(**arguments)
+            if inspect.isawaitable(result):
+                result = await result
         except Exception as exc:
             raise ToolExecutionError(f"Tool {self.schema.name} failed") from exc
         if isinstance(result, str):
@@ -52,18 +48,19 @@ class LangChainToolAdapter(HarnessTool):
 
 class ToolRegistry:
     def __init__(self, tools: tuple[HarnessTool, ...] = ()) -> None:
-        self._tools = {tool.schema.name: tool for tool in tools}
-
-    @classmethod
-    def from_langchain(cls, tools: tuple[BaseTool, ...]) -> "ToolRegistry":
-        return cls(tuple(LangChainToolAdapter(tool) for tool in tools))
-
-    def overlay(self, tools: tuple[BaseTool, ...]) -> "ToolRegistry":
-        combined = dict(self._tools)
+        self._tools: dict[str, HarnessTool] = {}
         for tool in tools:
-            adapter = LangChainToolAdapter(tool)
-            combined[adapter.schema.name] = adapter
-        return ToolRegistry(tuple(combined.values()))
+            name = tool.schema.name
+            if name in self._tools:
+                raise ValueError(f"Duplicate tool name: {name}")
+            self._tools[name] = tool
+
+    def overlay(self, tools: tuple[HarnessTool, ...]) -> "ToolRegistry":
+        duplicates = self._tools.keys() & {tool.schema.name for tool in tools}
+        if duplicates:
+            name = sorted(duplicates)[0]
+            raise ValueError(f"Duplicate tool name: {name}")
+        return ToolRegistry((*self._tools.values(), *tools))
 
     def schemas(self, policy: ToolPolicy) -> tuple[ToolSchema, ...]:
         return tuple(

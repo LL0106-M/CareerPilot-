@@ -89,7 +89,6 @@ from careerpilot.connectors.feishu_cli import FeishuCliConnector
 from careerpilot.connectors.netease_mail import NeteaseMailConnector
 from careerpilot.connectors.wps import WpsConnector
 from careerpilot.context.contracts import TaskIntent
-from careerpilot.harness.model import LangChainModelGateway
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import RunCancellationRequested
 from careerpilot.harness.session import SqliteSessionStore
@@ -379,9 +378,7 @@ def create_app(
             try:
                 future_letter_service = FutureLetterService(
                     resolve_product_store(),
-                    ModelFuturePathGenerator(
-                        LangChainModelGateway(create_reasoning_model(resolved_settings))
-                    ),
+                    ModelFuturePathGenerator(create_reasoning_model(resolved_settings)),
                 )
             except RuntimeError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc

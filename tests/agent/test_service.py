@@ -1,13 +1,14 @@
 from dataclasses import dataclass, field
 
 import pytest
-from langchain_core.tools import BaseTool, tool
 
 from careerpilot.agent.base import AgentResponder, AgentResponse
 from careerpilot.agent.service import AgentService, ChatCommand
+from careerpilot.harness.contracts import HarnessTool, ToolSchema
 from careerpilot.harness.events import HarnessEvent, HarnessEventType, RunPhase
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import RunCancellationRequested
+from careerpilot.harness.tools import FunctionHarnessTool
 from careerpilot.mcp.platform import McpDiscoveryError
 from careerpilot.memory.base import (
     MemoryContext,
@@ -15,16 +16,27 @@ from careerpilot.memory.base import (
     MemoryRetrievalMode,
     MemoryStoreError,
 )
-from careerpilot.memory.dreaming import CareerHypothesis
-from careerpilot.memory.models import MemoryType
 from careerpilot.memory.direction_signals import (
     DirectionExplicitness,
     DirectionSignal,
     DirectionSignalAction,
 )
+from careerpilot.memory.dreaming import CareerHypothesis
+from careerpilot.memory.models import MemoryType
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
 from careerpilot.support.policy import SupportMode, SupportPolicy
+
+
+def _native_tool(name: str) -> HarnessTool:
+    return FunctionHarnessTool(
+        ToolSchema(
+            name=name,
+            description=f"Test tool {name}",
+            parameters={"type": "object", "properties": {}},
+        ),
+        lambda **arguments: arguments,
+    )
 
 
 @dataclass
@@ -67,7 +79,7 @@ class RecordingAgent(AgentResponder):
     events: list[str]
     system_context: str = ""
     allowed_tool_names: frozenset[str] | None = None
-    runtime_tools: tuple[BaseTool, ...] = ()
+    runtime_tools: tuple[HarnessTool, ...] = ()
     thread_id: str = ""
     run_id: str | None = None
     response: AgentResponse | None = None
@@ -78,7 +90,7 @@ class RecordingAgent(AgentResponder):
         system_context: str,
         thread_id: str,
         allowed_tool_names: frozenset[str] | None = None,
-        runtime_tools: tuple[BaseTool, ...] = (),
+        runtime_tools: tuple[HarnessTool, ...] = (),
         run_id: str | None = None,
     ) -> AgentResponse:
         self.events.append("agent")
@@ -101,7 +113,7 @@ class StreamingAgent(RecordingAgent):
         system_context: str,
         thread_id: str,
         allowed_tool_names: frozenset[str] | None = None,
-        runtime_tools: tuple[BaseTool, ...] = (),
+        runtime_tools: tuple[HarnessTool, ...] = (),
         run_id: str | None = None,
     ):
         self.events.append("stream")
@@ -146,7 +158,7 @@ class CancelledStreamingAgent(RecordingAgent):
         system_context: str,
         thread_id: str,
         allowed_tool_names: frozenset[str] | None = None,
-        runtime_tools: tuple[BaseTool, ...] = (),
+        runtime_tools: tuple[HarnessTool, ...] = (),
         run_id: str | None = None,
     ):
         yield HarnessEvent(
@@ -354,12 +366,9 @@ async def test_service_binds_agentic_rag_tool_to_authenticated_user() -> None:
     events: list[str] = []
     bound_user_ids: list[str] = []
 
-    @tool
-    def search_career_knowledge(query: str) -> str:
-        """Search a user-scoped knowledge base."""
-        return query
+    search_career_knowledge = _native_tool("search_career_knowledge")
 
-    def tool_factory(user_id: str) -> BaseTool:
+    def tool_factory(user_id: str) -> HarnessTool:
         bound_user_ids.append(user_id)
         return search_career_knowledge
 
@@ -374,7 +383,9 @@ async def test_service_binds_agentic_rag_tool_to_authenticated_user() -> None:
     await service.chat(ChatCommand("user-7", "thread-1", "根据我的资料准备产品面试"))
 
     assert bound_user_ids == ["user-7"]
-    assert [item.name for item in agent.runtime_tools] == ["search_career_knowledge"]
+    assert [item.schema.name for item in agent.runtime_tools] == [
+        "search_career_knowledge"
+    ]
 
 
 @pytest.mark.asyncio
@@ -382,17 +393,12 @@ async def test_service_binds_safe_action_tools_only_in_action_mode() -> None:
     events: list[str] = []
     bound_user_ids: list[str] = []
 
-    @tool
-    def get_integration_authorization() -> str:
-        """Read current authorization state."""
-        return "{}"
+    get_integration_authorization = _native_tool(
+        "get_integration_authorization"
+    )
+    preview_external_action = _native_tool("preview_external_action")
 
-    @tool
-    def preview_external_action() -> str:
-        """Preview an external action without applying it."""
-        return "{}"
-
-    def action_tool_factory(user_id: str) -> tuple[BaseTool, ...]:
+    def action_tool_factory(user_id: str) -> tuple[HarnessTool, ...]:
         bound_user_ids.append(user_id)
         return get_integration_authorization, preview_external_action
 
@@ -407,7 +413,7 @@ async def test_service_binds_safe_action_tools_only_in_action_mode() -> None:
     await service.chat(ChatCommand("user-8", "thread-1", "帮我创建一份飞书文档"))
 
     assert bound_user_ids == ["user-8"]
-    assert [item.name for item in agent.runtime_tools] == [
+    assert [item.schema.name for item in agent.runtime_tools] == [
         "get_integration_authorization",
         "preview_external_action",
     ]
@@ -418,10 +424,7 @@ async def test_service_binds_safe_action_tools_only_in_action_mode() -> None:
 async def test_service_does_not_expose_action_tools_in_organize_mode() -> None:
     events: list[str] = []
 
-    @tool
-    def preview_external_action() -> str:
-        """Preview an external action."""
-        return "{}"
+    preview_external_action = _native_tool("preview_external_action")
 
     agent = RecordingAgent(events)
     service = AgentService(
@@ -515,10 +518,7 @@ async def test_service_denies_web_search_in_listen_mode() -> None:
 async def test_service_denies_all_tools_for_safety_risk_even_if_act_is_requested() -> None:
     events: list[str] = []
 
-    @tool
-    def preview_external_action() -> str:
-        """Preview an external action."""
-        return "{}"
+    preview_external_action = _native_tool("preview_external_action")
 
     agent = RecordingAgent(events)
     service = AgentService(
@@ -706,12 +706,9 @@ async def test_service_adds_query_selected_mcp_tools_to_the_current_turn() -> No
     events: list[str] = []
     calls: list[tuple[str, str]] = []
 
-    @tool
-    def mcp__search__search_jobs(query: str) -> str:
-        """Search jobs through an MCP server."""
-        return query
+    mcp__search__search_jobs = _native_tool("mcp__search__search_jobs")
 
-    async def mcp_factory(user_id: str, query: str) -> tuple[BaseTool, ...]:
+    async def mcp_factory(user_id: str, query: str) -> tuple[HarnessTool, ...]:
         calls.append((user_id, query))
         return (mcp__search__search_jobs,)
 
@@ -726,7 +723,7 @@ async def test_service_adds_query_selected_mcp_tools_to_the_current_turn() -> No
     await service.chat(ChatCommand("user-9", "thread-1", "搜索最新产品岗位"))
 
     assert calls == [("user-9", "搜索最新产品岗位")]
-    assert [item.name for item in agent.runtime_tools] == [
+    assert [item.schema.name for item in agent.runtime_tools] == [
         "mcp__search__search_jobs"
     ]
     assert "mcp__search__search_jobs" in agent.allowed_tool_names
@@ -734,7 +731,7 @@ async def test_service_adds_query_selected_mcp_tools_to_the_current_turn() -> No
 
 @pytest.mark.asyncio
 async def test_service_keeps_internal_behavior_when_mcp_discovery_fails() -> None:
-    async def unavailable_mcp(_: str, __: str) -> tuple[BaseTool, ...]:
+    async def unavailable_mcp(_: str, __: str) -> tuple[HarnessTool, ...]:
         raise McpDiscoveryError("sanitized discovery failure")
 
     agent = RecordingAgent([])
@@ -755,7 +752,7 @@ async def test_service_keeps_internal_behavior_when_mcp_discovery_fails() -> Non
 async def test_service_does_not_discover_mcp_tools_in_listen_mode() -> None:
     calls: list[str] = []
 
-    async def mcp_factory(_: str, query: str) -> tuple[BaseTool, ...]:
+    async def mcp_factory(_: str, query: str) -> tuple[HarnessTool, ...]:
         calls.append(query)
         return ()
 

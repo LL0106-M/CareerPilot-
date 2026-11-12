@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 
-from langchain_core.tools import BaseTool
-
+from careerpilot.harness.contracts import HarnessTool
 from careerpilot.mcp.adapter import McpToolAdapter
 from careerpilot.mcp.catalog import McpToolCatalog
 from careerpilot.mcp.client import (
@@ -83,7 +82,7 @@ class McpToolPlatform:
 
     async def runtime_tools(
         self, owner_id: str, query: str
-    ) -> tuple[BaseTool, ...]:
+    ) -> tuple[HarnessTool, ...]:
         del owner_id  # Reserved for future owner-scoped authorization.
         descriptors = await self.visible_tools()
         selected = self._catalog.select(
@@ -94,6 +93,6 @@ class McpToolPlatform:
                 descriptor,
                 self._clients[descriptor.server_name],
                 self._policy,
-            ).as_langchain_tool()
+            ).as_harness_tool()
             for descriptor in selected
         )

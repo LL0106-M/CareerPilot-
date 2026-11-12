@@ -1,11 +1,10 @@
 from collections.abc import Callable
 
-from langchain_core.tools import BaseTool
-
 from careerpilot.agent.model import create_qwen_model, create_reasoning_model
 from careerpilot.agent.runtime import CareerPilotResponder
 from careerpilot.agent.service import AgentService, McpToolFactory
 from careerpilot.config import Settings
+from careerpilot.harness.contracts import HarnessTool
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.session import SqliteSessionStore
 from careerpilot.mcp.config import load_mcp_servers
@@ -25,7 +24,7 @@ from careerpilot.support.policy import SupportPolicy
 
 def build_agent_service(
     settings: Settings,
-    action_tool_factory: Callable[[str], tuple[BaseTool, ...]] | None = None,
+    action_tool_factory: Callable[[str], tuple[HarnessTool, ...]] | None = None,
 ) -> tuple[
     AgentService,
     MemoryStore,
@@ -87,7 +86,10 @@ def build_agent_service(
     )
 
 
-def build_agent_tools(settings: Settings, rag_store: SqliteRagStore) -> list:
+def build_agent_tools(
+    settings: Settings,
+    rag_store: SqliteRagStore,
+) -> list[HarnessTool]:
     return [build_agentic_rag_tool(rag_store, build_search_provider(settings))]
 
 
@@ -106,6 +108,7 @@ def build_search_provider(settings: Settings) -> AliyunWebSearchProvider | None:
             api_key=settings.dashscope_api_key.get_secret_value(),
             base_url=settings.dashscope_base_url,
             model=settings.search_model,
+            api_mode=settings.search_api_mode,
             timeout_seconds=settings.search_timeout_seconds,
         )
     return None

@@ -27,7 +27,7 @@ async def test_agentic_tool_performs_online_fallback_inside_rag_backend(tmp_path
     provider = RecordingSearchProvider()
     tool = build_agentic_rag_tool(SqliteRagStore(tmp_path / "rag.db"), provider)
 
-    raw = await tool.ainvoke(
+    raw = await tool.execute(
         {
             "query": "最近的 AI 产品岗位",
             "scopes": ["jobs"],
@@ -36,7 +36,13 @@ async def test_agentic_tool_performs_online_fallback_inside_rag_backend(tmp_path
     )
     result = json.loads(raw)
 
-    assert tool.name == "search_career_knowledge"
+    assert tool.schema.name == "search_career_knowledge"
+    assert tool.schema.parameters["required"] == ["query"]
+    assert tool.schema.parameters["properties"]["scopes"]["items"]["enum"] == [
+        "jobs",
+        "preparation",
+        "personal",
+    ]
     assert provider.calls == [("最近的 AI 产品岗位", SearchStrategy.TURBO)]
     assert result["status"] == "available"
     assert result["retrieval"]["used_online_search"] is True
@@ -50,7 +56,7 @@ async def test_agentic_tool_performs_online_fallback_inside_rag_backend(tmp_path
 async def test_agentic_tool_rejects_personal_scope_without_bound_user(tmp_path: Path) -> None:
     tool = build_agentic_rag_tool(SqliteRagStore(tmp_path / "rag.db"), None)
 
-    raw = await tool.ainvoke({"query": "我的项目经历", "scopes": ["personal"]})
+    raw = await tool.execute({"query": "我的项目经历", "scopes": ["personal"]})
     result = json.loads(raw)
 
     assert result["status"] == "forbidden"
@@ -84,7 +90,7 @@ async def test_explicit_preparation_search_saves_url_backed_sources_for_the_libr
     store = SqliteRagStore(tmp_path / "rag.db")
     tool = build_agentic_rag_tool(store, provider, user_id="u1")
 
-    await tool.ainvoke(
+    await tool.execute(
         {
             "query": "收集最新的 AI 产品学习资料",
             "scopes": ["preparation"],
@@ -107,7 +113,7 @@ async def test_explicit_job_search_saves_url_backed_source_for_the_jobs_library(
     store = SqliteRagStore(tmp_path / "rag.db")
     tool = build_agentic_rag_tool(store, provider, user_id="u1")
 
-    await tool.ainvoke(
+    await tool.execute(
         {
             "query": "搜索并保存最新的 AI 产品岗位",
             "scopes": ["jobs"],

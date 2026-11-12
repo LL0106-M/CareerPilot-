@@ -24,7 +24,7 @@ async def test_rag_tool_returns_citations_and_untrusted_context(tmp_path: Path) 
     store.upsert(document, chunk_document(document))
     tool = build_rag_tool(store)
 
-    raw = await tool.ainvoke(
+    raw = await tool.execute(
         {
             "query": "Agent 产品经理 Memory",
             "domain": "job_opportunity",
@@ -33,7 +33,16 @@ async def test_rag_tool_returns_citations_and_untrusted_context(tmp_path: Path) 
     )
     result = json.loads(raw)
 
-    assert tool.name == "search_career_knowledge"
+    assert tool.schema.name == "search_career_knowledge"
+    assert tool.schema.parameters["required"] == ["query"]
+    assert set(tool.schema.parameters["properties"]) == {
+        "query",
+        "domain",
+        "sub_queries",
+        "requires_freshness",
+        "validation_target",
+        "limit",
+    }
     assert result["status"] == "available"
     assert result["content_is_untrusted"] is True
     assert result["hits"][0]["source_uri"] == "https://example.com/job"
@@ -48,7 +57,7 @@ async def test_rag_tool_returns_citations_and_untrusted_context(tmp_path: Path) 
 async def test_rag_tool_reports_insufficient_without_fabricating(tmp_path: Path) -> None:
     tool = build_rag_tool(SqliteRagStore(tmp_path / "rag.db"))
 
-    raw = await tool.ainvoke({"query": "不存在的知识", "domain": None})
+    raw = await tool.execute({"query": "不存在的知识", "domain": None})
     result = json.loads(raw)
 
     assert result["status"] == "insufficient"

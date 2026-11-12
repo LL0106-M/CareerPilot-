@@ -3,11 +3,11 @@
 import json
 from typing import Any
 
-from langchain_core.tools import StructuredTool
-
 from careerpilot.actions.registry import CapabilityRegistry
 from careerpilot.actions.service import ActionService
 from careerpilot.actions.store import SqliteActionStore
+from careerpilot.harness.contracts import HarnessTool, ToolSchema
+from careerpilot.harness.tools import FunctionHarnessTool
 
 
 def build_action_tools(
@@ -15,7 +15,7 @@ def build_action_tools(
     registry: CapabilityRegistry,
     store: SqliteActionStore,
     service: ActionService,
-) -> tuple[StructuredTool, StructuredTool]:
+) -> tuple[HarnessTool, HarnessTool]:
     def get_integration_authorization() -> str:
         states = store.list_authorization(owner_id, registry)
         return json.dumps(
@@ -59,20 +59,43 @@ def build_action_tools(
         )
 
     return (
-        StructuredTool.from_function(
-            func=get_integration_authorization,
-            name="get_integration_authorization",
-            description=(
-                "Show which Feishu, WPS, and NetEase Mail capabilities the current user has "
-                "authorized. Use before proposing an external action."
+        FunctionHarnessTool(
+            ToolSchema(
+                name="get_integration_authorization",
+                description=(
+                    "Show which Feishu, WPS, and NetEase Mail capabilities the current user "
+                    "has authorized. Use before proposing an external action."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
             ),
+            get_integration_authorization,
         ),
-        StructuredTool.from_function(
-            func=preview_external_action,
-            name="preview_external_action",
-            description=(
-                "Create a reviewable preview for an authorized domain action. This never executes "
-                "the external action; write execution requires explicit product confirmation."
+        FunctionHarnessTool(
+            ToolSchema(
+                name="preview_external_action",
+                description=(
+                    "Create a reviewable preview for an authorized domain action. This never "
+                    "executes the external action; write execution requires explicit product "
+                    "confirmation."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "provider_id": {"type": "string"},
+                        "capability": {"type": "string"},
+                        "payload": {
+                            "type": "object",
+                            "additionalProperties": True,
+                        },
+                    },
+                    "required": ["provider_id", "capability", "payload"],
+                    "additionalProperties": False,
+                },
             ),
+            preview_external_action,
         ),
     )

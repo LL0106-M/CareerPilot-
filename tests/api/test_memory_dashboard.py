@@ -68,7 +68,9 @@ def test_dashboard_uses_canonical_memory_and_ignores_demo_memory_seed(tmp_path) 
         unified.close()
 
 
-def test_canonical_hypothesis_confirmation_does_not_expose_direct_journey_creation(tmp_path) -> None:
+def test_canonical_hypothesis_confirmation_does_not_expose_direct_journey_creation(
+    tmp_path,
+) -> None:
     unified = SqliteUnifiedMemoryStore(tmp_path / "memory.db")
     memories = MemoryService(unified)
     products = ProductStore(tmp_path / "product.db")

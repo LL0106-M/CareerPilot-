@@ -75,6 +75,14 @@ def test_dashscope_search_is_configured_only_with_key_and_base_url(monkeypatch) 
     )
 
 
+def test_search_api_mode_can_use_openai_compatible_gateway(monkeypatch) -> None:
+    monkeypatch.setenv("CAREERPILOT_SEARCH_API_MODE", "openai")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.search_api_mode == "openai"
+
+
 def test_empty_optional_cloud_credentials_disable_paid_services(monkeypatch) -> None:
     monkeypatch.setenv("DASHSCOPE_API_KEY", "")
     monkeypatch.setenv("CAREERPILOT_DASHSCOPE_BASE_URL", "")

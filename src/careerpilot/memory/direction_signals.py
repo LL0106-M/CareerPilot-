@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from careerpilot.harness.contracts import HarnessMessage, ModelGateway, ModelRequest
 
 
 class DirectionExplicitness(StrEnum):
@@ -66,17 +65,19 @@ class JsonDirectionSignalDetector:
         DirectionExplicitness.EXPLICIT: DirectionSignalAction.ADD_TO_COMPASS,
     }
 
-    def __init__(self, model: BaseChatModel) -> None:
+    def __init__(self, model: ModelGateway) -> None:
         self._model = model
 
     async def analyze(
         self, user_message: str, assistant_message: str
     ) -> DirectionSignal:
         try:
-            response = await self._model.ainvoke(
-                [
-                    SystemMessage(
-                        content=(
+            response = await self._model.generate(
+                ModelRequest(
+                    messages=(
+                        HarnessMessage(
+                            role="system",
+                            content=(
                             "你是职业方向信号提取器，不是职业决策者。只判断用户是否表达了"
                             "一个可命名的职业方向。explicit 表示用户明确要考虑、申请或推进；"
                             "implicit 表示持续兴趣或倾向但没有确认；uncertain 表示证据不足；"
@@ -91,17 +92,19 @@ class JsonDirectionSignalDetector:
                             "\"none|clarify|ask_to_add|add_to_compass\"}。"
                         )
                     ),
-                    HumanMessage(
-                        content=(
+                        HarnessMessage(
+                            role="user",
+                            content=(
                             f"用户消息：{user_message}\n"
                             f"助手回复：{assistant_message}\n"
                             "助手回复只用于消歧，不能作为用户意图证据。"
                         )
-                    ),
-                ]
+                        ),
+                    )
+                )
             )
-            content = response.content
-            if not isinstance(content, str):
+            content = response.text
+            if not content:
                 return DirectionSignal.none()
             return self._parse(content, user_message)
         except Exception:

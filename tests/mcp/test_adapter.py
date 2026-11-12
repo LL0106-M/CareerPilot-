@@ -43,18 +43,17 @@ async def test_adapter_preserves_schema_and_invokes_original_tool_name() -> None
     config = _config()
     client = OfficialMcpClient(config, target=_server())
     descriptor = (await client.list_tools())[0]
-    tool = McpToolAdapter(descriptor, client, McpToolPolicy((config,))).as_langchain_tool()
+    tool = McpToolAdapter(descriptor, client, McpToolPolicy((config,))).as_harness_tool()
 
-    payload = json.loads(await tool.ainvoke({"resume_id": "resume-7"}))
+    payload = json.loads(await tool.execute({"resume_id": "resume-7"}))
 
-    assert tool.name == "mcp__career_data__read_resume"
-    assert isinstance(tool.args_schema, dict)
-    assert tool.args_schema["required"] == ["resume_id"]
+    assert tool.schema.name == "mcp__career_data__read_resume"
+    assert tool.schema.parameters["required"] == ["resume_id"]
     assert payload["status"] == "completed"
     assert payload["content_is_untrusted"] is True
     assert payload["structured_content"]["resume_id"] == "resume-7"
 
-    registry_schema = ToolRegistry.from_langchain((tool,)).schemas(ToolPolicy())[0]
+    registry_schema = ToolRegistry((tool,)).schemas(ToolPolicy())[0]
     assert registry_schema.parameters["required"] == ["resume_id"]
 
 
@@ -63,12 +62,16 @@ async def test_adapter_rechecks_policy_before_execution() -> None:
     config = _config()
     client = OfficialMcpClient(config, target=_server())
     descriptor = (await client.list_tools())[0]
-    denied = McpToolPolicy(
-        (config,), denied_names=frozenset({descriptor.namespaced_name})
-    )
-    tool = McpToolAdapter(descriptor, client, denied).as_langchain_tool()
+    policy = McpToolPolicy((config,))
+    tool = McpToolAdapter(descriptor, client, policy).as_harness_tool()
+    policy._denied_names = frozenset({descriptor.namespaced_name})
 
-    payload = json.loads(await tool.ainvoke({"resume_id": "resume-7"}))
+    async def fail_if_called(name: str, arguments: dict) -> None:
+        raise AssertionError(f"call_tool must not run: {name} {arguments}")
+
+    client.call_tool = fail_if_called  # type: ignore[method-assign]
+
+    payload = json.loads(await tool.execute({"resume_id": "resume-7"}))
 
     assert payload == {
         "status": "forbidden",

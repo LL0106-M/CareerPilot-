@@ -1,11 +1,8 @@
 from collections.abc import AsyncIterator
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.tools import BaseTool
-
 from careerpilot.agent.base import AgentResponder, AgentResponse
+from careerpilot.harness.contracts import HarnessTool, ModelGateway
 from careerpilot.harness.events import HarnessEvent
-from careerpilot.harness.model import LangChainModelGateway
 from careerpilot.harness.run_store import SqliteAgentRunStore
 from careerpilot.harness.runtime import CareerPilotHarness
 from careerpilot.harness.session import InMemorySessionStore
@@ -17,16 +14,16 @@ class CareerPilotResponder(AgentResponder):
 
     def __init__(
         self,
-        model: BaseChatModel,
-        tools: list[BaseTool] | None = None,
+        model: ModelGateway,
+        tools: list[HarnessTool] | None = None,
         *,
         session_store=None,
         max_steps: int = 4,
         run_store: SqliteAgentRunStore | None = None,
     ) -> None:
-        registry = ToolRegistry.from_langchain(tuple(tools or ()))
+        registry = ToolRegistry(tuple(tools or ()))
         self._harness = CareerPilotHarness(
-            LangChainModelGateway(model),
+            model,
             registry,
             session_store or InMemorySessionStore(),
             max_steps=max_steps,
@@ -39,7 +36,7 @@ class CareerPilotResponder(AgentResponder):
         system_context: str,
         thread_id: str,
         allowed_tool_names: frozenset[str] | None = None,
-        runtime_tools: tuple[BaseTool, ...] = (),
+        runtime_tools: tuple[HarnessTool, ...] = (),
         run_id: str | None = None,
     ) -> AgentResponse:
         result = await self._harness.run(
@@ -63,7 +60,7 @@ class CareerPilotResponder(AgentResponder):
         system_context: str,
         thread_id: str,
         allowed_tool_names: frozenset[str] | None = None,
-        runtime_tools: tuple[BaseTool, ...] = (),
+        runtime_tools: tuple[HarnessTool, ...] = (),
         run_id: str | None = None,
     ) -> AsyncIterator[HarnessEvent]:
         async for event in self._harness.stream(

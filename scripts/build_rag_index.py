@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from careerpilot.agent.model import create_reasoning_model
+from careerpilot.agent.model import create_structured_generator
 from careerpilot.config import Settings
 from careerpilot.rag.embeddings import create_embedding_provider
 from careerpilot.rag.extraction import LlmGraphExtractor
@@ -53,7 +53,7 @@ def main() -> None:
     )
     graph_extractor = (
         LlmGraphExtractor(
-            create_reasoning_model(settings),
+            create_structured_generator(settings),
             max_chunks=args.graph_max_chunks,
         )
         if args.extract_graph

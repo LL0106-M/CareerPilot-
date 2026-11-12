@@ -8,7 +8,7 @@ from careerpilot.rag.store import SqliteRagStore
 def test_agent_tools_omit_web_search_without_dashscope_credentials(tmp_path: Path) -> None:
     tools = build_agent_tools(Settings(_env_file=None), SqliteRagStore(tmp_path / "rag.db"))
 
-    assert [tool.name for tool in tools] == ["search_career_knowledge"]
+    assert [tool.schema.name for tool in tools] == ["search_career_knowledge"]
 
 
 def test_agent_tools_register_web_search_when_dashscope_is_configured(
@@ -22,8 +22,8 @@ def test_agent_tools_register_web_search_when_dashscope_is_configured(
 
     tools = build_agent_tools(Settings(_env_file=None), SqliteRagStore(tmp_path / "rag.db"))
 
-    assert [tool.name for tool in tools] == ["search_career_knowledge"]
-    assert "bounded online fallback" in tools[0].description
+    assert [tool.schema.name for tool in tools] == ["search_career_knowledge"]
+    assert "bounded online fallback" in tools[0].schema.description
 
 
 def test_mcp_factory_is_enabled_only_when_a_server_config_exists(

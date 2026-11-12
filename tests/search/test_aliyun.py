@@ -81,6 +81,56 @@ async def test_search_sends_governed_multimodal_request_and_returns_sources() ->
 
 
 @pytest.mark.asyncio
+async def test_openai_compatible_search_returns_answer_without_inventing_sources() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        assert request.headers["authorization"] == "Bearer test-secret"
+        body = json.loads(request.content)
+        assert body == {
+            "model": "qwen3.7-plus",
+            "messages": [{"role": "user", "content": "近期 Agent 产品岗位"}],
+            "enable_search": True,
+            "search_options": {
+                "enable_source": True,
+                "forced_search": True,
+                "search_strategy": "turbo",
+            },
+        }
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-1",
+                "model": "qwen3.7-plus",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "发现近期岗位。",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = AliyunWebSearchProvider(
+            api_key="test-secret",
+            base_url="https://maas.example.edu/v1/",
+            model="qwen3.7-plus",
+            api_mode="openai",
+            client=client,
+        )
+        response = await provider.search("近期 Agent 产品岗位", SearchStrategy.TURBO)
+
+    assert response.answer == "发现近期岗位。"
+    assert response.request_id == "chatcmpl-1"
+    assert response.sources == ()
+    assert response.partial is True
+
+
+@pytest.mark.asyncio
 async def test_search_skips_malformed_events_and_deduplicates_fragment_urls() -> None:
     payload = {
         "output": {

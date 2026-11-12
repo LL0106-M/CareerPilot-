@@ -1,11 +1,26 @@
-import pytest
-from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage
+from dataclasses import dataclass
 
+import pytest
+
+from careerpilot.harness.contracts import ModelRequest, ModelResponse
 from careerpilot.memory.base import MemoryContext
 from careerpilot.memory.dreaming import DreamingSnapshot, DreamingTrigger
 from careerpilot.memory.dreaming_llm import JsonDreamingAnalyzer
 
+
+@dataclass
+class AIMessage:
+    content: str
+
+
+class FakeMessagesListChatModel:
+    def __init__(self, responses: list[AIMessage]) -> None:
+        self.responses = list(responses)
+        self.requests: list[ModelRequest] = []
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        self.requests.append(request)
+        return ModelResponse(text=self.responses.pop(0).content)
 
 def snapshot() -> DreamingSnapshot:
     return DreamingSnapshot.from_turn(

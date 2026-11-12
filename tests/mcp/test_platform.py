@@ -76,7 +76,7 @@ async def test_platform_keeps_healthy_servers_and_filters_unknown_risk() -> None
 
     tools = await platform.runtime_tools("owner-1", "search current jobs")
 
-    assert [tool.name for tool in tools] == ["mcp__search__search_jobs"]
+    assert [tool.schema.name for tool in tools] == ["mcp__search__search_jobs"]
 
 
 @pytest.mark.asyncio
@@ -94,7 +94,9 @@ async def test_platform_caps_selection_and_rejects_stale_fingerprints() -> None:
     tools = await platform.runtime_tools("owner-1", "search jobs")
 
     assert len(tools) == 8
-    assert "mcp__career__search_jobs_0" not in {tool.name for tool in tools}
+    assert "mcp__career__search_jobs_0" not in {
+        tool.schema.name for tool in tools
+    }
 
 
 @pytest.mark.asyncio

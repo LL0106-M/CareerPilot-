@@ -1,9 +1,7 @@
 import json
 from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
-
+from careerpilot.harness.contracts import HarnessMessage, ModelGateway, ModelRequest
 from careerpilot.memory.daily_review import DailyReviewDraft
 from careerpilot.memory.dreaming import (
     DreamingAnalysis,
@@ -16,7 +14,7 @@ from careerpilot.memory.dreaming import (
 class JsonDreamingAnalyzer:
     """Generate evidence-bound candidate hypotheses with the deterministic model."""
 
-    def __init__(self, model: BaseChatModel) -> None:
+    def __init__(self, model: ModelGateway) -> None:
         self._model = model
 
     async def analyze(self, snapshot: DreamingSnapshot) -> DreamingAnalysis:
@@ -24,10 +22,12 @@ class JsonDreamingAnalyzer:
             f"- id={item.id}; source={item.source}; content={item.content}"
             for item in snapshot.evidence
         )
-        response = await self._model.ainvoke(
-            [
-                SystemMessage(
-                    content=(
+        response = await self._model.generate(
+            ModelRequest(
+                messages=(
+                    HarnessMessage(
+                        role="system",
+                        content=(
                         "你是职业成长记忆整理器。输出待验证假设、用户可见每日回顾和"
                         "可审查记忆补丁，不把推断写成事实。每项必须引用给定 evidence id。"
                         "只输出 JSON 对象，格式为 {\"hypotheses\": [{\"statement\": str, "
@@ -42,20 +42,19 @@ class JsonDreamingAnalyzer:
                         "\"supporting_evidence_ids\": [str], \"requires_confirmation\": bool}]}。"
                     )
                 ),
-                HumanMessage(
-                    content=(
+                    HarnessMessage(
+                        role="user",
+                        content=(
                         f"触发类型：{snapshot.trigger.value}\n"
                         f"用户消息：{snapshot.user_message}\n"
                         f"助手回复：{snapshot.assistant_message}\n"
                         f"可用证据：\n{evidence}"
                     )
-                ),
-            ]
+                    ),
+                )
+            )
         )
-        content = response.content
-        if not isinstance(content, str):
-            raise ValueError("Dreaming model must return text JSON")
-        data = self._parse_json(content)
+        data = self._parse_json(response.text)
         raw_hypotheses = data.get("hypotheses")
         if not isinstance(raw_hypotheses, list):
             raise ValueError("Dreaming JSON must contain a hypotheses list")

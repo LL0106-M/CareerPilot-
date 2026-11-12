@@ -7,7 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
-  "langchain-openai>=0.3,<2",
+  "openai>=3,<4",
   "mcp>=2.3,<3",
   "pwdlib[argon2]>=0.3,<1",
   "pydantic-settings>=2.8,<3",

@@ -184,6 +184,10 @@ class Settings(BaseSettings):
         default="qwen3.7-plus-2026-05-26",
         validation_alias="CAREERPILOT_SEARCH_MODEL",
     )
+    search_api_mode: Literal["dashscope", "openai"] = Field(
+        default="dashscope",
+        validation_alias="CAREERPILOT_SEARCH_API_MODE",
+    )
     search_default_strategy: Literal["turbo", "max"] = Field(
         default="turbo",
         validation_alias="CAREERPILOT_SEARCH_DEFAULT_STRATEGY",
