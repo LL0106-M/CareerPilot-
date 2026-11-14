@@ -147,3 +147,45 @@ def test_chat_idea_memory_appears_in_compass_without_direct_journey_creation(tmp
     finally:
         products.close()
         unified.close()
+
+
+def test_dashboard_returns_evidence_backed_exploration_view_without_fixed_summary(
+    tmp_path,
+) -> None:
+    unified = SqliteUnifiedMemoryStore(tmp_path / "memory.db")
+    memories = MemoryService(unified)
+    products = ProductStore(tmp_path / "product.db")
+    owner = "550e8400-e29b-41d4-a716-446655440000"
+    products.commit_compass_update(
+        owner,
+        run_id="run-explore",
+        conversation_id="conversation-1",
+        label="开发",
+        explicitness="explicit",
+        source_quote="我想继续看开发，尤其是 AI 应用开发",
+        reason="用户明确提出探索方向",
+        confidence=0.96,
+        role="AI 应用开发",
+        constraints=("担心技术基础不足",),
+    )
+    auth = build_auth_service(tmp_path / "auth.db")
+    client = TestClient(
+        create_app(memory_service=memories, product_store=products, auth_service=auth)
+    )
+    client.cookies.update(issue_session(auth, owner_id=owner))
+    try:
+        dashboard = client.get("/v1/me/dashboard").json()
+
+        view = dashboard["exploration_views"][0]
+        assert view["thread"]["seed_text"] == "开发"
+        assert view["focus"]["raw_label"] == "开发"
+        assert view["supporting_evidence"][0]["excerpt"] == (
+            "我想继续看开发，尤其是 AI 应用开发"
+        )
+        assert view["unknowns"][0]["excerpt"] == "需要验证现实约束：担心技术基础不足"
+        summary = dashboard["direction_summaries"][0]
+        assert summary["unknown_question"] == "需要验证现实约束：担心技术基础不足"
+        assert "真实工作方式是否适合" not in str(summary)
+    finally:
+        products.close()
+        unified.close()

@@ -37,6 +37,20 @@ export function CompassPage() {
   const currentEvidence = current?.kind === 'direction'
     ? (data?.direction_evidence || []).filter((item) => item.direction_id === current.item.id)
     : []
+  const currentExploration = current?.kind === 'direction'
+    ? (data?.exploration_views || []).find((view) => view.thread.source_direction_id === current.item.id)
+    : undefined
+  const explorationContext = currentExploration?.nodes
+    .filter((node) => ['organization_context', 'organization', 'business_context', 'location_context'].includes(node.node_type))
+    .map((node) => node.raw_label)
+    .join(' · ') || ''
+  const explorationEvidence = currentExploration
+    ? [
+        ...currentExploration.supporting_evidence,
+        ...currentExploration.counter_evidence,
+        ...currentExploration.unknowns,
+      ]
+    : []
 
   async function decide(decision: 'confirm' | 'uncertain') {
     if (!current || current.kind !== 'hypothesis') return
@@ -85,13 +99,15 @@ export function CompassPage() {
             <p>“{current.item.source_quote}”</p>
             <div className="evidence-strip"><span>{current.item.source_kind === 'conversation' ? '来自对话' : '来自你的想法'}</span><span>{current.item.reason}</span></div>
             {currentBranches.length > 0 && <div className="target-branches" aria-label="目标分支">{currentBranches.map((branch) => <span key={branch.id}>{[branch.company, branch.business].filter(Boolean).join('｜') || branch.role}</span>)}</div>}
-            {currentSummary && <div className="direction-context-grid">
-              <div><span>为什么在这里</span><strong>{currentSummary.reason}</strong></div>
-              <div><span>最大未知</span><strong>{currentSummary.unknown_question}</strong></div>
-              <div><span>最近变化</span><strong>{currentSummary.recent_change}</strong></div>
-              <div className="next-validation"><span>下一验证点</span><strong>{currentSummary.next_validation}</strong></div>
+            {(currentExploration || currentSummary) && <div className="direction-context-grid">
+              <div><span>正在回答</span><strong>{currentExploration?.thread.working_question || currentSummary?.reason}</strong></div>
+              <div><span>已有证据</span><strong>{currentExploration?.supporting_evidence[0]?.excerpt || currentSummary?.reason}</strong></div>
+              {explorationContext && <div><span>现实语境</span><strong>{explorationContext}</strong></div>}
+              {(currentExploration?.unknowns[0]?.excerpt || currentSummary?.unknown_question) && <div className="next-validation"><span>最大未知</span><strong>{currentExploration?.unknowns[0]?.excerpt || currentSummary?.unknown_question}</strong></div>}
             </div>}
-            {currentEvidence.length > 0 && <details className="evidence-drawer"><summary>查看证据与未知项</summary><div>{currentEvidence.map((item) => <article key={item.id}><span>{item.kind === 'support' ? '支持证据' : item.kind === 'counter' ? '反对证据' : '仍未知'}</span><strong>{item.content}</strong>{item.source_quote && <small>“{item.source_quote}”</small>}</article>)}</div></details>}
+            {explorationEvidence.length > 0
+              ? <details className="evidence-drawer"><summary>查看证据与未知项</summary><div>{explorationEvidence.map((item) => <article key={item.id}><span>{item.kind === 'support' ? '支持证据' : item.kind === 'counter' ? '反对证据' : '仍未知'}</span><strong>{item.excerpt}</strong><small>{item.confirmation_status === 'confirmed' ? '已确认来源' : '等待确认'}</small></article>)}</div></details>
+              : currentEvidence.length > 0 && <details className="evidence-drawer"><summary>查看证据与未知项</summary><div>{currentEvidence.map((item) => <article key={item.id}><span>{item.kind === 'support' ? '支持证据' : item.kind === 'counter' ? '反对证据' : '仍未知'}</span><strong>{item.content}</strong>{item.source_quote && <small>“{item.source_quote}”</small>}</article>)}</div></details>}
             {currentJourney
               ? <div className="direction-actions"><Link className="primary-button" to="/journey">查看航程</Link>{currentBranches.length > 1 && <button type="button" className="secondary-button" onClick={() => setCompareOpen((value) => !value)}>对比目标</button>}</div>
               : <><div className="direction-actions"><button type="button" className="primary-button" onClick={() => { setJourneyState('idle'); setJourneyConfirmOpen(true) }}><Path /> 开始航程</button>{currentBranches.length > 1 && <button type="button" className="secondary-button" onClick={() => setCompareOpen((value) => !value)}>对比目标</button>}</div><p className="mutation-note">它在罗盘里，只有你确认后才会开启航程。</p></>}

@@ -112,6 +112,57 @@ export interface DirectionSummary {
   updated_at: string
 }
 
+export interface ExplorationThread {
+  id: string
+  seed_text: string
+  working_question: string
+  status: 'active' | 'paused' | 'resolved' | 'archived'
+  focus_node_id?: string | null
+  source_direction_id?: string | null
+}
+
+export interface CareerNode {
+  id: string
+  thread_id: string
+  node_type: 'domain' | 'role_family' | 'role' | 'organization_context' | 'organization' | 'business_context' | 'location_context' | 'target'
+  raw_label: string
+  canonical_label: string
+  status: string
+  source_reference?: string | null
+}
+
+export interface CareerEdge {
+  id: string
+  thread_id: string
+  from_node_id: string
+  to_node_id: string
+  relation_type: string
+  status: string
+}
+
+export interface CareerEvidence {
+  id: string
+  thread_id: string
+  node_id?: string | null
+  kind: 'support' | 'counter' | 'unknown'
+  source_type: string
+  source_reference: string
+  excerpt: string
+  confidence: number
+  confirmation_status: string
+  status: string
+}
+
+export interface ExplorationView {
+  thread: ExplorationThread
+  focus?: CareerNode | null
+  nodes: CareerNode[]
+  edges: CareerEdge[]
+  supporting_evidence: CareerEvidence[]
+  counter_evidence: CareerEvidence[]
+  unknowns: CareerEvidence[]
+}
+
 export interface DashboardJourney {
   id: string
   direction_id: string
@@ -215,6 +266,7 @@ export interface DashboardResponse {
   direction_branches?: DirectionBranch[]
   journey_branches?: JourneyBranch[]
   direction_summaries?: DirectionSummary[]
+  exploration_views?: ExplorationView[]
   career_profile?: Array<{ id: string; category: string; value: string; status: string }>
   direction_evidence?: Array<{ id: string; direction_id: string; branch_id?: string | null; kind: string; content: string; source_quote?: string | null; source_kind: string }>
 }

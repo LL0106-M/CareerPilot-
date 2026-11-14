@@ -77,6 +77,19 @@ describe('Compass', () => {
         { id:'b2',direction_id:'d1',company:'美团',business:'Agent',role:'AI 产品经理',location:'',status:'active' },
       ],
       direction_summaries: [{ direction_id:'d1',reason:'你明确想探索 AI 产品岗位',unknown_question:'更喜欢平台能力还是场景落地？',recent_change:'新增腾讯混元与美团 Agent',next_validation:'各拆解一份真实 JD',updated_at:'2026-11-05T00:00:00Z' }],
+      exploration_views: [{
+        thread: { id:'t1',seed_text:'AI 产品经理',working_question:'平台能力和场景落地，哪一种工作更适合你？',status:'active',focus_node_id:'n2',source_direction_id:'d1' },
+        focus: { id:'n2',thread_id:'t1',node_type:'role',raw_label:'AI 产品经理',canonical_label:'AI 产品经理',status:'active' },
+        nodes: [
+          { id:'n1',thread_id:'t1',node_type:'organization',raw_label:'腾讯',canonical_label:'腾讯',status:'active' },
+          { id:'n2',thread_id:'t1',node_type:'role',raw_label:'AI 产品经理',canonical_label:'AI 产品经理',status:'active' },
+          { id:'n3',thread_id:'t1',node_type:'business_context',raw_label:'混元',canonical_label:'混元',status:'active' },
+        ],
+        edges: [],
+        supporting_evidence: [{ id:'ce1',thread_id:'t1',node_id:'n2',kind:'support',source_type:'user_turn',source_reference:'turn:r1',excerpt:'我做过一个 RAG 项目',confidence:1,confirmation_status:'confirmed',status:'active' }],
+        counter_evidence: [],
+        unknowns: [{ id:'ce2',thread_id:'t1',node_id:'n2',kind:'unknown',source_type:'user_constraint',source_reference:'turn:r2',excerpt:'还不了解日常协作方式',confidence:1,confirmation_status:'confirmed',status:'active' }],
+      }],
       direction_evidence: [
         { id:'e1',direction_id:'d1',branch_id:'b1',kind:'support',content:'有 AI 项目经验',source_kind:'conversation',source_quote:'我做过一个 RAG 项目' },
         { id:'e2',direction_id:'d1',branch_id:null,kind:'unknown',content:'还不了解日常协作方式',source_kind:'system' },
@@ -88,11 +101,14 @@ describe('Compass', () => {
 
     expect(await screen.findByText('腾讯｜混元')).toBeInTheDocument()
     expect(screen.getByText('美团｜Agent')).toBeInTheDocument()
-    expect(screen.getByText('更喜欢平台能力还是场景落地？')).toBeInTheDocument()
-    expect(screen.getByText('有 AI 项目经验')).toBeInTheDocument()
+    expect(screen.getAllByText('还不了解日常协作方式').length).toBeGreaterThan(0)
+    expect(screen.getByText('平台能力和场景落地，哪一种工作更适合你？')).toBeInTheDocument()
+    expect(screen.getAllByText('我做过一个 RAG 项目').length).toBeGreaterThan(0)
+    expect(screen.getByText('腾讯 · 混元')).toBeInTheDocument()
     expect(screen.getByText('希望工作节奏可预期')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '对比目标' }))
     expect(screen.getByRole('region', { name: '目标分支对比' })).toBeInTheDocument()
+    expect(screen.getByText('有 AI 项目经验')).toBeInTheDocument()
     expect(screen.getAllByText('还不知道').length).toBeGreaterThan(0)
   })
 

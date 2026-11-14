@@ -22,6 +22,7 @@ def test_new_owner_starts_with_empty_product_state(tmp_path) -> None:
             "direction_branches": [],
             "career_profile": [],
             "direction_evidence": [],
+            "exploration_views": [],
             "direction_summaries": [],
             "journey_branches": [],
         }

@@ -270,6 +270,13 @@ class ProductStore:
 
     def dashboard(self, owner_id: str) -> dict[str, object]:
         directions = self.list_directions(owner_id)
+        exploration_views = self.list_exploration_views(owner_id)
+        exploration_by_direction = {
+            str(view["thread"].get("source_direction_id")): view
+            for view in exploration_views
+            if isinstance(view.get("thread"), dict)
+            and view["thread"].get("source_direction_id")
+        }
         return {
             "hypotheses": self._rows("hypotheses", owner_id, "id"),
             "journey": self._rows("journey_tasks", owner_id, "rowid"),
@@ -291,18 +298,42 @@ class ProductStore:
             "direction_evidence": self._rows(
                 "direction_evidence", owner_id, "created_at DESC"
             ),
+            "exploration_views": exploration_views,
             "direction_summaries": [
-                {
-                    "direction_id": item["id"],
-                    "reason": item["reason"],
-                    "unknown_question": "这个方向的真实工作方式是否适合你？",
-                    "recent_change": item["source_quote"],
-                    "next_validation": "查看一个真实岗位并记录最想进一步确认的问题",
-                    "updated_at": item["updated_at"],
-                }
+                self._direction_summary(item, exploration_by_direction.get(str(item["id"])))
                 for item in directions
             ],
             "journey_branches": self.list_journey_branches(owner_id),
+        }
+
+    @staticmethod
+    def _direction_summary(
+        direction: dict[str, object],
+        exploration_view: dict[str, object] | None,
+    ) -> dict[str, object]:
+        supporting = (
+            exploration_view.get("supporting_evidence", []) if exploration_view else []
+        )
+        unknowns = exploration_view.get("unknowns", []) if exploration_view else []
+        latest_support = supporting[-1] if supporting else None
+        first_unknown = unknowns[0] if unknowns else None
+        support_excerpt = (
+            str(latest_support.get("excerpt", ""))
+            if isinstance(latest_support, dict)
+            else ""
+        )
+        unknown_excerpt = (
+            str(first_unknown.get("excerpt", ""))
+            if isinstance(first_unknown, dict)
+            else ""
+        )
+        return {
+            "direction_id": direction["id"],
+            "reason": direction["reason"],
+            "unknown_question": unknown_excerpt,
+            "recent_change": support_excerpt or direction["source_quote"],
+            "next_validation": unknown_excerpt,
+            "updated_at": direction["updated_at"],
         }
 
     def record_direction_signal(
