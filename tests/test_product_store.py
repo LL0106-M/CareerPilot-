@@ -69,6 +69,50 @@ def test_canonical_conversation_turn_is_idempotent_and_owner_scoped(tmp_path) ->
         store.close()
 
 
+def test_existing_conversation_database_migrates_additively(tmp_path) -> None:
+    path = tmp_path / "legacy-product.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE conversations (
+            owner_id TEXT NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            PRIMARY KEY(owner_id, id)
+        );
+        CREATE TABLE conversation_messages (
+            sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+            role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        INSERT INTO conversations VALUES (
+            'owner-1','legacy-thread','旧对话','2026-01-01','2026-01-01'
+        );
+        INSERT INTO conversation_messages
+            (owner_id,conversation_id,role,content,created_at)
+        VALUES ('owner-1','legacy-thread','user','旧消息','2026-01-01');
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = ProductStore(path)
+    try:
+        assert store.get_conversation("owner-1", "legacy-thread")["messages"] == [
+            {"role": "user", "content": "旧消息"}
+        ]
+        created = store.record_conversation_turn(
+            "owner-1",
+            "legacy-thread",
+            "继续聊",
+            "可以。",
+            turn_id="run-after-migration",
+        )
+        assert created["id"] == "run-after-migration"
+        assert len(store.get_conversation("owner-1", "legacy-thread")["messages"]) == 3
+    finally:
+        store.close()
+
+
 def test_journey_event_keeps_calendar_fields_owner_scoped(tmp_path) -> None:
     store = ProductStore(tmp_path / "product.db")
     try:
