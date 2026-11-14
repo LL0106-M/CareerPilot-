@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from careerpilot.episodes import EpisodeService
 from careerpilot.exploration import ExplorationService
 
 
@@ -262,6 +263,7 @@ class ProductStore:
         )
         self._connection.commit()
         self._exploration = ExplorationService(self._connection)
+        self._episodes = EpisodeService(self._connection)
         self._repair_unbound_explicit_targets()
         self._connection.commit()
 
@@ -609,6 +611,23 @@ class ProductStore:
 
     def list_exploration_views(self, owner_id: str) -> list[dict[str, object]]:
         return self._exploration.list_views(owner_id)
+
+    def record_episode_event(self, owner_id: str, **values: object) -> dict[str, object] | None:
+        return self._episodes.record_event(owner_id, **values)  # type: ignore[arg-type]
+
+    def list_episodes(self, owner_id: str) -> list[dict[str, object]]:
+        return self._episodes.list_episodes(owner_id)
+
+    def list_open_loops(self, owner_id: str) -> list[dict[str, object]]:
+        return self._episodes.list_open_loops(owner_id)
+
+    def create_agent_commitment(
+        self, owner_id: str, **values: object
+    ) -> dict[str, object]:
+        return self._episodes.create_commitment(owner_id, **values)  # type: ignore[arg-type]
+
+    def list_agent_commitments(self, owner_id: str) -> list[dict[str, object]]:
+        return self._episodes.list_commitments(owner_id)
 
     def list_compass_update_batches(self, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(
