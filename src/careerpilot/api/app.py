@@ -615,6 +615,11 @@ def create_app(
                     conversation_id=conversation_id,
                     message=request.message,
                     requested_mode=request.support_mode,
+                    page_context=(
+                        request.page_context.model_dump(mode="json", exclude_none=True)
+                        if request.page_context
+                        else None
+                    ),
                 )
             )
         except RunCancellationRequested as exc:
@@ -652,6 +657,11 @@ def create_app(
             conversation_id=conversation_id,
             message=body.message,
             requested_mode=body.support_mode,
+            page_context=(
+                body.page_context.model_dump(mode="json", exclude_none=True)
+                if body.page_context
+                else None
+            ),
         )
 
         async def events() -> AsyncIterator[str]:

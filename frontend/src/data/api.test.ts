@@ -34,6 +34,30 @@ describe('CareerPilot API client', () => {
     expect(fetchMock.mock.calls[0][1].body).not.toContain('user_id')
   })
 
+  it('sends bounded page context separately from the user message', async () => {
+    const response = {
+      conversation_id: 'conversation-1', run_id: 'run-1', result_status: 'completed', reply: '我在。',
+      support_mode: 'organize', primary_intent: 'planning', retrieval_sources: [], memory_read_status: 'ok',
+      memory_write_status: 'skipped', dreaming_status: 'skipped', memory_ids: [], citation_ids: [], citation_warnings: [],
+    }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(response), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.chat({
+      message: '为什么我还在犹豫？',
+      page_context: { page: 'compass', label: '罗盘', path: '/compass' },
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith('/v1/chat', expect.objectContaining({
+      body: JSON.stringify({
+        message: '为什么我还在犹豫？',
+        page_context: { page: 'compass', label: '罗盘', path: '/compass' },
+      }),
+    }))
+  })
+
   it('streams fragmented SSE deltas and returns the completed chat response', async () => {
     const encoder = new TextEncoder()
     const chunks = [

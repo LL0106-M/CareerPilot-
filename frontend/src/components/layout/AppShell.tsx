@@ -4,6 +4,7 @@ import { Link, NavLink } from 'react-router-dom'
 
 import { useAuth } from '../../auth/AuthProvider'
 import { AmbientScene } from '../ambient/AmbientScene'
+import { CompanionBobo } from '../bobo/CompanionBobo'
 import { ScrollDirector } from '../motion/ScrollDirector'
 import './app-shell.css'
 
@@ -74,6 +75,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
 
       <main className="app-content" id="main-content">{children}</main>
+      <CompanionBobo />
     </div>
   )
 }

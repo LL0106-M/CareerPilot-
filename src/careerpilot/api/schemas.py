@@ -32,6 +32,17 @@ class LoginRequest(BaseModel):
     remember_me: bool = False
 
 
+class PageContextRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    page: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
+    label: str = Field(min_length=1, max_length=80)
+    path: str = Field(min_length=1, max_length=500, pattern=r"^/")
+    entity_id: str | None = Field(default=None, max_length=128)
+    state: str | None = Field(default=None, max_length=200)
+    selected_content: str | None = Field(default=None, max_length=500)
+
+
 class ChatRequest(BaseModel):
     """Client request. ``user_id`` was removed in v0.2 because it must
     not be trusted from the client — the server derives ``owner_id``
@@ -43,6 +54,7 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = Field(default=None, max_length=128)
     message: str = Field(min_length=1, max_length=8_000)
     support_mode: SupportMode | None = None
+    page_context: PageContextRequest | None = None
 
 
 class DirectionSignalResponse(BaseModel):

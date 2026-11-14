@@ -45,6 +45,19 @@ describe('chat page', () => {
     expect(api.chatStream).toHaveBeenCalledWith({ message: '我不知道先做什么' }, expect.any(Function))
   })
 
+  it('opens the conversation handed off by the page companion', async () => {
+    vi.mocked(api.getConversation).mockResolvedValue({
+      id: 'companion-1', title: '罗盘里的对话', updated_at: '2026-11-14T10:00:00Z',
+      messages: [{ role: 'user', content: '我为什么还在犹豫？' }, { role: 'agent', content: '先看看你最在意的未知。' }],
+    })
+
+    render(<MemoryRouter initialEntries={[{ pathname: '/chat', state: { conversationId: 'companion-1' } }]}><ChatPage /></MemoryRouter>)
+
+    expect(await screen.findByText('我为什么还在犹豫？')).toBeInTheDocument()
+    expect(screen.getByText('先看看你最在意的未知。')).toBeInTheDocument()
+    expect(api.getConversation).toHaveBeenCalledWith('companion-1')
+  })
+
   it('asks before adding an implicit direction and persists acceptance', async () => {
     vi.mocked(api.chatStream).mockImplementation(async (_body, onDelta) => {
       onDelta('这可能是一条值得留意的线索。')

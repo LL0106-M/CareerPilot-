@@ -10,6 +10,11 @@ export interface Account {
 export interface ChatRequest {
   message: string
   conversation_id?: string
+  page_context?: {
+    page: string
+    label: string
+    path: string
+  }
 }
 
 export interface ChatResponse {

@@ -3,11 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 
 import { Bobo } from '../../components/bobo/Bobo'
+import { clearCompanionConversationId, saveCompanionConversationId } from '../../components/bobo/companionSession'
 import { MessageContent } from '../../components/chat/MessageContent'
 import { api, type CompassUpdateBatch, type ConversationSummary, type DashboardResponse, type DirectionSignal } from '../../data/api'
 
 interface ChatMessage { role: 'user' | 'agent'; content: string }
-interface ChatLocationState { draft?: string }
+interface ChatLocationState { draft?: string; conversationId?: string }
 
 const WELCOME_MESSAGE: ChatMessage = { role: 'agent', content: '我在。你可以从一件很小、还没想清楚的事开始。' }
 
@@ -21,7 +22,9 @@ function conversationTime(value: string) {
 
 export function ChatPage() {
   const startsNarrow = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 760px)').matches
-  const initialDraft = (useLocation().state as ChatLocationState | null)?.draft || ''
+  const locationState = useLocation().state as ChatLocationState | null
+  const initialDraft = locationState?.draft || ''
+  const initialConversationId = locationState?.conversationId
   const [input, setInput] = useState(initialDraft)
   const [conversationId, setConversationId] = useState<string>()
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
@@ -69,6 +72,10 @@ export function ChatPage() {
   }, [])
 
   useEffect(() => {
+    if (initialConversationId) void openConversation(initialConversationId)
+  }, [initialConversationId])
+
+  useEffect(() => {
     if (typeof endRef.current?.scrollIntoView === 'function') endRef.current.scrollIntoView({ behavior: 'smooth' })
   }, [messages, sending])
 
@@ -80,6 +87,7 @@ export function ChatPage() {
       const detail = await api.getConversation(id)
       if (requestId !== selectionRequestRef.current) return
       setConversationId(detail.id)
+      saveCompanionConversationId(detail.id)
       setMessages(detail.messages)
       setDirectionSignal(undefined)
       setCompassUpdate(undefined)
@@ -95,6 +103,7 @@ export function ChatPage() {
     selectionRequestRef.current += 1
     setMessages([{ role: 'agent', content: '新的这一页，从哪里开始？' }])
     setConversationId(undefined)
+    clearCompanionConversationId()
     setDirectionSignal(undefined)
     setCompassUpdate(undefined)
     setError('')
@@ -125,6 +134,7 @@ export function ChatPage() {
         ))),
       )
       setConversationId(response.conversation_id)
+      saveCompanionConversationId(response.conversation_id)
       setDirectionSignal(response.direction_signal)
       setCompassUpdate(response.compass_update_batch)
       setMessages((previous) => previous.map((item, index) => (

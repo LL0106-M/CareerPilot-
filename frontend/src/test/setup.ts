@@ -6,6 +6,7 @@ import { afterEach, vi } from 'vitest'
 afterEach(cleanup)
 
 vi.mock('framer-motion', () => ({
+  AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
   motion: new Proxy({}, {
     get: (_target, tag: string) => React.forwardRef<HTMLElement, Record<string, unknown>>(
       ({ animate: _animate, transition: _transition, whileHover: _whileHover, whileTap: _whileTap, ...props }, ref) =>

@@ -11,6 +11,7 @@ const DreamingPage = lazy(() => import('../pages/dreaming/DreamingPage').then(({
 const CompassPage = lazy(() => import('../pages/compass/CompassPage').then(({ CompassPage }) => ({ default: CompassPage })))
 const JourneyPage = lazy(() => import('../pages/journey/JourneyPage').then(({ JourneyPage }) => ({ default: JourneyPage })))
 const SettingsPage = lazy(() => import('../pages/settings/SettingsPage').then(({ SettingsPage }) => ({ default: SettingsPage })))
+const MemoryPage = lazy(() => import('../pages/memory/MemoryPage').then(({ MemoryPage }) => ({ default: MemoryPage })))
 const IntroPage = lazy(() => import('../pages/intro/IntroPage').then(({ IntroPage }) => ({ default: IntroPage })))
 const KnowledgeLayout = lazy(() => import('../pages/knowledge/KnowledgeLayout').then(({ KnowledgeLayout }) => ({ default: KnowledgeLayout })))
 const JobsPage = lazy(() => import('../pages/knowledge/jobs/JobsPage').then(({ JobsPage }) => ({ default: JobsPage })))
@@ -41,6 +42,7 @@ export function App() {
           <Route path="/compass" element={<WrapShell><CompassPage /></WrapShell>} />
           <Route path="/journey" element={<WrapShell><JourneyPage /></WrapShell>} />
           <Route path="/settings" element={<WrapShell><SettingsPage /></WrapShell>} />
+          <Route path="/memory" element={<WrapShell><MemoryPage /></WrapShell>} />
           <Route path="/knowledge" element={<WrapShell><KnowledgeLayout /></WrapShell>}>
             <Route index element={<Navigate to="/knowledge/jobs" replace />} />
             <Route path="jobs" element={<JobsPage />} />
