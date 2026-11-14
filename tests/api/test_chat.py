@@ -6,6 +6,11 @@ from careerpilot.agent.service import ChatCommand, ChatResult, ChatStreamEvent
 from careerpilot.api.app import create_app
 from careerpilot.config import Settings
 from careerpilot.context.contracts import RetrievalSource, TaskIntent
+from careerpilot.memory.direction_signals import (
+    DirectionExplicitness,
+    DirectionSignal,
+    DirectionSignalAction,
+)
 from careerpilot.product_store import ProductStore
 from careerpilot.support.policy import SupportMode
 from tests.api.auth_helpers import build_auth_service, issue_session
@@ -52,6 +57,28 @@ class StubChatService:
         yield ChatStreamEvent(type="delta", text="这次被拒")
         yield ChatStreamEvent(type="delta", text="确实很难受，我们先不用急着证明什么。")
         yield ChatStreamEvent(type="completed", result=result)
+
+
+@dataclass
+class DirectionChatService(StubChatService):
+    async def chat(self, command: ChatCommand) -> ChatResult:
+        result = await super().chat(command)
+        return ChatResult(
+            **{
+                field: getattr(result, field)
+                for field in result.__dataclass_fields__
+                if field != "direction_signal"
+            },
+            direction_signal=DirectionSignal(
+                explicitness=DirectionExplicitness.EXPLICIT,
+                action=DirectionSignalAction.ADD_TO_COMPASS,
+                label="开发",
+                source_quote="我想继续探索开发",
+                reason="用户明确提出探索方向",
+                confidence=0.96,
+                constraints=("担心技术基础不足",),
+            ),
+        )
 
 
 def test_chat_returns_agent_reply_and_transparent_memory_status(tmp_path) -> None:
@@ -155,6 +182,56 @@ def test_chat_persists_structured_canonical_turn_metadata(tmp_path) -> None:
         }
         assert turn["support_mode"] == "listen"
         assert turn["primary_intent"] == "emotional_support"
+    finally:
+        product_store.close()
+
+
+def test_explicit_direction_turn_projects_one_episode_after_turn_is_saved(tmp_path) -> None:
+    service = DirectionChatService()
+    product_store = ProductStore(tmp_path / "product.db")
+    auth = build_auth_service(tmp_path / "auth.db")
+    client = TestClient(
+        create_app(chat_service=service, auth_service=auth, product_store=product_store)
+    )
+    client.cookies.update(issue_session(auth, owner_id=OWNER_A))
+    try:
+        response = client.post("/v1/chat", json={"message": "我想继续探索开发"})
+
+        assert response.status_code == 200
+        episodes = product_store.list_episodes(OWNER_A)
+        assert len(episodes) == 1
+        assert episodes[0]["event_kind"] == "new_exploration"
+        assert episodes[0]["source_turn_ids"] == ["run-1"]
+        assert len(product_store.list_open_loops(OWNER_A)) == 1
+        turn = product_store.get_conversation_turn(OWNER_A, "run-1")
+        assert turn is not None
+        assert turn["episode_projection_status"] == "completed"
+    finally:
+        product_store.close()
+
+
+def test_episode_projection_failure_keeps_saved_turn(tmp_path, monkeypatch) -> None:
+    service = DirectionChatService()
+    product_store = ProductStore(tmp_path / "product.db")
+    auth = build_auth_service(tmp_path / "auth.db")
+    client = TestClient(
+        create_app(chat_service=service, auth_service=auth, product_store=product_store)
+    )
+    client.cookies.update(issue_session(auth, owner_id=OWNER_A))
+
+    def fail_projection(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("projection unavailable")
+
+    monkeypatch.setattr(product_store, "record_episode_event", fail_projection)
+    try:
+        response = client.post("/v1/chat", json={"message": "我想继续探索开发"})
+
+        assert response.status_code == 200
+        turn = product_store.get_conversation_turn(OWNER_A, "run-1")
+        assert turn is not None
+        assert turn["episode_projection_status"] == "failed"
+        assert product_store.get_conversation(OWNER_A, str(turn["conversation_id"])) is not None
     finally:
         product_store.close()
 

@@ -1666,6 +1666,31 @@ class ProductStore:
         ).fetchone()
         return self._decode(row) if row is not None else None
 
+    def set_turn_projection_status(
+        self,
+        owner_id: str,
+        turn_id: str,
+        *,
+        projection: str,
+        status: str,
+    ) -> bool:
+        columns = {
+            "memory": "memory_projection_status",
+            "exploration": "exploration_projection_status",
+            "episode": "episode_projection_status",
+        }
+        if projection not in columns:
+            raise ValueError(f"unsupported turn projection: {projection}")
+        if status not in {"pending", "completed", "failed", "skipped"}:
+            raise ValueError(f"unsupported projection status: {status}")
+        cursor = self._connection.execute(
+            f"UPDATE conversation_turns SET {columns[projection]} = ? "
+            "WHERE owner_id = ? AND id = ?",
+            (status, owner_id, turn_id),
+        )
+        self._connection.commit()
+        return cursor.rowcount > 0
+
     def list_conversations(self, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(
             """SELECT c.id, c.title, c.updated_at, COUNT(m.sequence) AS message_count

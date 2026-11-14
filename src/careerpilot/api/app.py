@@ -644,6 +644,9 @@ def create_app(
         direction_signal, compass_update_batch = _save_chat_direction_signal(
             resolve_product_store(), identity.owner_id, result
         )
+        _project_chat_episode(
+            resolve_product_store(), identity.owner_id, result, compass_update_batch
+        )
         if compass_update_batch and compass_update_batch.get("branch_id"):
             background_tasks.add_task(
                 resolve_knowledge_collection_processor().process_for_owner,
@@ -700,6 +703,12 @@ def create_app(
                         )
                         direction_signal, compass_update_batch = _save_chat_direction_signal(
                             resolve_product_store(), identity.owner_id, result
+                        )
+                        _project_chat_episode(
+                            resolve_product_store(),
+                            identity.owner_id,
+                            result,
+                            compass_update_batch,
                         )
                         if compass_update_batch and compass_update_batch.get("branch_id"):
                             background_tasks.add_task(
@@ -2020,6 +2029,75 @@ def _save_chat_direction_signal(
         signal_kind=signal.signal_kind,
     )
     return stored, batch
+
+
+def _project_chat_episode(
+    store: ProductStore,
+    owner_id: str,
+    result: ChatResult,
+    compass_update_batch: dict[str, object] | None,
+) -> None:
+    """Project explicit product events after the canonical turn is safely stored."""
+
+    try:
+        signal = result.direction_signal
+        if (
+            signal is None
+            or signal.explicitness.value != "explicit"
+            or compass_update_batch is None
+        ):
+            store.set_turn_projection_status(
+                owner_id, result.run_id, projection="episode", status="completed"
+            )
+            return
+        direction_id = compass_update_batch.get("direction_id")
+        thread = next(
+            (
+                view["thread"]
+                for view in store.list_exploration_views(owner_id)
+                if view["thread"].get("source_direction_id") == direction_id
+            ),
+            None,
+        )
+        if not isinstance(thread, dict):
+            store.set_turn_projection_status(
+                owner_id, result.run_id, projection="episode", status="skipped"
+            )
+            return
+        thread_id = str(thread["id"])
+        prior = [
+            item for item in store.list_episodes(owner_id) if item.get("thread_id") == thread_id
+        ]
+        event_kind = "new_exploration" if not prior else "direction_shift"
+        label = signal.label or signal.role or str(thread.get("seed_text", "职业方向"))
+        open_loop = None
+        if signal.constraints:
+            open_loop = {
+                "kind": "constraint_conflict",
+                "initiator": "shared",
+                "user_need": "补充这项现实约束在真实经历中的影响",
+                "agent_need": "寻找能低成本验证这项约束的方式",
+                "trigger_condition": f"再次探索“{label}”或讨论下一步时",
+            }
+        store.record_episode_event(
+            owner_id,
+            event_kind=event_kind,
+            source_turn_ids=(result.run_id,),
+            thread_id=thread_id,
+            title=f"开始展开“{label}”",
+            summary=f"用户明确提出继续探索“{label}”，这条方向已进入罗盘。",
+            outcome="形成一条可继续补充证据的职业探索线。",
+            callback_cue=f"再次谈到“{label}”时，可以接着当前未知项继续。",
+            open_loop=open_loop,
+        )
+        store.set_turn_projection_status(
+            owner_id, result.run_id, projection="episode", status="completed"
+        )
+    except Exception:
+        # Episode projection is derived state. A failure must never erase a saved chat turn.
+        store.set_turn_projection_status(
+            owner_id, result.run_id, projection="episode", status="failed"
+        )
 
 
 def _chat_response(
