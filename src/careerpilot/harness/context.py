@@ -170,6 +170,15 @@ class CareerContextCompiler:
             except Exception:
                 callback_context = None
 
+        relationship_profile = None
+        if self._product_store is not None:
+            try:
+                relationship_profile = self._product_store.get_relationship_profile(
+                    request.user_id
+                )
+            except Exception:
+                relationship_profile = None
+
         return CompiledContext(
             system_prompt=self._prompt_composer.compose(
                 decision,
@@ -179,6 +188,7 @@ class CareerContextCompiler:
                 retrieval_plan,
                 response_contract,
                 callback_context,
+                relationship_profile,
             ),
             decision=decision,
             intent=intent,
