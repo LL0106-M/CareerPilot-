@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -69,6 +69,7 @@ from careerpilot.api.schemas import (
     OpenLoopUpdateRequest,
     RagQueryRequest,
     RegisterRequest,
+    RelationshipPreferenceRequest,
     RunEventResponse,
     RunEventsResponse,
     VerificationCodeRequest,
@@ -802,6 +803,38 @@ def create_app(
         if result is None:
             raise HTTPException(status_code=404, detail="open loop not found")
         return result
+
+    @app.get("/v1/me/relationship-profile")
+    async def get_relationship_profile(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        return resolve_product_store().get_relationship_profile(identity.owner_id)
+
+    @app.put("/v1/me/relationship-profile/{dimension}")
+    async def update_relationship_preference(
+        dimension: Literal[
+            "pace", "structure", "challenge", "initiative", "tone", "detail"
+        ],
+        body: RelationshipPreferenceRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        try:
+            return resolve_product_store().record_relationship_signal(
+                identity.owner_id,
+                dimension=dimension,
+                value=body.value,
+                source="settings",
+                explicit=True,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.delete("/v1/me/relationship-profile")
+    async def reset_relationship_profile(
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, str]:
+        resolve_product_store().reset_relationship_profile(identity.owner_id)
+        return {"status": "reset"}
 
     @app.post("/v1/me/directions/{direction_id}/journey", status_code=201)
     async def start_direction_journey(

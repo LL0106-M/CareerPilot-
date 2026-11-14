@@ -811,6 +811,12 @@
 .settings-card { padding: 22px; border-radius: 22px; }
 .settings-card-desc { font-size: 13px; margin-bottom: 14px; }
 .settings-rows { display: flex; flex-direction: column; gap: 4px; }
+.relationship-preferences { display: flex; flex-direction: column; gap: 14px; }
+.preference-question { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--brand-pine) 12%, transparent); }
+.preference-question > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.preference-option { border: 1px solid color-mix(in srgb, var(--brand-pine) 22%, transparent); border-radius: 999px; padding: 7px 12px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.preference-option.selected { border-color: var(--brand-pine); background: color-mix(in srgb, var(--brand-pine) 10%, transparent); color: var(--brand-pine); }
+.preference-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-secondary); }
 .settings-row {
   display: flex;
   justify-content: space-between;

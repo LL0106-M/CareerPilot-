@@ -187,6 +187,20 @@ export interface AgentCommitment {
   result_reference?: string | null
 }
 
+export interface RelationshipDimension {
+  dimension: 'pace' | 'structure' | 'challenge' | 'initiative' | 'tone' | 'detail'
+  value: string
+  source: string
+  confidence: number
+  status: 'candidate' | 'confirmed'
+  signal_count: number
+}
+
+export interface RelationshipProfile {
+  core: { version: string; principles: string[] }
+  dimensions: RelationshipDimension[]
+}
+
 export interface DashboardJourney {
   id: string
   direction_id: string
@@ -588,6 +602,17 @@ export const api = {
     return request<OpenLoop>(`/v1/me/open-loops/${encodeURIComponent(id)}`, {
       method: 'PATCH', body: JSON.stringify({ status }),
     })
+  },
+  getRelationshipProfile() {
+    return request<RelationshipProfile>('/v1/me/relationship-profile')
+  },
+  updateRelationshipPreference(dimension: RelationshipDimension['dimension'], value: string) {
+    return request<RelationshipDimension>(`/v1/me/relationship-profile/${encodeURIComponent(dimension)}`, {
+      method: 'PUT', body: JSON.stringify({ value }),
+    })
+  },
+  resetRelationshipProfile() {
+    return request<{ status: 'reset' }>('/v1/me/relationship-profile', { method: 'DELETE' })
   },
   startDirectionJourney(id: string) {
     return request<DirectionJourneyStart>(`/v1/me/directions/${encodeURIComponent(id)}/journey`, {

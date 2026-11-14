@@ -86,6 +86,25 @@ class OpenLoopUpdateRequest(BaseModel):
     status: Literal["active", "resolved", "dismissed"]
 
 
+class RelationshipPreferenceRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    value: Literal[
+        "listen_first",
+        "action_first",
+        "open",
+        "structured",
+        "gentle",
+        "direct",
+        "wait",
+        "proactive",
+        "steady",
+        "playful",
+        "concise",
+        "detailed",
+    ]
+
+
 class ChatResponse(BaseModel):
     conversation_id: str
     run_id: str
