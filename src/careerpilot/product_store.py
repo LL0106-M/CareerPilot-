@@ -6,6 +6,8 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from careerpilot.exploration import ExplorationService
+
 
 class ProductStore:
     """Owner-scoped product state used by the web experience.
@@ -259,6 +261,7 @@ class ProductStore:
             WHERE source_reference IS NOT NULL"""
         )
         self._connection.commit()
+        self._exploration = ExplorationService(self._connection)
         self._repair_unbound_explicit_targets()
         self._connection.commit()
 
@@ -382,6 +385,7 @@ class ProductStore:
             (owner_id, run_id),
         ).fetchone()
         if existing is not None:
+            self._exploration.project_compass_batch(owner_id, str(existing["id"]))
             return self._compass_batch_payload(owner_id, str(existing["id"]))
 
         context = {
@@ -545,7 +549,35 @@ class ProductStore:
                     ) or (role or label or "目标分支"),
                     now=now,
                 )
+        self._exploration.project_compass_batch(owner_id, batch_id)
         return self._compass_batch_payload(owner_id, batch_id)
+
+    def create_exploration_thread(
+        self,
+        owner_id: str,
+        *,
+        seed_text: str,
+        working_question: str,
+        source_direction_id: str | None = None,
+    ) -> dict[str, object]:
+        return self._exploration.create_thread(
+            owner_id,
+            seed_text=seed_text,
+            working_question=working_question,
+            source_direction_id=source_direction_id,
+        )
+
+    def upsert_career_node(self, owner_id: str, **values: object) -> dict[str, object]:
+        return self._exploration.upsert_node(owner_id, **values)  # type: ignore[arg-type]
+
+    def connect_career_nodes(self, owner_id: str, **values: object) -> dict[str, object]:
+        return self._exploration.connect_nodes(owner_id, **values)  # type: ignore[arg-type]
+
+    def add_career_evidence(self, owner_id: str, **values: object) -> dict[str, object]:
+        return self._exploration.add_evidence(owner_id, **values)  # type: ignore[arg-type]
+
+    def list_exploration_views(self, owner_id: str) -> list[dict[str, object]]:
+        return self._exploration.list_views(owner_id)
 
     def list_compass_update_batches(self, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(
