@@ -3,6 +3,7 @@ import { Fragment, type ReactNode } from 'react'
 
 interface MessageContentProps {
   content: string
+  className?: string
 }
 
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
@@ -20,7 +21,7 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
   return nodes
 }
 
-export function MessageContent({ content }: MessageContentProps) {
+export function MessageContent({ content, className = 'chat-message-content' }: MessageContentProps) {
   const lines = content.replace(/\r\n?/g, '\n').split('\n')
   const blocks: ReactNode[] = []
   let paragraph: string[] = []
@@ -72,5 +73,5 @@ export function MessageContent({ content }: MessageContentProps) {
   }
   flushParagraph()
 
-  return <div className="chat-message-content">{blocks.map((block, index) => <Fragment key={index}>{block}</Fragment>)}</div>
+  return <div className={className}>{blocks.map((block, index) => <Fragment key={index}>{block}</Fragment>)}</div>
 }

@@ -135,7 +135,7 @@ export function CompanionBobo() {
               {loadingHistory && <p className="companion-loading">正在接上刚才的对话…</p>}
               {messages.map((message, index) => (
                 <div className={`companion-message ${message.role}${!message.content ? ' typing' : ''}`} key={`${message.role}-${index}`}>
-                  {message.content ? <MessageContent content={message.content} /> : <><i /><i /><i /></>}
+                  {message.content ? <MessageContent className="companion-message-content" content={message.content} /> : <><i /><i /><i /></>}
                 </div>
               ))}
             </div>

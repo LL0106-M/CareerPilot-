@@ -108,4 +108,19 @@ describe('companion Bobo', () => {
     expect(await screen.findByText('我们说到下一步验证。')).toBeInTheDocument()
     expect(screen.queryByText('正在接上刚才的对话…')).not.toBeInTheDocument()
   })
+
+  it('renders side conversation text without nesting the full-chat bubble', async () => {
+    localStorage.setItem('careerpilot.companionConversationId', 'companion-styled')
+    vi.mocked(api.getConversation).mockResolvedValue({
+      id: 'companion-styled', title: '侧栏对话', updated_at: '2026-11-14T10:00:00Z',
+      messages: [{ role: 'user', content: 'ok可以' }, { role: 'agent', content: '我们继续。' }],
+    })
+    const user = userEvent.setup()
+    render(<MemoryRouter initialEntries={['/knowledge']}><CompanionBobo /></MemoryRouter>)
+    await user.click(screen.getByRole('button', { name: '打开泊泊侧边对话' }))
+
+    const messageText = await screen.findByText('ok可以')
+    expect(messageText.closest('.companion-message-content')).not.toBeNull()
+    expect(messageText.closest('.chat-message-content')).toBeNull()
+  })
 })
