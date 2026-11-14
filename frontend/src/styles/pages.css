@@ -638,6 +638,10 @@
 .status-conflict { background: #f7e8e5; color: #a9584d; }
 .status-waiting { background: #e8f0f5; color: #6e8fa7; }
 .compass-hypotheses { padding: 28px; border-radius: 28px; }
+.exploration-hook { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 0; border-top: 1px solid color-mix(in srgb, var(--brand-pine) 18%, transparent); }
+.exploration-hook > div { display: flex; flex-direction: column; gap: 5px; }
+.exploration-hook > div:last-of-type { align-items: flex-end; }
+.exploration-hook span,.exploration-hook small { color: var(--text-secondary); font-size: 12px; }
 .hypothesis-detail-list {
   list-style: none;
   padding: 0;

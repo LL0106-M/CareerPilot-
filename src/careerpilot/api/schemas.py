@@ -80,6 +80,12 @@ class CompassItemCorrectionRequest(BaseModel):
     value: str = Field(min_length=1, max_length=500)
 
 
+class OpenLoopUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["active", "resolved", "dismissed"]
+
+
 class ChatResponse(BaseModel):
     conversation_id: str
     run_id: str

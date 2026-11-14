@@ -66,6 +66,7 @@ from careerpilot.api.schemas import (
     LoginRequest,
     MemoryCreateRequest,
     MemoryUpdateRequest,
+    OpenLoopUpdateRequest,
     RagQueryRequest,
     RegisterRequest,
     RunEventResponse,
@@ -787,6 +788,19 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if result is None:
             raise HTTPException(status_code=404, detail="compass update item not found")
+        return result
+
+    @app.patch("/v1/me/open-loops/{loop_id}")
+    async def update_open_loop(
+        loop_id: str,
+        body: OpenLoopUpdateRequest,
+        identity: Identity = Depends(resolve_identity),
+    ) -> dict[str, object]:
+        result = resolve_product_store().update_open_loop_status(
+            identity.owner_id, loop_id, body.status
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="open loop not found")
         return result
 
     @app.post("/v1/me/directions/{direction_id}/journey", status_code=201)

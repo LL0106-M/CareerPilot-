@@ -273,6 +273,25 @@ class ProductStore:
     def dashboard(self, owner_id: str) -> dict[str, object]:
         directions = self.list_directions(owner_id)
         exploration_views = self.list_exploration_views(owner_id)
+        open_loops = [
+            item for item in self.list_open_loops(owner_id) if item["status"] == "active"
+        ]
+        commitments = self.list_agent_commitments(owner_id)
+        for view in exploration_views:
+            thread_id = view["thread"].get("id")
+            hook = next(
+                (item for item in open_loops if item.get("thread_id") == thread_id),
+                None,
+            )
+            view["active_hook"] = hook
+            view["bobo_commitment"] = next(
+                (
+                    item
+                    for item in commitments
+                    if hook is not None and item.get("open_loop_id") == hook.get("id")
+                ),
+                None,
+            )
         exploration_by_direction = {
             str(view["thread"].get("source_direction_id")): view
             for view in exploration_views
@@ -636,6 +655,11 @@ class ProductStore:
         page_context: dict[str, str] | None = None,
     ) -> dict[str, object] | None:
         return self._episodes.callback_context(owner_id, message, page_context)
+
+    def update_open_loop_status(
+        self, owner_id: str, loop_id: str, status: str
+    ) -> dict[str, object] | None:
+        return self._episodes.update_open_loop_status(owner_id, loop_id, status)
 
     def list_compass_update_batches(self, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(

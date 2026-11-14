@@ -280,6 +280,22 @@ class EpisodeService:
             "commitment": self._decode(commitment) if commitment is not None else None,
         }
 
+    def update_open_loop_status(
+        self, owner_id: str, loop_id: str, status: str
+    ) -> dict[str, object] | None:
+        if status not in {"active", "resolved", "dismissed"}:
+            raise ValueError(f"unsupported open loop status: {status}")
+        now = datetime.now(UTC).isoformat()
+        cursor = self._connection.execute(
+            """UPDATE open_loops SET status = ?, updated_at = ?
+            WHERE owner_id = ? AND id = ?""",
+            (status, now, owner_id, loop_id),
+        )
+        self._connection.commit()
+        if cursor.rowcount == 0:
+            return None
+        return self._require("open_loops", owner_id, loop_id)
+
     def _list(self, table: str, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(
             f"SELECT * FROM {table} WHERE owner_id = ? ORDER BY updated_at DESC, id",

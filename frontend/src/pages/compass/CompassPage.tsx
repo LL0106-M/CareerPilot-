@@ -12,6 +12,7 @@ export function CompassPage() {
   const [journeyConfirmOpen, setJourneyConfirmOpen] = useState(false)
   const [journeyState, setJourneyState] = useState<'idle' | 'saving' | 'error'>('idle')
   const [compareOpen, setCompareOpen] = useState(false)
+  const [hookState, setHookState] = useState<'idle' | 'saving' | 'error'>('idle')
   const hypotheses = data?.hypotheses || []
   const directions = data?.directions || []
   const journeys = data?.journeys || []
@@ -77,6 +78,19 @@ export function CompassPage() {
     }
   }
 
+  async function dismissHook() {
+    const hook = currentExploration?.active_hook
+    if (!hook) return
+    setHookState('saving')
+    try {
+      await api.updateOpenLoop(hook.id, 'dismissed')
+      await reload()
+      setHookState('idle')
+    } catch {
+      setHookState('error')
+    }
+  }
+
   return (
     <div className="compass-experience">
       <section className="compass-focus glass-card">
@@ -104,6 +118,11 @@ export function CompassPage() {
               <div><span>已有证据</span><strong>{currentExploration?.supporting_evidence[0]?.excerpt || currentSummary?.reason}</strong></div>
               {explorationContext && <div><span>现实语境</span><strong>{explorationContext}</strong></div>}
               {(currentExploration?.unknowns[0]?.excerpt || currentSummary?.unknown_question) && <div className="next-validation"><span>最大未知</span><strong>{currentExploration?.unknowns[0]?.excerpt || currentSummary?.unknown_question}</strong></div>}
+            </div>}
+            {currentExploration?.active_hook && <div className="exploration-hook">
+              <div><span>下次可以从这里继续</span><strong>{currentExploration.active_hook.user_need}</strong>{currentExploration.bobo_commitment && <small>泊泊会：{currentExploration.bobo_commitment.description}</small>}</div>
+              <div><Link className="soft-link dark" to="/chat" state={{ draft: currentExploration.active_hook.trigger_condition || currentExploration.active_hook.user_need }}>继续探索</Link><button type="button" className="text-button" disabled={hookState === 'saving'} onClick={() => void dismissHook()}>{hookState === 'saving' ? '正在关闭…' : '暂不再提醒'}</button></div>
+              {hookState === 'error' && <small role="alert">没有关闭成功，请重试。</small>}
             </div>}
             {explorationEvidence.length > 0
               ? <details className="evidence-drawer"><summary>查看证据与未知项</summary><div>{explorationEvidence.map((item) => <article key={item.id}><span>{item.kind === 'support' ? '支持证据' : item.kind === 'counter' ? '反对证据' : '仍未知'}</span><strong>{item.excerpt}</strong><small>{item.confirmation_status === 'confirmed' ? '已确认来源' : '等待确认'}</small></article>)}</div></details>

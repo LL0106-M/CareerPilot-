@@ -69,7 +69,7 @@ describe('Compass', () => {
   })
 
   it('shows target branches, decision context, evidence and branch comparison', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       hypotheses: [], journey: [], journeys: [], collection_jobs: [], ideas: [], dreaming: [], memories: [],
       directions: [{ id:'d1',label:'AI 产品经理',status:'confirmed',source_signal_id:'s1',source_kind:'conversation',source_quote:'我想做 AI 产品经理',reason:'用户明确表达',confidence:.98 }],
       direction_branches: [
@@ -89,13 +89,16 @@ describe('Compass', () => {
         supporting_evidence: [{ id:'ce1',thread_id:'t1',node_id:'n2',kind:'support',source_type:'user_turn',source_reference:'turn:r1',excerpt:'我做过一个 RAG 项目',confidence:1,confirmation_status:'confirmed',status:'active' }],
         counter_evidence: [],
         unknowns: [{ id:'ce2',thread_id:'t1',node_id:'n2',kind:'unknown',source_type:'user_constraint',source_reference:'turn:r2',excerpt:'还不了解日常协作方式',confidence:1,confirmation_status:'confirmed',status:'active' }],
+        active_hook: { id:'loop-1',thread_id:'t1',kind:'evidence_gap',initiator:'shared',user_need:'完成一次真实 JD 拆解',agent_need:'整理拆解步骤',trigger_condition:'继续探索 AI 产品',status:'active' },
+        bobo_commitment: { id:'commitment-1',thread_id:'t1',open_loop_id:'loop-1',description:'整理拆解步骤',executor_kind:'knowledge_collection',status:'queued' },
       }],
       direction_evidence: [
         { id:'e1',direction_id:'d1',branch_id:'b1',kind:'support',content:'有 AI 项目经验',source_kind:'conversation',source_quote:'我做过一个 RAG 项目' },
         { id:'e2',direction_id:'d1',branch_id:null,kind:'unknown',content:'还不了解日常协作方式',source_kind:'system' },
       ],
       career_profile: [{ id:'p1',category:'environment',value:'希望工作节奏可预期',status:'active' }],
-    }), { status:200,headers:{'Content-Type':'application/json'} })))
+    }), { status:200,headers:{'Content-Type':'application/json'} }))
+    vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
     render(<MemoryRouter><CompassPage /></MemoryRouter>)
 
@@ -105,6 +108,11 @@ describe('Compass', () => {
     expect(screen.getByText('平台能力和场景落地，哪一种工作更适合你？')).toBeInTheDocument()
     expect(screen.getAllByText('我做过一个 RAG 项目').length).toBeGreaterThan(0)
     expect(screen.getByText('腾讯 · 混元')).toBeInTheDocument()
+    expect(screen.getByText('完成一次真实 JD 拆解')).toBeInTheDocument()
+    expect(screen.getByText('泊泊会：整理拆解步骤')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '继续探索' })).toHaveAttribute('href', '/chat')
+    await user.click(screen.getByRole('button', { name: '暂不再提醒' }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/v1/me/open-loops/loop-1', expect.objectContaining({ method:'PATCH' }))
     expect(screen.getByText('希望工作节奏可预期')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '对比目标' }))
     expect(screen.getByRole('region', { name: '目标分支对比' })).toBeInTheDocument()

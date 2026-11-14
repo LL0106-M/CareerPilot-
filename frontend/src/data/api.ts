@@ -161,6 +161,30 @@ export interface ExplorationView {
   supporting_evidence: CareerEvidence[]
   counter_evidence: CareerEvidence[]
   unknowns: CareerEvidence[]
+  active_hook?: OpenLoop | null
+  bobo_commitment?: AgentCommitment | null
+}
+
+export interface OpenLoop {
+  id: string
+  thread_id?: string | null
+  episode_id?: string | null
+  kind: string
+  initiator: string
+  user_need: string
+  agent_need: string
+  trigger_condition: string
+  status: 'active' | 'resolved' | 'dismissed'
+}
+
+export interface AgentCommitment {
+  id: string
+  thread_id?: string | null
+  open_loop_id?: string | null
+  description: string
+  executor_kind: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  result_reference?: string | null
 }
 
 export interface DashboardJourney {
@@ -559,6 +583,11 @@ export const api = {
       `/v1/me/compass-updates/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}`,
       { method: 'PATCH', body: JSON.stringify({ value }) },
     )
+  },
+  updateOpenLoop(id: string, status: 'active' | 'resolved' | 'dismissed') {
+    return request<OpenLoop>(`/v1/me/open-loops/${encodeURIComponent(id)}`, {
+      method: 'PATCH', body: JSON.stringify({ status }),
+    })
   },
   startDirectionJourney(id: string) {
     return request<DirectionJourneyStart>(`/v1/me/directions/${encodeURIComponent(id)}/journey`, {
