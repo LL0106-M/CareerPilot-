@@ -6,6 +6,7 @@ from careerpilot.agent.service import ChatCommand, ChatResult, ChatStreamEvent
 from careerpilot.api.app import create_app
 from careerpilot.config import Settings
 from careerpilot.context.contracts import RetrievalSource, TaskIntent
+from careerpilot.product_store import ProductStore
 from careerpilot.support.policy import SupportMode
 from tests.api.auth_helpers import build_auth_service, issue_session
 
@@ -119,6 +120,43 @@ def test_chat_passes_bounded_page_context_without_persisting_it_as_user_text(tmp
     assert reopened.json()["messages"][0] == {
         "role": "user", "content": "为什么我还在犹豫？"
     }
+
+
+def test_chat_persists_structured_canonical_turn_metadata(tmp_path) -> None:
+    service = StubChatService()
+    product_store = ProductStore(tmp_path / "product.db")
+    auth = build_auth_service(tmp_path / "auth.db")
+    client = TestClient(
+        create_app(
+            chat_service=service,
+            auth_service=auth,
+            product_store=product_store,
+        )
+    )
+    client.cookies.update(issue_session(auth, owner_id=OWNER_A))
+    try:
+        response = client.post(
+            "/v1/chat",
+            json={
+                "conversation_id": "thread-1",
+                "message": "为什么我还在犹豫？",
+                "page_context": {"page": "compass", "label": "罗盘", "path": "/compass"},
+            },
+        )
+
+        assert response.status_code == 200
+        turn = product_store.get_conversation_turn(OWNER_A, "run-1")
+        assert turn is not None
+        assert turn["conversation_id"] == "thread-1"
+        assert turn["user_message"] == "为什么我还在犹豫？"
+        assert turn["assistant_message"] == "这次被拒确实很难受，我们先不用急着证明什么。"
+        assert turn["page_context"] == {
+            "page": "compass", "label": "罗盘", "path": "/compass"
+        }
+        assert turn["support_mode"] == "listen"
+        assert turn["primary_intent"] == "emotional_support"
+    finally:
+        product_store.close()
 
 
 def test_chat_rejects_unbounded_page_context_fields(tmp_path) -> None:

@@ -629,6 +629,14 @@ def create_app(
             result.conversation_id,
             request.message,
             result.reply,
+            turn_id=result.run_id,
+            page_context=(
+                request.page_context.model_dump(mode="json", exclude_none=True)
+                if request.page_context
+                else None
+            ),
+            support_mode=result.support_mode.value,
+            primary_intent=result.primary_intent.value,
         )
         _save_chat_calendar_event(
             resolve_product_store(), identity.owner_id, request.message, result
@@ -678,6 +686,14 @@ def create_app(
                             result.conversation_id,
                             body.message,
                             result.reply,
+                            turn_id=result.run_id,
+                            page_context=(
+                                body.page_context.model_dump(mode="json", exclude_none=True)
+                                if body.page_context
+                                else None
+                            ),
+                            support_mode=result.support_mode.value,
+                            primary_intent=result.primary_intent.value,
                         )
                         _save_chat_calendar_event(
                             resolve_product_store(), identity.owner_id, body.message, result

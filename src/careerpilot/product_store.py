@@ -51,6 +51,18 @@ class ProductStore:
                 owner_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
                 role TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS conversation_turns (
+                owner_id TEXT NOT NULL, id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                user_message TEXT NOT NULL, assistant_message TEXT NOT NULL,
+                page_context_json TEXT NOT NULL DEFAULT '{}',
+                support_mode TEXT, primary_intent TEXT,
+                memory_projection_status TEXT NOT NULL DEFAULT 'pending',
+                exploration_projection_status TEXT NOT NULL DEFAULT 'pending',
+                episode_projection_status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(owner_id, id)
+            );
             CREATE TABLE IF NOT EXISTS direction_signals (
                 owner_id TEXT NOT NULL, id TEXT NOT NULL, source_run_id TEXT NOT NULL,
                 label TEXT NOT NULL, explicitness TEXT NOT NULL, source_quote TEXT NOT NULL,
@@ -151,6 +163,8 @@ class ProductStore:
                 ON conversations(owner_id, updated_at DESC);
             CREATE INDEX IF NOT EXISTS conversation_messages_owner_idx
                 ON conversation_messages(owner_id, conversation_id, sequence);
+            CREATE INDEX IF NOT EXISTS conversation_turns_owner_conversation_idx
+                ON conversation_turns(owner_id, conversation_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS direction_signals_owner_status_idx
                 ON direction_signals(owner_id, status, updated_at DESC);
             CREATE INDEX IF NOT EXISTS directions_owner_status_idx
@@ -1504,7 +1518,19 @@ class ProductStore:
         conversation_id: str,
         user_message: str,
         agent_message: str,
-    ) -> None:
+        *,
+        turn_id: str | None = None,
+        page_context: dict[str, str] | None = None,
+        support_mode: str | None = None,
+        primary_intent: str | None = None,
+    ) -> dict[str, object]:
+        canonical_turn_id = turn_id or f"turn-{uuid.uuid4().hex}"
+        existing = self._connection.execute(
+            "SELECT * FROM conversation_turns WHERE owner_id = ? AND id = ?",
+            (owner_id, canonical_turn_id),
+        ).fetchone()
+        if existing is not None:
+            return self._decode(existing)
         now = datetime.now(UTC).isoformat()
         title = user_message.strip()[:80]
         with self._connection:
@@ -1516,6 +1542,23 @@ class ProductStore:
                     updated_at = excluded.updated_at""",
                 (owner_id, conversation_id, title, now, now),
             )
+            self._connection.execute(
+                """INSERT INTO conversation_turns
+                (owner_id,id,conversation_id,user_message,assistant_message,
+                 page_context_json,support_mode,primary_intent,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    owner_id,
+                    canonical_turn_id,
+                    conversation_id,
+                    user_message,
+                    agent_message,
+                    json.dumps(page_context or {}, ensure_ascii=False),
+                    support_mode,
+                    primary_intent,
+                    now,
+                ),
+            )
             self._connection.executemany(
                 """INSERT INTO conversation_messages
                 (owner_id, conversation_id, role, content, created_at)
@@ -1525,6 +1568,21 @@ class ProductStore:
                     (owner_id, conversation_id, "agent", agent_message, now),
                 ),
             )
+        turn = self._connection.execute(
+            "SELECT * FROM conversation_turns WHERE owner_id = ? AND id = ?",
+            (owner_id, canonical_turn_id),
+        ).fetchone()
+        assert turn is not None
+        return self._decode(turn)
+
+    def get_conversation_turn(
+        self, owner_id: str, turn_id: str
+    ) -> dict[str, object] | None:
+        row = self._connection.execute(
+            "SELECT * FROM conversation_turns WHERE owner_id = ? AND id = ?",
+            (owner_id, turn_id),
+        ).fetchone()
+        return self._decode(row) if row is not None else None
 
     def list_conversations(self, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(

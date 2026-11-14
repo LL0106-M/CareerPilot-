@@ -32,6 +32,42 @@ def test_new_owner_starts_with_empty_product_state(tmp_path) -> None:
         store.close()
 
 
+def test_canonical_conversation_turn_is_idempotent_and_owner_scoped(tmp_path) -> None:
+    store = ProductStore(tmp_path / "product.db")
+    try:
+        first = store.record_conversation_turn(
+            "owner-1",
+            "conversation-1",
+            "我想继续看看开发",
+            "我们可以先拆开看看。",
+            turn_id="run-1",
+            page_context={"page": "compass", "path": "/compass"},
+            support_mode="explore",
+            primary_intent="career_exploration",
+        )
+        repeated = store.record_conversation_turn(
+            "owner-1",
+            "conversation-1",
+            "我想继续看看开发",
+            "我们可以先拆开看看。",
+            turn_id="run-1",
+            page_context={"page": "compass", "path": "/compass"},
+            support_mode="explore",
+            primary_intent="career_exploration",
+        )
+
+        assert repeated == first
+        assert first["id"] == "run-1"
+        assert first["page_context"] == {"page": "compass", "path": "/compass"}
+        assert first["support_mode"] == "explore"
+        assert first["primary_intent"] == "career_exploration"
+        assert store.get_conversation_turn("owner-1", "run-1") == first
+        assert store.get_conversation_turn("owner-2", "run-1") is None
+        assert store.list_conversations("owner-1")[0]["message_count"] == 2
+    finally:
+        store.close()
+
+
 def test_journey_event_keeps_calendar_fields_owner_scoped(tmp_path) -> None:
     store = ProductStore(tmp_path / "product.db")
     try:
