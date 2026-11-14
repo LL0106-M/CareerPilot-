@@ -231,6 +231,55 @@ class EpisodeService:
     def list_commitments(self, owner_id: str) -> list[dict[str, object]]:
         return self._list("agent_commitments", owner_id)
 
+    def callback_context(
+        self,
+        owner_id: str,
+        message: str,
+        page_context: dict[str, str] | None = None,
+    ) -> dict[str, object] | None:
+        rows = self._connection.execute(
+            """SELECT e.*, t.seed_text
+            FROM conversation_episodes e
+            LEFT JOIN exploration_threads t
+              ON t.owner_id = e.owner_id AND t.id = e.thread_id
+            WHERE e.owner_id = ? AND e.status = 'active'
+            ORDER BY e.updated_at DESC, e.id""",
+            (owner_id,),
+        ).fetchall()
+        page = (page_context or {}).get("page")
+        selected = next(
+            (
+                row
+                for row in rows
+                if (row["seed_text"] and str(row["seed_text"]) in message)
+                or page == "compass"
+            ),
+            None,
+        )
+        if selected is None:
+            return None
+        episode = self._decode(selected)
+        loop = self._connection.execute(
+            """SELECT * FROM open_loops
+            WHERE owner_id = ? AND episode_id = ? AND status = 'active'
+            ORDER BY updated_at DESC LIMIT 1""",
+            (owner_id, episode["id"]),
+        ).fetchone()
+        commitment = None
+        if loop is not None:
+            commitment = self._connection.execute(
+                """SELECT * FROM agent_commitments
+                WHERE owner_id = ? AND open_loop_id = ?
+                  AND status IN ('queued','running','completed','failed')
+                ORDER BY updated_at DESC LIMIT 1""",
+                (owner_id, loop["id"]),
+            ).fetchone()
+        return {
+            "episode": episode,
+            "open_loop": self._decode(loop) if loop is not None else None,
+            "commitment": self._decode(commitment) if commitment is not None else None,
+        }
+
     def _list(self, table: str, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(
             f"SELECT * FROM {table} WHERE owner_id = ? ORDER BY updated_at DESC, id",

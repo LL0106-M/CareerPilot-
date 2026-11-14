@@ -16,6 +16,7 @@ from careerpilot.memory.extractor import ModelMemoryClaimExtractor
 from careerpilot.memory.memos import MemosCloudMemoryStore
 from careerpilot.memory.service import MemoryService
 from careerpilot.memory.unified_store import SqliteUnifiedMemoryStore
+from careerpilot.product_store import ProductStore
 from careerpilot.rag.embeddings import create_embedding_provider
 from careerpilot.rag.store import SqliteRagStore
 from careerpilot.rag.tool import build_agentic_rag_tool
@@ -26,6 +27,7 @@ from careerpilot.support.policy import SupportPolicy
 def build_agent_service(
     settings: Settings,
     action_tool_factory: Callable[[str], tuple[HarnessTool, ...]] | None = None,
+    product_store: ProductStore | None = None,
 ) -> tuple[
     AgentService,
     MemoryStore,
@@ -79,6 +81,7 @@ def build_agent_service(
                 reasoning_model
             ),
             memory_claim_extractor=ModelMemoryClaimExtractor(reasoning_model),
+            product_store=product_store,
         ),
         memory_store,
         rag_store,

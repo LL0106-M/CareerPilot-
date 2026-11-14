@@ -340,6 +340,7 @@ def create_app(
                         resolve_action_store(),
                         resolve_action_service(),
                     ),
+                    product_store=resolve_product_store(),
                 )
             except RuntimeError as exc:
                 raise HTTPException(status_code=503, detail=str(exc)) from exc

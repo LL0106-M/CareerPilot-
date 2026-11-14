@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from careerpilot.agent.prompt import PromptComposer
 from careerpilot.context.contracts import (
@@ -22,6 +25,9 @@ from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
 from careerpilot.support.policy import SupportDecision, SupportMode, SupportPolicy
 from careerpilot.support.response_strategy import ResponseContract, ResponseStrategyEngine
 
+if TYPE_CHECKING:
+    from careerpilot.product_store import ProductStore
+
 
 @dataclass(frozen=True, slots=True)
 class ContextRequest:
@@ -29,6 +35,7 @@ class ContextRequest:
     conversation_id: str
     message: str
     requested_mode: SupportMode | None = None
+    page_context: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +82,7 @@ class CareerContextCompiler:
         unified_memory_service: MemoryService | None = None,
         response_strategy: ResponseStrategyEngine | None = None,
         provider_service: GovernedMemoryProviderService | None = None,
+        product_store: ProductStore | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._prompt_composer = prompt_composer or PromptComposer()
@@ -86,6 +94,7 @@ class CareerContextCompiler:
         self._unified_memory_service = unified_memory_service
         self._response_strategy = response_strategy or ResponseStrategyEngine()
         self._provider_service = provider_service
+        self._product_store = product_store
         if provider_service is None and unified_memory_service is not None:
             self._provider_service = GovernedMemoryProviderService(
                 unified_memory_service, memory_store
@@ -150,6 +159,17 @@ class CareerContextCompiler:
             except Exception:
                 hypotheses = ()
 
+        callback_context = None
+        if self._product_store is not None and decision.mode is not SupportMode.LISTEN:
+            try:
+                callback_context = self._product_store.get_callback_context(
+                    request.user_id,
+                    request.message,
+                    request.page_context,
+                )
+            except Exception:
+                callback_context = None
+
         return CompiledContext(
             system_prompt=self._prompt_composer.compose(
                 decision,
@@ -158,6 +178,7 @@ class CareerContextCompiler:
                 intent,
                 retrieval_plan,
                 response_contract,
+                callback_context,
             ),
             decision=decision,
             intent=intent,

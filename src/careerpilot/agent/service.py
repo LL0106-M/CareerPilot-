@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import hashlib
-from html import escape
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal
+from html import escape
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from careerpilot.agent.base import AgentResponder, AgentResponse
@@ -30,6 +32,9 @@ from careerpilot.memory.extractor import MemoryClaimExtractor
 from careerpilot.memory.service import MemoryQueryPurpose, MemoryService
 from careerpilot.memory.write_policy import MemoryWritePolicy
 from careerpilot.support.policy import SupportMode, SupportPolicy
+
+if TYPE_CHECKING:
+    from careerpilot.product_store import ProductStore
 
 McpToolFactory = Callable[[str, str], Awaitable[tuple[HarnessTool, ...]]]
 
@@ -88,6 +93,7 @@ class AgentService:
         mcp_tool_factory: McpToolFactory | None = None,
         direction_signal_detector: DirectionSignalDetector | None = None,
         memory_claim_extractor: MemoryClaimExtractor | None = None,
+        product_store: ProductStore | None = None,
     ) -> None:
         self._agent = agent
         self._rag_tool_factory = rag_tool_factory
@@ -103,6 +109,7 @@ class AgentService:
             prompt_composer or PromptComposer(),
             cognitive_store,
             unified_memory_service=unified_memory_service,
+            product_store=product_store,
         )
         self._memory_lifecycle = MemoryLifecycle(
             memory_store,
@@ -143,6 +150,7 @@ class AgentService:
                     conversation_id=command.conversation_id,
                     message=command.message,
                     requested_mode=command.requested_mode,
+                    page_context=command.page_context,
                 )
             )
             system_prompt = context.system_prompt + _format_page_context(

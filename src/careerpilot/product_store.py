@@ -629,6 +629,14 @@ class ProductStore:
     def list_agent_commitments(self, owner_id: str) -> list[dict[str, object]]:
         return self._episodes.list_commitments(owner_id)
 
+    def get_callback_context(
+        self,
+        owner_id: str,
+        message: str,
+        page_context: dict[str, str] | None = None,
+    ) -> dict[str, object] | None:
+        return self._episodes.callback_context(owner_id, message, page_context)
+
     def list_compass_update_batches(self, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(
             """SELECT id FROM compass_update_batches WHERE owner_id = ?
