@@ -8,6 +8,7 @@ from pathlib import Path
 
 from careerpilot.episodes import EpisodeService
 from careerpilot.exploration import ExplorationService
+from careerpilot.relationship import RelationshipService
 
 
 class ProductStore:
@@ -264,6 +265,7 @@ class ProductStore:
         self._connection.commit()
         self._exploration = ExplorationService(self._connection)
         self._episodes = EpisodeService(self._connection)
+        self._relationship = RelationshipService(self._connection)
         self._repair_unbound_explicit_targets()
         self._connection.commit()
 
@@ -660,6 +662,17 @@ class ProductStore:
         self, owner_id: str, loop_id: str, status: str
     ) -> dict[str, object] | None:
         return self._episodes.update_open_loop_status(owner_id, loop_id, status)
+
+    def record_relationship_signal(
+        self, owner_id: str, **values: object
+    ) -> dict[str, object]:
+        return self._relationship.record_signal(owner_id, **values)  # type: ignore[arg-type]
+
+    def get_relationship_profile(self, owner_id: str) -> dict[str, object]:
+        return self._relationship.profile(owner_id)
+
+    def reset_relationship_profile(self, owner_id: str) -> None:
+        self._relationship.reset(owner_id)
 
     def list_compass_update_batches(self, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(
