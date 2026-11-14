@@ -1,0 +1,10 @@
+[
+  {"id":"relevant-development","callback_expected":true,"callback_emitted":true,"claims":2,"false_facts":0,"correction_expected":false,"correction_applied":false},
+  {"id":"relevant-product","callback_expected":true,"callback_emitted":true,"claims":2,"false_facts":0,"correction_expected":false,"correction_applied":false},
+  {"id":"listen-no-callback","callback_expected":false,"callback_emitted":false,"claims":1,"false_facts":0,"correction_expected":false,"correction_applied":false},
+  {"id":"unrelated-no-callback","callback_expected":false,"callback_emitted":false,"claims":1,"false_facts":0,"correction_expected":false,"correction_applied":false},
+  {"id":"correction-role","callback_expected":true,"callback_emitted":true,"claims":2,"false_facts":0,"correction_expected":true,"correction_applied":true},
+  {"id":"correction-constraint","callback_expected":false,"callback_emitted":false,"claims":1,"false_facts":0,"correction_expected":true,"correction_applied":true},
+  {"id":"source-deleted","callback_expected":false,"callback_emitted":false,"claims":1,"false_facts":0,"correction_expected":true,"correction_applied":true},
+  {"id":"conflicting-evidence","callback_expected":true,"callback_emitted":true,"claims":2,"false_facts":0,"correction_expected":true,"correction_applied":true}
+]

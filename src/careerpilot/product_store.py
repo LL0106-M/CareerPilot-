@@ -8,6 +8,7 @@ from pathlib import Path
 
 from careerpilot.episodes import EpisodeService
 from careerpilot.exploration import ExplorationService
+from careerpilot.memory.maintenance import MemoryMaintenanceService
 from careerpilot.relationship import RelationshipService
 
 
@@ -266,6 +267,7 @@ class ProductStore:
         self._exploration = ExplorationService(self._connection)
         self._episodes = EpisodeService(self._connection)
         self._relationship = RelationshipService(self._connection)
+        self._maintenance = MemoryMaintenanceService(self._connection)
         self._repair_unbound_explicit_targets()
         self._connection.commit()
 
@@ -673,6 +675,14 @@ class ProductStore:
 
     def reset_relationship_profile(self, owner_id: str) -> None:
         self._relationship.reset(owner_id)
+
+    def maintain_memory(self, owner_id: str) -> dict[str, int]:
+        return self._maintenance.consolidate(owner_id)
+
+    def invalidate_memory_source(
+        self, owner_id: str, turn_id: str
+    ) -> dict[str, int]:
+        return self._maintenance.invalidate_source_turn(owner_id, turn_id)
 
     def list_compass_update_batches(self, owner_id: str) -> list[dict[str, object]]:
         rows = self._connection.execute(
